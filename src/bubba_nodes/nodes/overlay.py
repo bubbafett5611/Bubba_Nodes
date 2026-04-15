@@ -1,231 +1,11 @@
-import re
-import time
 from functools import lru_cache
-from comfy_api.latest import IO, UI
-import comfy.samplers
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import torch
-from nodes import common_ksampler
 
 
-INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
-
-class BubbaFilename:
-    """
-    Builds a file path string in the format: <character_name>/<scene_name>
-    Spaces are replaced with underscores and characters invalid in file paths are removed.
-    """
-
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "character_name": ("STRING", {
-                    "multiline": False,
-                    "default": "Character",
-                    "tooltip": "Used as the folder name in the output path.",
-                }),
-                "scene_name": ("STRING", {
-                    "multiline": False,
-                    "default": "Scene",
-                    "tooltip": "Used as the image/file name in the output path.",
-                }),
-            },
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("filepath",)
-    FUNCTION = "build_path"
-    CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Combines a character name (folder) and scene name (filename) into a relative file path."
-
-    def build_path(self, character_name, scene_name):
-        def sanitize(name):
-            name = name.strip()
-            name = name.replace(" ", "_")
-            name = INVALID_PATH_CHARS.sub('', name)
-            return name
-
-        folder = sanitize(character_name)
-        filename = sanitize(scene_name)
-        filepath = f"{folder}/{filename}"
-        return (filepath,)
-
-
-class BubbaKSampler:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "model": (
-                    "MODEL",
-                    {"tooltip": "The model used for denoising the input latent."},
-                ),
-                "seed": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": 0,
-                        "max": 0xFFFFFFFFFFFFFFFF,
-                        "control_after_generate": True,
-                        "tooltip": "The random seed used for creating the noise.",
-                    },
-                ),
-                "steps": (
-                    "INT",
-                    {
-                        "default": 20,
-                        "min": 1,
-                        "max": 10000,
-                        "tooltip": "The number of steps used in the denoising process.",
-                    },
-                ),
-                "cfg": (
-                    "FLOAT",
-                    {
-                        "default": 8.0,
-                        "min": 0.0,
-                        "max": 100.0,
-                        "step": 0.1,
-                        "round": 0.01,
-                        "tooltip": "The Classifier-Free Guidance scale used during sampling.",
-                    },
-                ),
-                "sampler_name": (
-                    comfy.samplers.KSampler.SAMPLERS,
-                    {
-                        "tooltip": "The sampling algorithm used to generate the image.",
-                    },
-                ),
-                "scheduler": (
-                    comfy.samplers.KSampler.SCHEDULERS,
-                    {
-                        "tooltip": "The scheduler controls how noise is removed across steps.",
-                    },
-                ),
-                "positive": (
-                    "CONDITIONING",
-                    {
-                        "tooltip": "The conditioning describing the attributes you want to include in the image.",
-                    },
-                ),
-                "negative": (
-                    "CONDITIONING",
-                    {
-                        "tooltip": "The conditioning describing the attributes you want to exclude from the image.",
-                    },
-                ),
-                "latent_image": (
-                    "LATENT",
-                    {"tooltip": "The latent image to denoise."},
-                ),
-                "denoise": (
-                    "FLOAT",
-                    {
-                        "default": 1.0,
-                        "min": 0.0,
-                        "max": 1.0,
-                        "step": 0.01,
-                        "tooltip": "The amount of denoising applied.",
-                    },
-                ),
-            }
-        }
-
-    RETURN_TYPES = ("LATENT", "STRING")
-    RETURN_NAMES = ("LATENT", "INFO")
-    FUNCTION = "sample"
-    CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Runs KSampler and outputs a formatted generation info string for overlays or save metadata."
-
-    @staticmethod
-    def _format_info(elapsed_seconds, seed, steps, cfg, sampler_name, scheduler, denoise):
-        return (f"Time: {elapsed_seconds:.3f}s  Seed: {seed}  Steps: {steps}  CFG: {cfg}"
-                f"  Sampler: {sampler_name}  Scheduler: {scheduler}  Denoise: {denoise}")
-
-    def sample(
-        self,
-        model,
-        seed,
-        steps,
-        cfg,
-        sampler_name,
-        scheduler,
-        positive,
-        negative,
-        latent_image,
-        denoise=1.0,
-    ):
-        start_time = time.perf_counter()
-        latent = common_ksampler(
-            model,
-            seed,
-            steps,
-            cfg,
-            sampler_name,
-            scheduler,
-            positive,
-            negative,
-            latent_image,
-            denoise=denoise,
-        )[0]
-        elapsed_seconds = time.perf_counter() - start_time
-        info = self._format_info(
-            elapsed_seconds,
-            seed,
-            steps,
-            cfg,
-            sampler_name,
-            scheduler,
-            denoise,
-        )
-        return (latent, info)
-
-
-class BubbaSaveImage:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "images": ("IMAGE",),
-                "filepath": (
-                    "STRING",
-                    {
-                        "default": "Character/Scene",
-                        "tooltip": "Relative output path prefix, e.g. Character/Scene.",
-                    },
-                ),
-                "preview_only": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Enable to save as temp preview images instead of writing to output.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ()
-    FUNCTION = "save_images"
-    OUTPUT_NODE = True
-    CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Saves images using the given filepath prefix, with optional preview-only temp mode."
-
-    def save_images(self, images, filepath, preview_only):
-        if preview_only:
-            return {"ui": UI.PreviewImage(images, cls=None).as_dict()}
-
-        return {
-            "ui": UI.ImageSaveHelper.get_save_images_ui(
-                images=images,
-                filename_prefix=filepath,
-                cls=None,
-            ).as_dict()
-        }
-
-
-class BubbaAddOverlay:
+class BubbaOverlay:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -370,17 +150,20 @@ class BubbaAddOverlay:
     @staticmethod
     def _parse_rgba(color: str) -> tuple[int, int, int, int]:
         value = color.strip().lstrip("#")
-        if len(value) == 6:
-            r = int(value[0:2], 16)
-            g = int(value[2:4], 16)
-            b = int(value[4:6], 16)
-            return (r, g, b, 255)
-        if len(value) == 8:
-            r = int(value[0:2], 16)
-            g = int(value[2:4], 16)
-            b = int(value[4:6], 16)
-            a = int(value[6:8], 16)
-            return (r, g, b, a)
+        try:
+            if len(value) == 6:
+                r = int(value[0:2], 16)
+                g = int(value[2:4], 16)
+                b = int(value[4:6], 16)
+                return (r, g, b, 255)
+            if len(value) == 8:
+                r = int(value[0:2], 16)
+                g = int(value[2:4], 16)
+                b = int(value[4:6], 16)
+                a = int(value[6:8], 16)
+                return (r, g, b, a)
+        except ValueError:
+            pass
         return (0, 0, 0, 170)
 
     @staticmethod
@@ -502,23 +285,3 @@ class BubbaAddOverlay:
             output.append(torch.from_numpy(out_arr))
 
         return (torch.stack(output, dim=0).to(image.device, dtype=image.dtype),)
-
-
-# A dictionary that contains all nodes you want to export with their names
-# NOTE: names should be globally unique
-NODE_CLASS_MAPPINGS = {
-    #"Bubba Nodes": BubbaExample,
-    "BubbaFilename": BubbaFilename,
-    "BubbaKSampler": BubbaKSampler,
-    "BubbaSaveImage": BubbaSaveImage,
-    "BubbaAddOverlay": BubbaAddOverlay,
-}
-
-# A dictionary that contains the friendly/humanly readable titles for the nodes
-NODE_DISPLAY_NAME_MAPPINGS = {
-    #"Bubba Nodes": "Bubba Example Node",
-    "BubbaFilename": "Bubba Filename Builder",
-    "BubbaKSampler": "Bubba KSampler",
-    "BubbaSaveImage": "Bubba Save Image",
-    "BubbaAddOverlay": "Bubba Add Text Overlay",
-}

@@ -1,0 +1,30 @@
+{
+  "presets": {
+    "CharacterPreset": {
+      "character": "",
+      "appearance": "cat",
+      "body": "dog",
+      "clothing": "fish, pose",
+      "pose": "pose",
+      "expression": "express",
+      "scene": "scene",
+      "style": "style",
+      "quality": "quality",
+      "negative": "negative",
+      "format_mode": "booru"
+    },
+    "Weiner": {
+      "character": "Weiner",
+      "appearance": "cat",
+      "body": "dog",
+      "clothing": "fish, pose",
+      "pose": "pose",
+      "expression": "express",
+      "scene": "scene",
+      "style": "style",
+      "quality": "quality",
+      "negative": "negative",
+      "format_mode": "booru"
+    }
+  }
+}
