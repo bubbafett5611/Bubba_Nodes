@@ -166,11 +166,26 @@ def _build_prompts_from_sections(sections: dict[str, str], cleanup: bool, dedupe
     return (positive_prompt, normalized["negative"], sections_text)
 
 
+def _encode_conditioning(clip, text: str):
+    tokens = clip.tokenize(text or "")
+    if hasattr(clip, "encode_from_tokens_scheduled"):
+        return clip.encode_from_tokens_scheduled(tokens)
+
+    cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+    return [[cond, {"pooled_output": pooled}]]
+
+
 class BubbaCharacterPromptBuilder:
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
+                "clip": (
+                    "CLIP",
+                    {
+                        "tooltip": "CLIP used to encode positive and negative conditioning outputs.",
+                    },
+                ),
                 "character_name": (
                     "STRING",
                     {
@@ -275,11 +290,11 @@ class BubbaCharacterPromptBuilder:
             }
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning")
     FUNCTION = "build_prompt"
     CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Builds positive/negative prompts from character sections with optional cleanup and dedupe."
+    DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP."
 
     @staticmethod
     def _clean_value(text: str) -> str:
@@ -323,6 +338,7 @@ class BubbaCharacterPromptBuilder:
 
     def build_prompt(
         self,
+        clip,
         character_name,
         appearance,
         body,
@@ -350,7 +366,10 @@ class BubbaCharacterPromptBuilder:
             "negative": negative_tags,
             "format_mode": format_mode,
         }
-        return _build_prompts_from_sections(sections, cleanup=cleanup, dedupe=dedupe)
+        positive_prompt, negative_prompt, sections_text = _build_prompts_from_sections(sections, cleanup=cleanup, dedupe=dedupe)
+        positive_conditioning = _encode_conditioning(clip, positive_prompt)
+        negative_conditioning = _encode_conditioning(clip, negative_prompt)
+        return (positive_prompt, negative_prompt, sections_text, positive_conditioning, negative_conditioning)
 
 
 class BubbaPromptCleaner:
@@ -388,14 +407,22 @@ class BubbaPromptCleaner:
                         "tooltip": "Remove duplicate tags while preserving order.",
                     },
                 ),
-            }
+            },
+            "optional": {
+                "clip": (
+                    "CLIP",
+                    {
+                        "tooltip": "Optional CLIP to encode cleaned positive and negative conditioning outputs.",
+                    },
+                ),
+            },
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("clean_positive", "clean_negative")
+    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("clean_positive", "clean_negative", "positive_conditioning", "negative_conditioning")
     FUNCTION = "clean_prompt"
     CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Cleans positive and negative prompts by normalizing tags and optionally deduplicating."
+    DESCRIPTION = "Cleans positive and negative prompts and optionally encodes conditioning when CLIP is connected."
 
     def _normalize(self, text: str, cleanup: bool, dedupe: bool) -> str:
         parts = BubbaCharacterPromptBuilder._split_tokens(text)
@@ -406,10 +433,21 @@ class BubbaPromptCleaner:
             parts = BubbaCharacterPromptBuilder._dedupe_tokens(parts)
         return ", ".join(parts)
 
-    def clean_prompt(self, positive_prompt, negative_prompt, cleanup, dedupe):
+    @staticmethod
+    def _empty_conditioning():
+        return [[None, {}]]
+
+    def clean_prompt(self, positive_prompt, negative_prompt, cleanup, dedupe, clip=None):
         clean_positive = self._normalize(positive_prompt, cleanup, dedupe)
         clean_negative = self._normalize(negative_prompt, cleanup, dedupe)
-        return (clean_positive, clean_negative)
+        if clip is None:
+            return (clean_positive, clean_negative, self._empty_conditioning(), self._empty_conditioning())
+        return (
+            clean_positive,
+            clean_negative,
+            _encode_conditioning(clip, clean_positive),
+            _encode_conditioning(clip, clean_negative),
+        )
 
 
 class BubbaPromptPresetSave:
@@ -474,6 +512,12 @@ class BubbaPromptPreset:
     def INPUT_TYPES(s):
         return {
             "required": {
+                "clip": (
+                    "CLIP",
+                    {
+                        "tooltip": "CLIP used to encode positive and negative conditioning outputs.",
+                    },
+                ),
                 "preset_name": (
                     s._preset_names(),
                     {
@@ -522,14 +566,15 @@ class BubbaPromptPreset:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections", "loaded_name")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections", "loaded_name", "positive_conditioning", "negative_conditioning")
     FUNCTION = "build_from_preset"
     CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Loads a saved JSON preset and lets you override sections by entering text in matching fields."
+    DESCRIPTION = "Loads a saved JSON preset, applies overrides, and encodes positive/negative conditioning with CLIP."
 
     def build_from_preset(
         self,
+        clip,
         preset_name,
         character_name,
         appearance,
@@ -575,4 +620,11 @@ class BubbaPromptPreset:
             cleanup=cleanup,
             dedupe=dedupe,
         )
-        return (positive_prompt, negative_prompt, sections_text, preset_name)
+        return (
+            positive_prompt,
+            negative_prompt,
+            sections_text,
+            preset_name,
+            _encode_conditioning(clip, positive_prompt),
+            _encode_conditioning(clip, negative_prompt),
+        )

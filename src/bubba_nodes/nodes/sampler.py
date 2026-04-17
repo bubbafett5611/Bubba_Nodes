@@ -3,6 +3,8 @@ import time
 import comfy.samplers
 from nodes import common_ksampler
 
+from ..models import BubbaMetadata
+
 
 class BubbaKSampler:
     @classmethod
@@ -81,14 +83,22 @@ class BubbaKSampler:
                         "tooltip": "The amount of denoising applied.",
                     },
                 ),
-            }
+            },
+            "optional": {
+                "metadata": (
+                    "BUBBA_METADATA",
+                    {
+                        "tooltip": "Optional metadata object to update with sampler info and seed.",
+                    },
+                ),
+            },
         }
 
-    RETURN_TYPES = ("LATENT", "STRING")
-    RETURN_NAMES = ("LATENT", "INFO")
+    RETURN_TYPES = ("LATENT", "STRING", "BUBBA_METADATA")
+    RETURN_NAMES = ("LATENT", "INFO", "metadata")
     FUNCTION = "sample"
     CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Runs KSampler and outputs a formatted generation info string for overlays or save metadata."
+    DESCRIPTION = "Runs KSampler, outputs formatted info text, and updates metadata when provided."
 
     @staticmethod
     def _format_info(elapsed_seconds, seed, steps, cfg, sampler_name, scheduler, denoise):
@@ -107,6 +117,7 @@ class BubbaKSampler:
         negative,
         latent_image,
         denoise=1.0,
+        metadata=None,
     ):
         start_time = time.perf_counter()
         latent = common_ksampler(
@@ -131,4 +142,8 @@ class BubbaKSampler:
             scheduler,
             denoise,
         )
-        return (latent, info)
+        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+            sampler_info=info,
+            seed=seed,
+        )
+        return (latent, info, updated_metadata)
