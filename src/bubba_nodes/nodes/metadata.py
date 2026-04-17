@@ -1,24 +1,8 @@
 from ..models import BubbaMetadata
+from ..utils.prompting import empty_conditioning, encode_conditioning
 
 
 METADATA_TYPE = "BUBBA_METADATA"
-
-
-def _coerce_metadata(metadata) -> BubbaMetadata:
-    return BubbaMetadata.coerce(metadata)
-
-
-def _encode_conditioning(clip, text: str):
-    tokens = clip.tokenize(text or "")
-    if hasattr(clip, "encode_from_tokens_scheduled"):
-        return clip.encode_from_tokens_scheduled(tokens)
-
-    cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
-    return [[cond, {"pooled_output": pooled}]]
-
-
-def _empty_conditioning():
-    return [[None, {}]]
 
 
 class BubbaMetadataBundle:
@@ -112,12 +96,8 @@ class BubbaMetadataDebug:
     CATEGORY = "Bubba Nodes"
     DESCRIPTION = "Converts Bubba metadata object to pretty JSON text for preview/debug nodes."
 
-    @staticmethod
-    def _coerce_metadata(metadata) -> BubbaMetadata:
-        return _coerce_metadata(metadata)
-
     def debug_metadata(self, metadata):
-        normalized = self._coerce_metadata(metadata)
+        normalized = BubbaMetadata.coerce(metadata)
         return (normalized.to_json(pretty=True),)
 
 
@@ -158,7 +138,7 @@ class BubbaMetadataUpdate:
         filepath="",
         clip=None,
     ):
-        current = _coerce_metadata(metadata)
+        current = BubbaMetadata.coerce(metadata)
         changes = {}
         if str(model_name or "").strip():
             changes["model_name"] = model_name
@@ -175,11 +155,11 @@ class BubbaMetadataUpdate:
 
         updated = current.updated(**changes)
         if clip is None:
-            return (updated, updated.seed, _empty_conditioning(), _empty_conditioning())
+            return (updated, updated.seed, empty_conditioning(), empty_conditioning())
 
         return (
             updated,
             updated.seed,
-            _encode_conditioning(clip, updated.positive_prompt),
-            _encode_conditioning(clip, updated.negative_prompt),
+            encode_conditioning(clip, updated.positive_prompt),
+            encode_conditioning(clip, updated.negative_prompt),
         )

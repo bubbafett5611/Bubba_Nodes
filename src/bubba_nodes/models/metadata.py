@@ -11,6 +11,7 @@ class BubbaMetadata:
     negative_prompt: str = ""
     seed: int = 0
     filepath: str = ""
+    prompt_sections: str = ""
 
     @staticmethod
     def _normalize_text(value: Any) -> str:
@@ -33,6 +34,7 @@ class BubbaMetadata:
             negative_prompt=cls._normalize_text(payload.get("negative_prompt", "")),
             seed=cls._normalize_seed(payload.get("seed", 0)),
             filepath=cls._normalize_text(payload.get("filepath", "")),
+            prompt_sections=cls._normalize_text(payload.get("prompt_sections", "")),
         )
 
     @classmethod
@@ -64,6 +66,7 @@ class BubbaMetadata:
             "positive_prompt": self._normalize_text(self.positive_prompt),
             "negative_prompt": self._normalize_text(self.negative_prompt),
             "seed": self._normalize_seed(self.seed),
+            "prompt_sections": self._normalize_text(self.prompt_sections),
             "filepath": self._normalize_text(self.filepath),
         }
 

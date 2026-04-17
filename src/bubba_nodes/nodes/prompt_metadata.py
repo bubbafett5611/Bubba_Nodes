@@ -1,33 +1,26 @@
+"""Prompt builder that integrates with and updates BubbaMetadata."""
+
+from ..models import BubbaMetadata
 from ..utils.prompting import (
     assemble_prompt_sections,
     build_prompts_from_sections,
-    clean_prompt_value,
-    dedupe_prompt_tokens,
-    empty_conditioning,
     encode_conditioning,
-    format_positive_prompt,
-    split_prompt_tokens,
 )
 
 
-def _build_prompts_from_sections(
-    sections: dict[str, str],
-    cleanup: bool,
-    dedupe: bool,
-    include_character_in_positive: bool = True,
-) -> tuple[str, str, str]:
-    return build_prompts_from_sections(
-        sections,
-        cleanup=cleanup,
-        dedupe=dedupe,
-        include_character_in_positive=include_character_in_positive,
-    )
+class BubbaMetadataPromptBuilder:
+    """Builds prompts from sections and adds them to metadata."""
 
-class BubbaCharacterPromptBuilder:
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
+                "metadata": (
+                    "BUBBA_METADATA",
+                    {
+                        "tooltip": "Metadata object to update with prompt sections.",
+                    },
+                ),
                 "clip": (
                     "CLIP",
                     {
@@ -127,32 +120,18 @@ class BubbaCharacterPromptBuilder:
                         "tooltip": "Remove duplicate tags while preserving first occurrence order.",
                     },
                 ),
-            }
+            },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning")
+    RETURN_TYPES = ("BUBBA_METADATA", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("metadata", "positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning")
     FUNCTION = "build_prompt"
     CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP."
-
-    @staticmethod
-    def _clean_value(text: str) -> str:
-        return clean_prompt_value(text)
-
-    @staticmethod
-    def _split_tokens(text: str) -> list[str]:
-        return split_prompt_tokens(text)
-
-    @staticmethod
-    def _dedupe_tokens(items: list[str]) -> list[str]:
-        return dedupe_prompt_tokens(items)
-
-    def _format_positive(self, values: list[str], format_mode: str) -> str:
-        return format_positive_prompt(values, format_mode)
+    DESCRIPTION = "Builds positive/negative prompts from character sections, encodes conditioning, and updates metadata with sections."
 
     def build_prompt(
         self,
+        metadata,
         clip,
         appearance,
         body,
@@ -167,6 +146,9 @@ class BubbaCharacterPromptBuilder:
         cleanup,
         dedupe,
     ):
+        # Coerce metadata to ensure it's the right type
+        current_metadata = BubbaMetadata.coerce(metadata)
+
         sections = assemble_prompt_sections(
             appearance=appearance,
             body=body,
@@ -179,92 +161,22 @@ class BubbaCharacterPromptBuilder:
             negative_tags=negative_tags,
             format_mode=format_mode,
         )
-        positive_prompt, negative_prompt, sections_text = _build_prompts_from_sections(
+
+        positive_prompt, negative_prompt, sections_text = build_prompts_from_sections(
             sections,
             cleanup=cleanup,
             dedupe=dedupe,
             include_character_in_positive=False,
         )
-        positive_conditioning = encode_conditioning(clip, positive_prompt)
-        negative_conditioning = encode_conditioning(clip, negative_prompt)
-        return (positive_prompt, negative_prompt, sections_text, positive_conditioning, negative_conditioning)
 
-
-class BubbaPromptCleaner:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "positive_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "tooltip": "Input positive prompt to clean.",
-                    },
-                ),
-                "negative_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "tooltip": "Input negative prompt to clean.",
-                    },
-                ),
-                "cleanup": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Normalize spacing and separators.",
-                    },
-                ),
-                "dedupe": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Remove duplicate tags while preserving order.",
-                    },
-                ),
-            },
-            "optional": {
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "Optional CLIP to encode cleaned positive and negative conditioning outputs.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("clean_positive", "clean_negative", "positive_conditioning", "negative_conditioning")
-    FUNCTION = "clean_prompt"
-    CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Cleans positive and negative prompts and optionally encodes conditioning when CLIP is connected."
-
-    def _normalize(self, text: str, cleanup: bool, dedupe: bool) -> str:
-        parts = BubbaCharacterPromptBuilder._split_tokens(text)
-        if cleanup:
-            parts = [BubbaCharacterPromptBuilder._clean_value(item) for item in parts]
-            parts = [item for item in parts if item]
-        if dedupe:
-            parts = BubbaCharacterPromptBuilder._dedupe_tokens(parts)
-        return ", ".join(parts)
-
-    @staticmethod
-    def _empty_conditioning():
-        return empty_conditioning()
-
-    def clean_prompt(self, positive_prompt, negative_prompt, cleanup, dedupe, clip=None):
-        clean_positive = self._normalize(positive_prompt, cleanup, dedupe)
-        clean_negative = self._normalize(negative_prompt, cleanup, dedupe)
-        if clip is None:
-            return (clean_positive, clean_negative, self._empty_conditioning(), self._empty_conditioning())
-        return (
-            clean_positive,
-            clean_negative,
-            encode_conditioning(clip, clean_positive),
-            encode_conditioning(clip, clean_negative),
+        # Update metadata with prompts and sections
+        updated_metadata = current_metadata.updated(
+            positive_prompt=positive_prompt,
+            negative_prompt=negative_prompt,
+            prompt_sections=sections_text,
         )
 
+        positive_conditioning = encode_conditioning(clip, positive_prompt)
+        negative_conditioning = encode_conditioning(clip, negative_prompt)
 
+        return (updated_metadata, positive_prompt, negative_prompt, sections_text, positive_conditioning, negative_conditioning)

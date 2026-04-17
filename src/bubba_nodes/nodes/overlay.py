@@ -460,14 +460,7 @@ class BubbaOverlayFromMetadata:
 
     @staticmethod
     def _extract_fields(metadata) -> tuple[str, str, str, str]:
-        if isinstance(metadata, BubbaMetadata):
-            payload = metadata
-        elif isinstance(metadata, dict):
-            payload = BubbaMetadata.from_mapping(metadata)
-        elif isinstance(metadata, str):
-            payload = BubbaMetadata.from_json(metadata)
-        else:
-            payload = BubbaMetadata()
+        payload = BubbaMetadata.coerce(metadata)
 
         return (
             payload.model_name,

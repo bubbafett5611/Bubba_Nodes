@@ -9,9 +9,8 @@ from .metadata import BubbaMetadataBundle, BubbaMetadataDebug, BubbaMetadataUpda
 from .prompt import (
     BubbaCharacterPromptBuilder,
     BubbaPromptCleaner,
-    BubbaPromptPreset,
-    BubbaPromptPresetSave,
 )
+from .prompt_metadata import BubbaMetadataPromptBuilder
 
 NODE_CLASS_MAPPINGS = {
     "BubbaFilename": BubbaFilename,
@@ -26,9 +25,8 @@ NODE_CLASS_MAPPINGS = {
     "BubbaMetadataDebug": BubbaMetadataDebug,
     "BubbaMetadataUpdate": BubbaMetadataUpdate,
     "BubbaCharacterPromptBuilder": BubbaCharacterPromptBuilder,
+    "BubbaMetadataPromptBuilder": BubbaMetadataPromptBuilder,
     "BubbaPromptCleaner": BubbaPromptCleaner,
-    "BubbaPromptPreset": BubbaPromptPreset,
-    "BubbaPromptPresetSave": BubbaPromptPresetSave,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -44,7 +42,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BubbaMetadataDebug": "Bubba Metadata Debug",
     "BubbaMetadataUpdate": "Bubba Metadata Update",
     "BubbaCharacterPromptBuilder": "Bubba Character Prompt Builder",
+    "BubbaMetadataPromptBuilder": "Bubba Metadata Prompt Builder",
     "BubbaPromptCleaner": "Bubba Prompt Cleaner",
-    "BubbaPromptPreset": "Bubba Prompt Preset",
-    "BubbaPromptPresetSave": "Bubba Prompt Preset Save",
 }

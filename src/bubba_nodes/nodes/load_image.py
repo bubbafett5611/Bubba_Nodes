@@ -113,14 +113,14 @@ class BubbaLoadImageWithMetadata:
             if rgb.size[0] != width or rgb.size[1] != height:
                 continue
 
-            image_np = np.array(rgb).astype(np.float32) / 255.0
+            image_np = np.asarray(rgb).astype(np.float32) / 255.0
             image_tensor = torch.from_numpy(image_np)[None,].to(dtype=dtype)
 
             if "A" in frame.getbands():
-                mask = np.array(frame.getchannel("A")).astype(np.float32) / 255.0
+                mask = np.asarray(frame.getchannel("A")).astype(np.float32) / 255.0
                 mask = 1.0 - torch.from_numpy(mask)
             elif frame.mode == "P" and "transparency" in frame.info:
-                mask = np.array(frame.convert("RGBA").getchannel("A")).astype(np.float32) / 255.0
+                mask = np.asarray(frame.convert("RGBA").getchannel("A")).astype(np.float32) / 255.0
                 mask = 1.0 - torch.from_numpy(mask)
             else:
                 mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
@@ -145,7 +145,11 @@ class BubbaLoadImageWithMetadata:
         image_path = cls._resolve_image_path(image)
         digest = hashlib.sha256()
         with open(image_path, "rb") as handle:
-            digest.update(handle.read())
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
         return digest.digest().hex()
 
     @classmethod

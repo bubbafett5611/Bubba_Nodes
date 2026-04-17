@@ -12,6 +12,9 @@ except Exception:  # pragma: no cover - only used inside Comfy runtime
 from ..models import BubbaMetadata
 
 
+_DEFAULT_METADATA_DICT = BubbaMetadata().to_dict()
+
+
 class BubbaSaveImage:
     @classmethod
     def INPUT_TYPES(s):
@@ -51,7 +54,7 @@ class BubbaSaveImage:
 
     @staticmethod
     def _is_default_metadata(metadata: BubbaMetadata) -> bool:
-        return metadata.to_dict() == BubbaMetadata().to_dict()
+        return metadata.to_dict() == _DEFAULT_METADATA_DICT
 
     @staticmethod
     def _resolve_base_dir(image_type: str) -> Path:
