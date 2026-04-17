@@ -121,7 +121,12 @@ def _clean_section_value(value: str, cleanup: bool) -> str:
     return (value or "").strip()
 
 
-def _build_prompts_from_sections(sections: dict[str, str], cleanup: bool, dedupe: bool) -> tuple[str, str, str]:
+def _build_prompts_from_sections(
+    sections: dict[str, str],
+    cleanup: bool,
+    dedupe: bool,
+    include_character_in_positive: bool = True,
+) -> tuple[str, str, str]:
     normalized = _default_sections()
     normalized.update(sections)
 
@@ -142,7 +147,8 @@ def _build_prompts_from_sections(sections: dict[str, str], cleanup: bool, dedupe
                 parts = BubbaCharacterPromptBuilder._dedupe_tokens(parts)
             value = ", ".join(parts)
             normalized[key] = value
-            positive_tokens.extend(parts)
+            if include_character_in_positive or key != "character":
+                positive_tokens.extend(parts)
         section_lines.append(f"{key}: {normalized[key]}")
 
     negative_value = _clean_section_value(normalized.get("negative", ""), cleanup)
@@ -184,14 +190,6 @@ class BubbaCharacterPromptBuilder:
                     "CLIP",
                     {
                         "tooltip": "CLIP used to encode positive and negative conditioning outputs.",
-                    },
-                ),
-                "character_name": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": False,
-                        "tooltip": "Character name or identity tag.",
                     },
                 ),
                 "appearance": (
@@ -339,7 +337,6 @@ class BubbaCharacterPromptBuilder:
     def build_prompt(
         self,
         clip,
-        character_name,
         appearance,
         body,
         clothing,
@@ -354,7 +351,7 @@ class BubbaCharacterPromptBuilder:
         dedupe,
     ):
         sections = {
-            "character": character_name,
+            "character": "",
             "appearance": appearance,
             "body": body,
             "clothing": clothing,
@@ -366,7 +363,12 @@ class BubbaCharacterPromptBuilder:
             "negative": negative_tags,
             "format_mode": format_mode,
         }
-        positive_prompt, negative_prompt, sections_text = _build_prompts_from_sections(sections, cleanup=cleanup, dedupe=dedupe)
+        positive_prompt, negative_prompt, sections_text = _build_prompts_from_sections(
+            sections,
+            cleanup=cleanup,
+            dedupe=dedupe,
+            include_character_in_positive=False,
+        )
         positive_conditioning = _encode_conditioning(clip, positive_prompt)
         negative_conditioning = _encode_conditioning(clip, negative_prompt)
         return (positive_prompt, negative_prompt, sections_text, positive_conditioning, negative_conditioning)

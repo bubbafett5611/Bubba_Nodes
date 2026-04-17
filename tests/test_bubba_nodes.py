@@ -8,6 +8,8 @@ from pathlib import Path
 
 from src.bubba_nodes.nodes import (
     BubbaFilename,
+    BubbaEmptyLatentBySize,
+    BubbaLoadImageWithMetadata,
     BubbaCheckpointLoader,
     BubbaKSampler,
     BubbaSaveImage,
@@ -65,6 +67,63 @@ class TestBubbaFilename:
         assert BubbaFilename.RETURN_TYPES == ("STRING",)
         assert BubbaFilename.FUNCTION == "build_path"
         assert BubbaFilename.CATEGORY == "Bubba Nodes"
+
+
+class TestBubbaEmptyLatentBySize:
+    def test_resolve_dimensions_default_and_inverted(self):
+        width, height = BubbaEmptyLatentBySize._resolve_dimensions("Medium (1344x768)", False)
+        assert width == 1344
+        assert height == 768
+
+        width, height = BubbaEmptyLatentBySize._resolve_dimensions("Medium (1344x768)", True)
+        assert width == 768
+        assert height == 1344
+
+    def test_resolve_dimensions_header_falls_back(self):
+        width, height = BubbaEmptyLatentBySize._resolve_dimensions("--- 16:9 ---", False)
+        assert width == 1024
+        assert height == 1024
+
+    def test_build_empty_latent_outputs_shape_and_sizes(self):
+        node = BubbaEmptyLatentBySize()
+        latent, width, height = node.build_empty_latent("Tiny (896x512)", False, 2)
+
+        assert width == 896
+        assert height == 512
+        assert "samples" in latent
+        assert tuple(latent["samples"].shape) == (2, 4, 64, 112)
+
+    def test_metadata(self):
+        assert BubbaEmptyLatentBySize.RETURN_TYPES == ("LATENT", "INT", "INT")
+        assert BubbaEmptyLatentBySize.FUNCTION == "build_empty_latent"
+        assert BubbaEmptyLatentBySize.CATEGORY == "Bubba Nodes"
+
+
+class TestBubbaLoadImageWithMetadata:
+    def test_extract_bubba_metadata_from_png_info(self):
+        metadata, metadata_text = BubbaLoadImageWithMetadata._extract_bubba_metadata(
+            {
+                "bubba_metadata": '{"model_name":"modelA","seed":42,"positive_prompt":"hero"}',
+            }
+        )
+
+        assert isinstance(metadata, BubbaMetadata)
+        assert metadata.model_name == "modelA"
+        assert metadata.seed == 42
+        assert "modelA" in metadata_text
+
+    def test_extract_bubba_metadata_missing_key_returns_default(self):
+        metadata, metadata_text = BubbaLoadImageWithMetadata._extract_bubba_metadata({})
+
+        assert isinstance(metadata, BubbaMetadata)
+        assert metadata.model_name == ""
+        assert metadata.seed == 0
+        assert '"model_name": ""' in metadata_text
+
+    def test_metadata(self):
+        assert BubbaLoadImageWithMetadata.RETURN_TYPES == ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
+        assert BubbaLoadImageWithMetadata.FUNCTION == "load_image"
+        assert BubbaLoadImageWithMetadata.CATEGORY == "Bubba Nodes"
 
 
 class TestBubbaCheckpointLoader:
@@ -184,7 +243,7 @@ class TestBubbaMetadataUpdate:
     def test_update_selected_fields(self):
         node = BubbaMetadataUpdate()
         original = BubbaMetadata(model_name="old", seed=1, filepath="old/path")
-        updated, = node.update_metadata(
+        updated, seed_value, positive_cond, negative_cond = node.update_metadata(
             original,
             model_name="new",
             sampler_info="Time: 1.2s",
@@ -197,9 +256,26 @@ class TestBubbaMetadataUpdate:
         assert updated.sampler_info == "Time: 1.2s"
         assert updated.seed == 42
         assert updated.filepath == "new/path"
+        assert seed_value == 42
+        assert positive_cond == [[None, {}]]
+        assert negative_cond == [[None, {}]]
+
+    def test_update_outputs_conditioning_with_clip(self):
+        node = BubbaMetadataUpdate()
+        original = BubbaMetadata(positive_prompt="hero", negative_prompt="blurry", seed=9)
+
+        updated, seed_value, positive_cond, negative_cond = node.update_metadata(
+            original,
+            clip=_DummyClip(),
+        )
+
+        assert updated.seed == 9
+        assert seed_value == 9
+        assert positive_cond[0][0].startswith("COND:")
+        assert negative_cond[0][0].startswith("COND:")
 
     def test_metadata(self):
-        assert BubbaMetadataUpdate.RETURN_TYPES == ("BUBBA_METADATA",)
+        assert BubbaMetadataUpdate.RETURN_TYPES == ("BUBBA_METADATA", "INT", "CONDITIONING", "CONDITIONING")
         assert BubbaMetadataUpdate.FUNCTION == "update_metadata"
         assert BubbaMetadataUpdate.CATEGORY == "Bubba Nodes"
 
@@ -259,7 +335,6 @@ class TestBubbaCharacterPromptBuilder:
         node = BubbaCharacterPromptBuilder()
         positive, negative, sections, positive_cond, negative_cond = node.build_prompt(
             _DummyClip(),
-            "Lena",
             "silver hair, green eyes",
             "athletic",
             "jacket",
@@ -273,10 +348,9 @@ class TestBubbaCharacterPromptBuilder:
             True,
             True,
         )
-        assert "Lena" in positive
         assert "|" in positive
         assert negative == "blurry, lowres"
-        assert "character: Lena" in sections
+        assert "character: " in sections
         assert "negative: blurry, lowres" in sections
         assert "format_mode: hybrid" in sections
         assert positive_cond[0][0].startswith("COND:")
@@ -286,7 +360,6 @@ class TestBubbaCharacterPromptBuilder:
         node = BubbaCharacterPromptBuilder()
         positive, negative, _, _, _ = node.build_prompt(
             _DummyClip(),
-            "Hero",
             "smile, Smile",
             "",
             "",
@@ -300,14 +373,13 @@ class TestBubbaCharacterPromptBuilder:
             True,
             True,
         )
-        assert positive == "Hero, smile"
+        assert positive == "smile"
         assert negative == "badhandv4"
 
     def test_prose_mode(self):
         node = BubbaCharacterPromptBuilder()
         positive, _, _, _, _ = node.build_prompt(
             _DummyClip(),
-            "Hero",
             "red scarf",
             "",
             "",
@@ -446,6 +518,8 @@ class TestBubbaPromptPresetSave:
 class TestMappings:
     def test_all_nodes_registered(self):
         assert "BubbaFilename" in NODE_CLASS_MAPPINGS
+        assert "BubbaEmptyLatentBySize" in NODE_CLASS_MAPPINGS
+        assert "BubbaLoadImageWithMetadata" in NODE_CLASS_MAPPINGS
         assert "BubbaCheckpointLoader" in NODE_CLASS_MAPPINGS
         assert "BubbaKSampler" in NODE_CLASS_MAPPINGS
         assert "BubbaSaveImage" in NODE_CLASS_MAPPINGS
@@ -464,6 +538,8 @@ class TestMappings:
 
     def test_class_mappings_point_to_classes(self):
         assert NODE_CLASS_MAPPINGS["BubbaFilename"] is BubbaFilename
+        assert NODE_CLASS_MAPPINGS["BubbaEmptyLatentBySize"] is BubbaEmptyLatentBySize
+        assert NODE_CLASS_MAPPINGS["BubbaLoadImageWithMetadata"] is BubbaLoadImageWithMetadata
         assert NODE_CLASS_MAPPINGS["BubbaCheckpointLoader"] is BubbaCheckpointLoader
         assert NODE_CLASS_MAPPINGS["BubbaOverlay"] is BubbaOverlay
         assert NODE_CLASS_MAPPINGS["BubbaOverlayFromMetadata"] is BubbaOverlayFromMetadata

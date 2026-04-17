@@ -8,6 +8,19 @@ def _coerce_metadata(metadata) -> BubbaMetadata:
     return BubbaMetadata.coerce(metadata)
 
 
+def _encode_conditioning(clip, text: str):
+    tokens = clip.tokenize(text or "")
+    if hasattr(clip, "encode_from_tokens_scheduled"):
+        return clip.encode_from_tokens_scheduled(tokens)
+
+    cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+    return [[cond, {"pooled_output": pooled}]]
+
+
+def _empty_conditioning():
+    return [[None, {}]]
+
+
 class BubbaMetadataBundle:
     @classmethod
     def INPUT_TYPES(s):
@@ -51,6 +64,7 @@ class BubbaMetadataBundle:
                         "default": 0,
                         "min": 0,
                         "max": 0xFFFFFFFFFFFFFFFF,
+                        "control_after_generate": False,
                         "tooltip": "Generation seed.",
                     },
                 ),
@@ -119,17 +133,18 @@ class BubbaMetadataUpdate:
                 "sampler_info": ("STRING", {"default": "", "multiline": True, "tooltip": "Override sampler/settings summary when not empty."}),
                 "positive_prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "Override positive prompt when not empty."}),
                 "negative_prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "Override negative prompt when not empty."}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "tooltip": "Override seed when set_seed is enabled."}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "control_after_generate": False, "tooltip": "Override seed when set_seed is enabled."}),
                 "set_seed": ("BOOLEAN", {"default": False, "tooltip": "Enable to overwrite the seed field."}),
                 "filepath": ("STRING", {"default": "", "multiline": False, "tooltip": "Override filepath when not empty."}),
+                "clip": ("CLIP", {"tooltip": "Optional CLIP to encode positive and negative conditioning outputs from metadata prompts."}),
             },
         }
 
-    RETURN_TYPES = (METADATA_TYPE,)
-    RETURN_NAMES = ("metadata",)
+    RETURN_TYPES = (METADATA_TYPE, "INT", "CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("metadata", "seed", "positive_conditioning", "negative_conditioning")
     FUNCTION = "update_metadata"
     CATEGORY = "Bubba Nodes"
-    DESCRIPTION = "Updates selected fields on an existing Bubba metadata object."
+    DESCRIPTION = "Updates selected metadata fields and optionally emits CLIP conditioning for positive/negative prompts."
 
     def update_metadata(
         self,
@@ -141,6 +156,7 @@ class BubbaMetadataUpdate:
         seed=0,
         set_seed=False,
         filepath="",
+        clip=None,
     ):
         current = _coerce_metadata(metadata)
         changes = {}
@@ -156,4 +172,14 @@ class BubbaMetadataUpdate:
             changes["seed"] = seed
         if str(filepath or "").strip():
             changes["filepath"] = filepath
-        return (current.updated(**changes),)
+
+        updated = current.updated(**changes)
+        if clip is None:
+            return (updated, updated.seed, _empty_conditioning(), _empty_conditioning())
+
+        return (
+            updated,
+            updated.seed,
+            _encode_conditioning(clip, updated.positive_prompt),
+            _encode_conditioning(clip, updated.negative_prompt),
+        )

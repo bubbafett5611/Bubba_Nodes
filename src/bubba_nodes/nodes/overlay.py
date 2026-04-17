@@ -281,6 +281,7 @@ class BubbaOverlay:
                         "default": 40,
                         "min": 10,
                         "max": 1000,
+                        "control_after_generate": False,
                     },
                 ),
                 "overlay_mode": (
@@ -439,6 +440,7 @@ class BubbaOverlayFromMetadata:
                         "default": 40,
                         "min": 10,
                         "max": 1000,
+                        "control_after_generate": False,
                     },
                 ),
                 "overlay_mode": (
