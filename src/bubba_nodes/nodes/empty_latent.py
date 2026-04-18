@@ -1,56 +1,88 @@
+from dataclasses import dataclass
+
 import torch
+
+# TODO(new-feature): Allow user-defined size presets loaded from a JSON file so artists can share profile packs.
+# TODO(new-node): Add a companion latent size recommender node that suggests dimensions from target aspect ratio + VRAM budget.
+
+
+@dataclass(frozen=True)
+class DimensionPreset:
+    label: str
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class DimensionGroup:
+    heading: str
+    presets: tuple[DimensionPreset, ...]
+
+
+_DIMENSION_GROUPS = (
+    DimensionGroup(
+        heading="Square",
+        presets=(
+            DimensionPreset("Tiny", 512, 512),
+            DimensionPreset("Small", 768, 768),
+            DimensionPreset("Medium", 1024, 1024),
+            DimensionPreset("Large", 1536, 1536),
+        ),
+    ),
+    DimensionGroup(
+        heading="16:9",
+        presets=(
+            DimensionPreset("Tiny", 896, 512),
+            DimensionPreset("Small", 1024, 576),
+            DimensionPreset("Medium", 1344, 768),
+            DimensionPreset("Large", 1536, 864),
+        ),
+    ),
+    DimensionGroup(
+        heading="4:3",
+        presets=(
+            DimensionPreset("Tiny", 704, 512),
+            DimensionPreset("Small", 1024, 768),
+            DimensionPreset("Medium", 1280, 960),
+            DimensionPreset("Large", 1536, 1152),
+        ),
+    ),
+    DimensionGroup(
+        heading="3:2",
+        presets=(
+            DimensionPreset("Tiny", 768, 512),
+            DimensionPreset("Small", 960, 640),
+            DimensionPreset("Medium", 1152, 768),
+            DimensionPreset("Large", 1536, 1024),
+        ),
+    ),
+    DimensionGroup(
+        heading="21:9",
+        presets=(
+            DimensionPreset("Tiny", 1152, 512),
+            DimensionPreset("Small", 1024, 448),
+            DimensionPreset("Medium", 1344, 576),
+            DimensionPreset("Large", 1536, 640),
+        ),
+    ),
+)
+
+
+def _preset_option_label(preset: DimensionPreset) -> str:
+    return f"{preset.label} ({preset.width}x{preset.height})"
 
 
 _DIMENSION_OPTIONS = [
-    "--- Square ---",
-    "Tiny (512x512)",
-    "Small (768x768)",
-    "Medium (1024x1024)",
-    "Large (1536x1536)",
-    "--- 16:9 ---",
-    "Tiny (896x512)",
-    "Small (1024x576)",
-    "Medium (1344x768)",
-    "Large (1536x864)",
-    "--- 4:3 ---",
-    "Tiny (704x512)",
-    "Small (1024x768)",
-    "Medium (1280x960)",
-    "Large (1536x1152)",
-    "--- 3:2 ---",
-    "Tiny (768x512)",
-    "Small (960x640)",
-    "Medium (1152x768)",
-    "Large (1536x1024)",
-    "--- 21:9 ---",
-    "Tiny (1152x512)",
-    "Small (1024x448)",
-    "Medium (1344x576)",
-    "Large (1536x640)",
+    option
+    for group in _DIMENSION_GROUPS
+    for option in ([f"--- {group.heading} ---"] + [_preset_option_label(preset) for preset in group.presets])
 ]
 
 
 _DIMENSIONS_BY_OPTION = {
-    "Tiny (512x512)": (512, 512),
-    "Small (768x768)": (768, 768),
-    "Medium (1024x1024)": (1024, 1024),
-    "Large (1536x1536)": (1536, 1536),
-    "Tiny (896x512)": (896, 512),
-    "Small (1024x576)": (1024, 576),
-    "Medium (1344x768)": (1344, 768),
-    "Large (1536x864)": (1536, 864),
-    "Tiny (704x512)": (704, 512),
-    "Small (1024x768)": (1024, 768),
-    "Medium (1280x960)": (1280, 960),
-    "Large (1536x1152)": (1536, 1152),
-    "Tiny (768x512)": (768, 512),
-    "Small (960x640)": (960, 640),
-    "Medium (1152x768)": (1152, 768),
-    "Large (1536x1024)": (1536, 1024),
-    "Tiny (1152x512)": (1152, 512),
-    "Small (1024x448)": (1024, 448),
-    "Medium (1344x576)": (1344, 576),
-    "Large (1536x640)": (1536, 640),
+    _preset_option_label(preset): (preset.width, preset.height)
+    for group in _DIMENSION_GROUPS
+    for preset in group.presets
 }
 
 
@@ -94,13 +126,16 @@ class BubbaEmptyLatentBySize:
 
     @staticmethod
     def _resolve_dimensions(size: str, invert_aspect_ratio: bool) -> tuple[int, int]:
-        # If a section header is chosen, fall back to a safe default.
-        width, height = _DIMENSIONS_BY_OPTION.get(size, (1024, 1024))
+        if size not in _DIMENSIONS_BY_OPTION:
+            raise ValueError(f"Invalid size preset selection: {size}")
+
+        width, height = _DIMENSIONS_BY_OPTION[size]
         if invert_aspect_ratio:
             width, height = height, width
         return (width, height)
 
     def build_empty_latent(self, size, invert_aspect_ratio, batch_size):
+        # TODO(optimize): Reuse a cached zero-latent buffer for repeated shape requests to reduce allocator churn.
         width, height = self._resolve_dimensions(size, invert_aspect_ratio)
         latent = torch.zeros([batch_size, 4, height // 8, width // 8], device="cpu")
         return ({"samples": latent}, width, height)

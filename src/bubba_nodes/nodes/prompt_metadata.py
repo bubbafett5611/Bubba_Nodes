@@ -1,5 +1,8 @@
 """Prompt builder that integrates with and updates BubbaMetadata."""
 
+# TODO(new-feature): Add optional style/character preset inputs that expand into sections before prompt assembly.
+# TODO(new-node): Add a metadata prompt diff node that compares previous and current sections for iterative tuning.
+
 from ..models import BubbaMetadata
 from ..utils.prompting import (
     assemble_prompt_sections,
@@ -146,6 +149,7 @@ class BubbaMetadataPromptBuilder:
         cleanup,
         dedupe,
     ):
+        # TODO(optimize): Short-circuit CLIP encoding when prompts are unchanged from incoming metadata.
         # Coerce metadata to ensure it's the right type
         current_metadata = BubbaMetadata.coerce(metadata)
 

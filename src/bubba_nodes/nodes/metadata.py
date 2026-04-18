@@ -1,6 +1,9 @@
 from ..models import BubbaMetadata
 from ..utils.prompting import empty_conditioning, encode_conditioning
 
+# TODO(new-node): Add a metadata merge node that combines multiple metadata objects with explicit conflict strategy options.
+# TODO(new-feature): Add metadata schema version + migration display in debug output to help long-lived workflows.
+
 
 METADATA_TYPE = "BUBBA_METADATA"
 
@@ -138,6 +141,7 @@ class BubbaMetadataUpdate:
         filepath="",
         clip=None,
     ):
+        # TODO(optimize): Replace repetitive field checks with a shared map-based updater to reduce maintenance overhead.
         current = BubbaMetadata.coerce(metadata)
         changes = {}
         if str(model_name or "").strip():

@@ -5,6 +5,9 @@ from nodes import common_ksampler
 
 from ..models import BubbaMetadata
 
+# TODO(new-node): Add an advanced sampler node with optional highres-fix two-pass sampling and per-pass metadata.
+# TODO(optimize): Capture and emit sampler timing breakdown (prep vs denoise) for performance profiling.
+
 
 class BubbaKSampler:
     @classmethod

@@ -11,6 +11,9 @@ except Exception:  # pragma: no cover - only used inside Comfy runtime
 
 from ..models import BubbaMetadata
 
+# TODO(new-feature): Add sidecar JSON export option for non-PNG outputs to preserve metadata portability.
+# TODO(new-node): Add a save manifest node that records every saved file path plus metadata digest for later audit/reload.
+
 
 _DEFAULT_METADATA_DICT = BubbaMetadata().to_dict()
 
@@ -90,6 +93,7 @@ class BubbaSaveImage:
 
     @classmethod
     def _embed_metadata_in_saved_images(cls, save_result: dict, metadata_json: str) -> None:
+        # TODO(optimize): Parallelize metadata embedding when multiple images are saved in one batch.
         for item in save_result.get("images", []):
             if not isinstance(item, dict):
                 continue

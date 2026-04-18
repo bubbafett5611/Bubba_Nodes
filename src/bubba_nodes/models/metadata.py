@@ -2,6 +2,9 @@ from dataclasses import dataclass
 import json
 from typing import Any, Mapping
 
+# TODO(new-feature): Introduce metadata schema_version with migration helpers for backward-compatible evolution.
+# TODO(optimize): Consider a lightweight validation cache for repeated coercions of identical metadata payloads.
+
 
 @dataclass(slots=True)
 class BubbaMetadata:

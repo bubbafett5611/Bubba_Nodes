@@ -4,6 +4,9 @@ import numpy as np
 from PIL import Image, ImageOps, ImageSequence
 import torch
 
+# TODO(new-node): Add a batch directory loader node that emits image, mask, and metadata streams with deterministic ordering.
+# TODO(optimize): Move per-frame numpy->torch conversion to a shared helper that can reuse buffers for same-sized frames.
+
 try:
     import folder_paths
 except Exception:  # pragma: no cover - only used inside Comfy runtime
@@ -100,6 +103,7 @@ class BubbaLoadImageWithMetadata:
         height = None
         dtype = self._intermediate_dtype()
 
+        # TODO(optimize): Add optional max_frames input and early termination for very large animated inputs.
         for frame in ImageSequence.Iterator(img):
             frame = self._call_pillow(ImageOps.exif_transpose, frame)
 

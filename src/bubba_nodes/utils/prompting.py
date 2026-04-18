@@ -1,5 +1,8 @@
 import re
 
+# TODO(new-feature): Support weighted tags syntax helpers (e.g., (tag:1.2)) with optional normalization rules.
+# TODO(optimize): Memoize prompt section normalization for repeated identical section payloads.
+
 
 _SPLIT_RE = re.compile(r"\s*,\s*")
 _MULTI_SPACE_RE = re.compile(r"\s+")
@@ -121,6 +124,7 @@ def build_prompts_from_sections(
     dedupe: bool,
     include_character_in_positive: bool = True,
 ) -> tuple[str, str, str]:
+    # TODO(optimize): Reduce intermediate string joins by building token arrays once and formatting at the end.
     normalized = default_prompt_sections()
     normalized.update(sections)
 

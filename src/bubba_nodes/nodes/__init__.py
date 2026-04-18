@@ -1,3 +1,6 @@
+# TODO(new-feature): Add optional auto-discovery registration so new node modules can be added without manual map edits.
+# TODO(new-node): Keep this mapping in sync when introducing new nodes (metadata merge, preset manager, manifest saver).
+
 from .filename import BubbaFilename
 from .empty_latent import BubbaEmptyLatentBySize
 from .load_image import BubbaLoadImageWithMetadata

@@ -1,5 +1,8 @@
 import re
 
+# TODO(new-node): Add a template-based filename node with date, seed, and model placeholders.
+# TODO(optimize): Precompute an optional transliteration/slugify pipeline for consistent cross-platform paths.
+
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 

@@ -1,5 +1,8 @@
 from nodes import CheckpointLoaderSimple
 
+# TODO(new-node): Add an advanced checkpoint node that also outputs model hash, filesize, and last-modified time.
+# TODO(optimize): Cache repeated checkpoint loads by name for workflows that re-evaluate unchanged graphs.
+
 
 class BubbaCheckpointLoader:
     @classmethod

@@ -4,6 +4,9 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import torch
 
+# TODO(new-node): Add a styled overlay preset node (cinematic, compact, streamer HUD) with reusable typography/layout presets.
+# TODO(optimize): Evaluate moving text rasterization to cached layers keyed by text+font+width to reduce repeated draw cost.
+
 from ..models import BubbaMetadata
 
 
@@ -54,6 +57,7 @@ def _parse_overlay_rgba(color: str) -> tuple[int, int, int, int]:
 
 def _wrap_overlay_text_to_width(text: str, font, max_width: int) -> str:
     """Word-wrap each line so it fits within max_width pixels."""
+    # TODO(optimize): Reuse a singleton probe canvas/draw context instead of allocating a new image each call.
     probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     result_lines = []
     for paragraph in text.split("\n"):

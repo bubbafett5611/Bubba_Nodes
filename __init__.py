@@ -1,5 +1,8 @@
 """Top-level package for bubba_nodes."""
 
+# TODO(optimize): Defer node imports until first access to reduce startup cost when Comfy scans many custom node packages.
+# TODO(new-feature): Emit a clear warning message in placeholder mode so missing runtime dependencies are easier to diagnose.
+
 __all__ = [
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",

@@ -2,7 +2,12 @@
 
 """Tests for `bubba_nodes` package."""
 
+# TODO(optimize): Add parametrized performance-focused tests for prompt cleaning and overlay text wrapping hot paths.
+# TODO(new-feature): Add integration tests that validate metadata persistence across save -> load for multi-image batches.
+
 import json
+
+import pytest
 
 from src.bubba_nodes.nodes import (
     BubbaFilename,
@@ -76,10 +81,9 @@ class TestBubbaEmptyLatentBySize:
         assert width == 768
         assert height == 1344
 
-    def test_resolve_dimensions_header_falls_back(self):
-        width, height = BubbaEmptyLatentBySize._resolve_dimensions("--- 16:9 ---", False)
-        assert width == 1024
-        assert height == 1024
+    def test_resolve_dimensions_header_raises_error(self):
+        with pytest.raises(ValueError, match="Invalid size preset selection"):
+            BubbaEmptyLatentBySize._resolve_dimensions("--- 16:9 ---", False)
 
     def test_build_empty_latent_outputs_shape_and_sizes(self):
         node = BubbaEmptyLatentBySize()

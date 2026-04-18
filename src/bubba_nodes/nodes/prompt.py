@@ -9,6 +9,9 @@ from ..utils.prompting import (
     split_prompt_tokens,
 )
 
+# TODO(new-node): Add a prompt preset library node that can load/save reusable section sets by character or scene.
+# TODO(new-feature): Add token-budget guidance output (per-model limits) to warn before conditioning truncation.
+
 
 def _find_duplicates(parts: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -25,6 +28,7 @@ def _find_duplicates(parts: list[str]) -> list[str]:
 
 
 def _conflict_pairs() -> tuple[tuple[str, str], ...]:
+    # TODO(optimize): Move conflict pairs to a config file so users can tune rules without code edits.
     # Keep this list concise and practical for prompt quality checks.
     return (
         ("solo", "multiple people"),
@@ -339,6 +343,7 @@ class BubbaPromptInspector:
         return [part for part in cleaned if part]
 
     def inspect_prompt(self, positive_prompt, negative_prompt):
+        # TODO(optimize): Add optional fast-path mode that skips duplicate and conflict checks for very long prompts.
         positive_parts = self._clean_parts(positive_prompt)
         negative_parts = self._clean_parts(negative_prompt)
 
