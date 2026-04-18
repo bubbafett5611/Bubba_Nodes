@@ -10,6 +10,40 @@ from ..utils.prompting import (
 )
 
 
+def _find_duplicates(parts: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    dup_seen: set[str] = set()
+    for part in parts:
+        key = part.lower()
+        if key in seen and key not in dup_seen:
+            duplicates.append(part)
+            dup_seen.add(key)
+            continue
+        seen.add(key)
+    return duplicates
+
+
+def _conflict_pairs() -> tuple[tuple[str, str], ...]:
+    # Keep this list concise and practical for prompt quality checks.
+    return (
+        ("solo", "multiple people"),
+        ("male", "female"),
+        ("day", "night"),
+        ("indoors", "outdoors"),
+        ("safe", "nsfw"),
+    )
+
+
+def _find_pair_conflicts(parts: list[str]) -> list[str]:
+    normalized = {part.strip().lower() for part in parts if part.strip()}
+    warnings: list[str] = []
+    for left, right in _conflict_pairs():
+        if left in normalized and right in normalized:
+            warnings.append(f"{left} <-> {right}")
+    return warnings
+
+
 def _build_prompts_from_sections(
     sections: dict[str, str],
     cleanup: bool,
@@ -266,5 +300,82 @@ class BubbaPromptCleaner:
             encode_conditioning(clip, clean_positive),
             encode_conditioning(clip, clean_negative),
         )
+
+
+class BubbaPromptInspector:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive_prompt": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "tooltip": "Positive prompt text to inspect.",
+                    },
+                ),
+                "negative_prompt": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "tooltip": "Negative prompt text to inspect.",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("INT", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("token_count", "duplicate_tags", "conflict_warnings", "formatted_preview")
+    FUNCTION = "inspect_prompt"
+    CATEGORY = "Bubba Nodes"
+    DESCRIPTION = "Analyzes positive/negative prompts for token count, duplicates, conflicts, and cleaned preview text."
+
+    @staticmethod
+    def _clean_parts(text: str) -> list[str]:
+        parts = split_prompt_tokens(text)
+        cleaned = [clean_prompt_value(part) for part in parts]
+        return [part for part in cleaned if part]
+
+    def inspect_prompt(self, positive_prompt, negative_prompt):
+        positive_parts = self._clean_parts(positive_prompt)
+        negative_parts = self._clean_parts(negative_prompt)
+
+        token_count = len(positive_parts) + len(negative_parts)
+
+        positive_duplicates = _find_duplicates(positive_parts)
+        negative_duplicates = _find_duplicates(negative_parts)
+        duplicate_lines: list[str] = []
+        if positive_duplicates:
+            duplicate_lines.append(f"positive: {', '.join(positive_duplicates)}")
+        if negative_duplicates:
+            duplicate_lines.append(f"negative: {', '.join(negative_duplicates)}")
+        duplicate_tags = "\n".join(duplicate_lines) if duplicate_lines else "none"
+
+        positive_set = {part.lower() for part in positive_parts}
+        negative_set = {part.lower() for part in negative_parts}
+        cross_conflicts = sorted(positive_set.intersection(negative_set))
+
+        warning_lines: list[str] = []
+        if cross_conflicts:
+            warning_lines.append(f"present in both positive and negative: {', '.join(cross_conflicts)}")
+        positive_pair_conflicts = _find_pair_conflicts(positive_parts)
+        if positive_pair_conflicts:
+            warning_lines.append(f"positive pair conflicts: {', '.join(positive_pair_conflicts)}")
+        negative_pair_conflicts = _find_pair_conflicts(negative_parts)
+        if negative_pair_conflicts:
+            warning_lines.append(f"negative pair conflicts: {', '.join(negative_pair_conflicts)}")
+        conflict_warnings = "\n".join(warning_lines) if warning_lines else "none"
+
+        formatted_positive = ", ".join(dedupe_prompt_tokens(positive_parts))
+        formatted_negative = ", ".join(dedupe_prompt_tokens(negative_parts))
+        formatted_preview = (
+            f"Positive: {formatted_positive}\n\n"
+            f"Negative: {formatted_negative}\n\n"
+            f"Token count: {token_count}"
+        )
+
+        return (token_count, duplicate_tags, conflict_warnings, formatted_preview)
 
 

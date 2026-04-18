@@ -1,12 +1,14 @@
-# Bubba Nodes
+﻿# Bubba Nodes
 
-Custom ComfyUI nodes focused on prompt building, metadata overlays, filename/path generation, and image saving workflows.
+Custom ComfyUI nodes for prompt authoring, prompt inspection, metadata-first workflows, overlays, and save/load helpers.
 
 ## What Is Included
 
-This extension currently registers 13 nodes:
+This extension currently registers 15 nodes:
 
 - Bubba Filename Builder
+- Bubba Empty Latent (Preset Sizes)
+- Bubba Load Image (With Metadata)
 - Bubba Checkpoint Loader
 - Bubba KSampler
 - Bubba Save Image
@@ -16,13 +18,15 @@ This extension currently registers 13 nodes:
 - Bubba Metadata Debug
 - Bubba Metadata Update
 - Bubba Character Prompt Builder
+- Bubba Metadata Prompt Builder
 - Bubba Prompt Cleaner
-- Bubba Prompt Preset
-- Bubba Prompt Preset Save
+- Bubba Prompt Inspector
 
 ## Features
 
 - Build clean relative file paths from character + scene names.
+- Generate empty latents from preset dimensions with optional orientation swap.
+- Load images and extract embedded Bubba metadata from PNG text.
 - Load checkpoint model/clip/vae while also outputting the selected checkpoint name for metadata/overlay nodes.
 - Run KSampler and output a formatted INFO string (time, seed, steps, CFG, sampler, scheduler, denoise).
 - Run KSampler and update a metadata object with sampler info and seed.
@@ -31,10 +35,10 @@ This extension currently registers 13 nodes:
 - Bundle core generation metadata into a typed metadata object for downstream nodes.
 - Convert metadata objects to pretty JSON text for preview/debug nodes.
 - Update selected fields on an existing metadata object without rebuilding it from scratch.
-- Build structured positive/negative prompts from sections (character, appearance, scene, style, quality, etc.).
-- Emit positive/negative conditioning directly from the prompt builder and prompt preset nodes.
+- Build structured positive/negative prompts from sections (appearance, body, clothing, pose, expression, scene, style, quality).
+- Build prompt sections directly into metadata with prompt section persistence.
 - Normalize and dedupe prompt tags.
-- Save and load reusable prompt presets from JSON.
+- Inspect prompts for token count, duplicates, and conflict warnings.
 - Save images normally or preview-only through ComfyUI UI helpers, with optional filepath pulled from metadata.
 
 ## Installation
@@ -59,21 +63,33 @@ git clone https://github.com/bubbafett5611/bubba_nodes.git
 
 ## Quick Workflow Example
 
-1. Use Bubba Character Prompt Builder (or Bubba Prompt Preset) to produce prompts and conditioning.
-2. Build or update metadata with checkpoint, prompt, and filepath information.
-3. Use Bubba KSampler for generation and let it update sampler info in metadata.
-4. Decode latent to image in your normal pipeline.
-5. Use Bubba Add Text Overlay (Metadata) to embed model/info/prompt text.
-6. Use Bubba Filename Builder when you want a filepath string outside metadata.
-7. Use Bubba Save Image to write to output or preview temp storage.
+1. Use Bubba Character Prompt Builder to produce positive/negative prompts and conditioning.
+2. Optionally run Bubba Prompt Cleaner and Bubba Prompt Inspector for quality checks.
+3. Build metadata with Bubba Metadata Bundle, or use Bubba Metadata Prompt Builder to create prompts and metadata together.
+4. Load checkpoint and sample with Bubba KSampler so sampler info/seed are written back into metadata.
+5. Decode latent to image in your normal pipeline.
+6. Use Bubba Add Text Overlay (Metadata) to render model/info/prompt text from metadata.
+7. Use Bubba Filename Builder when you want an explicit path string outside metadata.
+8. Save with Bubba Save Image and optionally reload with Bubba Load Image (With Metadata).
 
-## Prompt Presets
+## Metadata Notes
 
-Preset data is stored in [prompt_presets.json](prompt_presets.json).
+- Metadata is represented by the typed BUBBA_METADATA object.
+- Metadata includes model_name, sampler_info, positive_prompt, negative_prompt, seed, filepath, and prompt_sections.
+- Bubba Save Image embeds metadata into PNG text under bubba_metadata.
+- Bubba Load Image (With Metadata) reads bubba_metadata from PNG text and reconstructs BUBBA_METADATA.
 
-- Bubba Prompt Preset Save writes sections to JSON by preset name.
-- Bubba Prompt Preset loads a saved preset and allows per-section overrides.
-- Supported format modes are booru, prose, and hybrid.
+## Prompt Notes
+
+- Supported format_mode values are booru, prose, and hybrid.
+- Prompt Inspector outputs:
+  - token_count (INT)
+  - duplicate_tags (STRING)
+  - conflict_warnings (STRING)
+  - formatted_preview (STRING)
+- Prompt conflict warnings currently include:
+  - tags that appear in both positive and negative prompts
+  - simple pair checks such as solo/multiple people, male/female, day/night, indoors/outdoors, and safe/nsfw
 
 ## Node Documentation
 
@@ -110,9 +126,10 @@ pytest
 ## Project Layout
 
 - Nodes: [src/bubba_nodes/nodes](src/bubba_nodes/nodes)
+- Models: [src/bubba_nodes/models](src/bubba_nodes/models)
+- Utilities: [src/bubba_nodes/utils](src/bubba_nodes/utils)
 - Tests: [tests](tests)
 - Web docs: [web/docs](web/docs)
-- Prompt presets: [prompt_presets.json](prompt_presets.json)
 
 ## Publishing
 
@@ -126,4 +143,3 @@ If publishing to the Comfy Registry:
 4. Trigger your release workflow.
 
 Registry docs: https://docs.comfy.org/registry/publishing
-

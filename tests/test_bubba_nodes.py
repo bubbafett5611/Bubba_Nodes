@@ -3,8 +3,6 @@
 """Tests for `bubba_nodes` package."""
 
 import json
-import tempfile
-from pathlib import Path
 
 from src.bubba_nodes.nodes import (
     BubbaFilename,
@@ -19,14 +17,13 @@ from src.bubba_nodes.nodes import (
     BubbaMetadataDebug,
     BubbaMetadataUpdate,
     BubbaCharacterPromptBuilder,
+    BubbaMetadataPromptBuilder,
     BubbaPromptCleaner,
-    BubbaPromptPreset,
-    BubbaPromptPresetSave,
+    BubbaPromptInspector,
     NODE_CLASS_MAPPINGS,
     NODE_DISPLAY_NAME_MAPPINGS,
 )
 from src.bubba_nodes.models import BubbaMetadata
-from src.bubba_nodes.nodes import prompt as prompt_module
 
 
 class _DummyClip:
@@ -283,7 +280,7 @@ class TestBubbaMetadataUpdate:
 class TestBubbaMetadataModel:
     def test_from_json_normalizes_types_and_whitespace(self):
         metadata = BubbaMetadata.from_json(
-            '{"model_name":" modelA ","sampler_info":" info ","positive_prompt":" pos ","negative_prompt":" neg ","seed":"123","filepath":" folder/file "}'
+            '{"model_name":" modelA ","sampler_info":" info ","positive_prompt":" pos ","negative_prompt":" neg ","seed":"123","filepath":" folder/file ","prompt_sections":" appearance: silver hair "}'
         )
 
         assert metadata.model_name == "modelA"
@@ -292,6 +289,7 @@ class TestBubbaMetadataModel:
         assert metadata.negative_prompt == "neg"
         assert metadata.seed == 123
         assert metadata.filepath == "folder/file"
+        assert metadata.prompt_sections == "appearance: silver hair"
 
     def test_from_json_invalid_payload_falls_back(self):
         metadata = BubbaMetadata.from_json("not-json")
@@ -311,6 +309,7 @@ class TestBubbaMetadataModel:
             negative_prompt="blurry",
             seed=7,
             filepath="Character/Scene",
+            prompt_sections="appearance: silver hair",
         )
         payload = json.loads(metadata.to_json())
 
@@ -320,6 +319,7 @@ class TestBubbaMetadataModel:
         assert payload["negative_prompt"] == "blurry"
         assert payload["seed"] == 7
         assert payload["filepath"] == "Character/Scene"
+        assert payload["prompt_sections"] == "appearance: silver hair"
 
     def test_updated_returns_normalized_copy(self):
         metadata = BubbaMetadata(model_name="old", seed=1)
@@ -401,6 +401,44 @@ class TestBubbaCharacterPromptBuilder:
         assert BubbaCharacterPromptBuilder.CATEGORY == "Bubba Nodes"
 
 
+class TestBubbaMetadataPromptBuilder:
+    def test_build_prompt_updates_metadata(self):
+        node = BubbaMetadataPromptBuilder()
+        metadata_in = BubbaMetadata(model_name="modelA", filepath="Character/Scene")
+
+        metadata_out, positive, negative, sections, positive_cond, negative_cond = node.build_prompt(
+            metadata_in,
+            _DummyClip(),
+            "silver hair",
+            "athletic",
+            "jacket",
+            "standing",
+            "smile",
+            "city rooftop",
+            "anime",
+            "best quality",
+            "blurry",
+            "hybrid",
+            True,
+            True,
+        )
+
+        assert isinstance(metadata_out, BubbaMetadata)
+        assert "silver hair" in positive
+        assert negative == "blurry"
+        assert "appearance: silver hair" in sections
+        assert metadata_out.positive_prompt == positive
+        assert metadata_out.negative_prompt == negative
+        assert metadata_out.prompt_sections == sections
+        assert positive_cond[0][0].startswith("COND:")
+        assert negative_cond[0][0].startswith("COND:")
+
+    def test_metadata(self):
+        assert BubbaMetadataPromptBuilder.RETURN_TYPES == ("BUBBA_METADATA", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
+        assert BubbaMetadataPromptBuilder.FUNCTION == "build_prompt"
+        assert BubbaMetadataPromptBuilder.CATEGORY == "Bubba Nodes"
+
+
 class TestBubbaPromptCleaner:
     def test_clean_prompt_cleanup_and_dedupe(self):
         node = BubbaPromptCleaner()
@@ -435,84 +473,24 @@ class TestBubbaPromptCleaner:
         assert BubbaPromptCleaner.CATEGORY == "Bubba Nodes"
 
 
-class TestBubbaPromptPreset:
-    def test_build_from_preset_with_overrides(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_file = Path(temp_dir) / "prompt_presets.json"
-            original = prompt_module._presets_file_path
-            prompt_module._presets_file_path = lambda: temp_file
-            try:
-                saver = BubbaPromptPresetSave()
-                saver.save_preset(
-                    "HeroPreset",
-                    "character: Hero\nappearance: silver hair, green eyes\nbody: athletic\nclothing: jacket\npose: standing\nexpression: focused\nscene: city rooftop\nstyle: anime style\nquality: best quality\nnegative: blurry, lowres\nformat_mode: hybrid",
-                    True,
-                )
+class TestBubbaPromptInspector:
+    def test_inspect_prompt_reports_counts_duplicates_and_preview(self):
+        node = BubbaPromptInspector()
+        token_count, duplicate_tags, conflict_warnings, formatted_preview = node.inspect_prompt(
+            "hero, smile, smile, day, indoors",
+            "blurry, hero, night",
+        )
 
-                node = BubbaPromptPreset()
-                positive, negative, sections, loaded_name, positive_cond, negative_cond = node.build_from_preset(
-                    _DummyClip(),
-                    "HeroPreset",
-                    "",
-                    "",
-                    "",
-                    "leather coat",
-                    "running",
-                    "",
-                    "rainy street",
-                    "",
-                    "",
-                    "",
-                    "hybrid",
-                    False,
-                    True,
-                    True,
-                )
-            finally:
-                prompt_module._presets_file_path = original
-
-        assert loaded_name == "HeroPreset"
-        assert "Hero" in positive
-        assert "leather coat" in positive
-        assert "running" in positive
-        assert "rainy street" in positive
-        assert "|" in positive
-        assert negative == "blurry, lowres"
-        assert "appearance: silver hair, green eyes" in sections
-        assert "pose: running" in sections
-        assert positive_cond[0][0].startswith("COND:")
-        assert negative_cond[0][0].startswith("COND:")
+        assert token_count == 8
+        assert "positive: smile" in duplicate_tags
+        assert "present in both positive and negative: hero" in conflict_warnings
+        assert "Positive: hero, smile, day, indoors" in formatted_preview
+        assert "Negative: blurry, hero, night" in formatted_preview
 
     def test_metadata(self):
-        assert BubbaPromptPreset.RETURN_TYPES == ("STRING", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
-        assert BubbaPromptPreset.FUNCTION == "build_from_preset"
-        assert BubbaPromptPreset.CATEGORY == "Bubba Nodes"
-
-
-class TestBubbaPromptPresetSave:
-    def test_save_preset_writes_json(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_file = Path(temp_dir) / "prompt_presets.json"
-            original = prompt_module._presets_file_path
-            prompt_module._presets_file_path = lambda: temp_file
-            try:
-                node = BubbaPromptPresetSave()
-                status, saved_name = node.save_preset(
-                    "MagePreset",
-                    "character: Mage\nappearance: long hair\nbody: slim\nclothing: robe\npose: casting\nexpression: calm\nscene: library\nstyle: fantasy art\nquality: high detail\nnegative: blurry\nformat_mode: booru",
-                    True,
-                )
-            finally:
-                prompt_module._presets_file_path = original
-
-        assert "Saved preset" in status
-        assert saved_name == "MagePreset"
-        assert temp_file.exists()
-
-    def test_metadata(self):
-        assert BubbaPromptPresetSave.RETURN_TYPES == ("STRING", "STRING")
-        assert BubbaPromptPresetSave.FUNCTION == "save_preset"
-        assert BubbaPromptPresetSave.CATEGORY == "Bubba Nodes"
+        assert BubbaPromptInspector.RETURN_TYPES == ("INT", "STRING", "STRING", "STRING")
+        assert BubbaPromptInspector.FUNCTION == "inspect_prompt"
+        assert BubbaPromptInspector.CATEGORY == "Bubba Nodes"
 
 
 class TestMappings:
@@ -529,9 +507,9 @@ class TestMappings:
         assert "BubbaMetadataDebug" in NODE_CLASS_MAPPINGS
         assert "BubbaMetadataUpdate" in NODE_CLASS_MAPPINGS
         assert "BubbaCharacterPromptBuilder" in NODE_CLASS_MAPPINGS
+        assert "BubbaMetadataPromptBuilder" in NODE_CLASS_MAPPINGS
         assert "BubbaPromptCleaner" in NODE_CLASS_MAPPINGS
-        assert "BubbaPromptPreset" in NODE_CLASS_MAPPINGS
-        assert "BubbaPromptPresetSave" in NODE_CLASS_MAPPINGS
+        assert "BubbaPromptInspector" in NODE_CLASS_MAPPINGS
 
     def test_display_names_match_keys(self):
         assert NODE_CLASS_MAPPINGS.keys() == NODE_DISPLAY_NAME_MAPPINGS.keys()
@@ -547,6 +525,6 @@ class TestMappings:
         assert NODE_CLASS_MAPPINGS["BubbaMetadataDebug"] is BubbaMetadataDebug
         assert NODE_CLASS_MAPPINGS["BubbaMetadataUpdate"] is BubbaMetadataUpdate
         assert NODE_CLASS_MAPPINGS["BubbaCharacterPromptBuilder"] is BubbaCharacterPromptBuilder
+        assert NODE_CLASS_MAPPINGS["BubbaMetadataPromptBuilder"] is BubbaMetadataPromptBuilder
         assert NODE_CLASS_MAPPINGS["BubbaPromptCleaner"] is BubbaPromptCleaner
-        assert NODE_CLASS_MAPPINGS["BubbaPromptPreset"] is BubbaPromptPreset
-        assert NODE_CLASS_MAPPINGS["BubbaPromptPresetSave"] is BubbaPromptPresetSave
+        assert NODE_CLASS_MAPPINGS["BubbaPromptInspector"] is BubbaPromptInspector
