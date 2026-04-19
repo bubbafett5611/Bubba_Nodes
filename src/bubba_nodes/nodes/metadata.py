@@ -69,7 +69,7 @@ class BubbaMetadataBundle:
     RETURN_TYPES = (METADATA_TYPE,)
     RETURN_NAMES = ("metadata",)
     FUNCTION = "build_metadata"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Metadata"
     DESCRIPTION = "Bundles generation metadata into a typed metadata object for downstream nodes."
 
     def build_metadata(self, model_name, sampler_info, positive_prompt, negative_prompt, seed, filepath):
@@ -96,7 +96,7 @@ class BubbaMetadataDebug:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("metadata_text",)
     FUNCTION = "debug_metadata"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Metadata"
     DESCRIPTION = "Converts Bubba metadata object to pretty JSON text for preview/debug nodes."
 
     def debug_metadata(self, metadata):
@@ -126,7 +126,7 @@ class BubbaMetadataUpdate:
     RETURN_TYPES = (METADATA_TYPE, "INT", "CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("metadata", "seed", "positive_conditioning", "negative_conditioning")
     FUNCTION = "update_metadata"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Metadata"
     DESCRIPTION = "Updates selected metadata fields and optionally emits CLIP conditioning for positive/negative prompts."
 
     def update_metadata(

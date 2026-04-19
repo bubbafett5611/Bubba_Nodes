@@ -1,6 +1,5 @@
 from functools import lru_cache
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import torch
 
@@ -8,6 +7,7 @@ import torch
 # TODO(optimize): Evaluate moving text rasterization to cached layers keyed by text+font+width to reduce repeated draw cost.
 
 from ..models import BubbaMetadata
+from ..utils.image_ops import pil_to_tensor_like, tensor_sample_to_pil
 
 
 def _compose_overlay_text(
@@ -147,8 +147,7 @@ def _render_overlay_image_batch(
     output = []
 
     for sample in image:
-        src = np.clip(255.0 * sample.cpu().numpy(), 0, 255).astype(np.uint8)
-        src_pil = Image.fromarray(src)
+        src_pil = tensor_sample_to_pil(sample)
         src_rgba = src_pil.convert("RGBA")
         width, height = src_rgba.size
 
@@ -176,14 +175,16 @@ def _render_overlay_image_batch(
                 draw.rectangle((0, y0, width, new_h), fill=rgba)
                 draw.multiline_text((pad_x, y0 + bottom_text_y), bottom_wrapped, font=font, fill=(255, 255, 255, 255))
 
-        if sample.shape[-1] == 4:
-            out_arr = np.asarray(composed).astype(np.float32) / 255.0
-        else:
-            out_arr = np.asarray(composed.convert("RGB")).astype(np.float32) / 255.0
+        output.append(
+            pil_to_tensor_like(
+                composed,
+                sample,
+                device=image.device,
+                dtype=image.dtype,
+            )
+        )
 
-        output.append(torch.from_numpy(out_arr))
-
-    return (torch.stack(output, dim=0).to(image.device, dtype=image.dtype),)
+    return (torch.stack(output, dim=0),)
 
 
 class BubbaOverlay:
@@ -300,7 +301,7 @@ class BubbaOverlay:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
     FUNCTION = "add_text_overlay"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Image/Overlay"
     DESCRIPTION = "Adds an iTools-style text bar in overlay or underlay mode from individually toggled metadata fields."
 
     @staticmethod
@@ -459,7 +460,7 @@ class BubbaOverlayFromMetadata:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
     FUNCTION = "add_metadata_overlay"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Image/Overlay"
     DESCRIPTION = "Adds text overlay using fields extracted from Bubba Metadata Bundle object."
 
     @staticmethod

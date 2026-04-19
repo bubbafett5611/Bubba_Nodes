@@ -18,6 +18,7 @@ from src.bubba_nodes.nodes import (
     BubbaSaveImage,
     BubbaOverlay,
     BubbaOverlayFromMetadata,
+    BubbaWatermark,
     BubbaMetadataBundle,
     BubbaMetadataDebug,
     BubbaMetadataUpdate,
@@ -68,7 +69,7 @@ class TestBubbaFilename:
     def test_metadata(self):
         assert BubbaFilename.RETURN_TYPES == ("STRING",)
         assert BubbaFilename.FUNCTION == "build_path"
-        assert BubbaFilename.CATEGORY == "Bubba Nodes"
+        assert BubbaFilename.CATEGORY == "Bubba Nodes/Workflow"
 
 
 class TestBubbaEmptyLatentBySize:
@@ -97,7 +98,7 @@ class TestBubbaEmptyLatentBySize:
     def test_metadata(self):
         assert BubbaEmptyLatentBySize.RETURN_TYPES == ("LATENT", "INT", "INT")
         assert BubbaEmptyLatentBySize.FUNCTION == "build_empty_latent"
-        assert BubbaEmptyLatentBySize.CATEGORY == "Bubba Nodes"
+        assert BubbaEmptyLatentBySize.CATEGORY == "Bubba Nodes/Generation"
 
 
 class TestBubbaLoadImageWithMetadata:
@@ -124,21 +125,21 @@ class TestBubbaLoadImageWithMetadata:
     def test_metadata(self):
         assert BubbaLoadImageWithMetadata.RETURN_TYPES == ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
         assert BubbaLoadImageWithMetadata.FUNCTION == "load_image"
-        assert BubbaLoadImageWithMetadata.CATEGORY == "Bubba Nodes"
+        assert BubbaLoadImageWithMetadata.CATEGORY == "Bubba Nodes/Image/Load"
 
 
 class TestBubbaCheckpointLoader:
     def test_metadata(self):
         assert BubbaCheckpointLoader.RETURN_TYPES == ("MODEL", "CLIP", "VAE", "STRING")
         assert BubbaCheckpointLoader.FUNCTION == "load_checkpoint_with_name"
-        assert BubbaCheckpointLoader.CATEGORY == "Bubba Nodes"
+        assert BubbaCheckpointLoader.CATEGORY == "Bubba Nodes/Generation"
 
 
 class TestBubbaKSampler:
     def test_metadata(self):
         assert BubbaKSampler.RETURN_TYPES == ("LATENT", "STRING", "BUBBA_METADATA")
         assert BubbaKSampler.FUNCTION == "sample"
-        assert BubbaKSampler.CATEGORY == "Bubba Nodes"
+        assert BubbaKSampler.CATEGORY == "Bubba Nodes/Generation"
 
 
 class TestBubbaOverlay:
@@ -160,7 +161,7 @@ class TestBubbaOverlay:
     def test_metadata(self):
         assert BubbaOverlay.RETURN_TYPES == ("IMAGE",)
         assert BubbaOverlay.FUNCTION == "add_text_overlay"
-        assert BubbaOverlay.CATEGORY == "Bubba Nodes"
+        assert BubbaOverlay.CATEGORY == "Bubba Nodes/Image/Overlay"
 
 
 class TestBubbaOverlayFromMetadata:
@@ -189,7 +190,32 @@ class TestBubbaOverlayFromMetadata:
     def test_metadata(self):
         assert BubbaOverlayFromMetadata.RETURN_TYPES == ("IMAGE",)
         assert BubbaOverlayFromMetadata.FUNCTION == "add_metadata_overlay"
-        assert BubbaOverlayFromMetadata.CATEGORY == "Bubba Nodes"
+        assert BubbaOverlayFromMetadata.CATEGORY == "Bubba Nodes/Image/Overlay"
+
+
+class TestBubbaWatermark:
+    def test_input_types_exposes_optional_mask(self):
+        input_types = BubbaWatermark.INPUT_TYPES()
+
+        assert "optional" in input_types
+        assert "watermark_mask" in input_types["optional"]
+
+    def test_resolve_anchor_position_center(self):
+        x, y = BubbaWatermark._resolve_anchor_position("center", 1000, 600, 200, 100)
+
+        assert x == 400
+        assert y == 250
+
+    def test_resolve_anchor_position_bottom_right(self):
+        x, y = BubbaWatermark._resolve_anchor_position("bottom_right", 1000, 600, 200, 100)
+
+        assert x == 800
+        assert y == 500
+
+    def test_metadata(self):
+        assert BubbaWatermark.RETURN_TYPES == ("IMAGE",)
+        assert BubbaWatermark.FUNCTION == "add_watermark"
+        assert BubbaWatermark.CATEGORY == "Bubba Nodes/Image/Overlay"
 
 
 class TestBubbaMetadataBundle:
@@ -214,7 +240,7 @@ class TestBubbaMetadataBundle:
     def test_metadata(self):
         assert BubbaMetadataBundle.RETURN_TYPES == ("BUBBA_METADATA",)
         assert BubbaMetadataBundle.FUNCTION == "build_metadata"
-        assert BubbaMetadataBundle.CATEGORY == "Bubba Nodes"
+        assert BubbaMetadataBundle.CATEGORY == "Bubba Nodes/Metadata"
 
 
 class TestBubbaMetadataDebug:
@@ -237,7 +263,7 @@ class TestBubbaMetadataDebug:
     def test_metadata(self):
         assert BubbaMetadataDebug.RETURN_TYPES == ("STRING",)
         assert BubbaMetadataDebug.FUNCTION == "debug_metadata"
-        assert BubbaMetadataDebug.CATEGORY == "Bubba Nodes"
+        assert BubbaMetadataDebug.CATEGORY == "Bubba Nodes/Metadata"
 
 
 class TestBubbaMetadataUpdate:
@@ -278,7 +304,7 @@ class TestBubbaMetadataUpdate:
     def test_metadata(self):
         assert BubbaMetadataUpdate.RETURN_TYPES == ("BUBBA_METADATA", "INT", "CONDITIONING", "CONDITIONING")
         assert BubbaMetadataUpdate.FUNCTION == "update_metadata"
-        assert BubbaMetadataUpdate.CATEGORY == "Bubba Nodes"
+        assert BubbaMetadataUpdate.CATEGORY == "Bubba Nodes/Metadata"
 
 
 class TestBubbaMetadataModel:
@@ -402,7 +428,7 @@ class TestBubbaCharacterPromptBuilder:
     def test_metadata(self):
         assert BubbaCharacterPromptBuilder.RETURN_TYPES == ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
         assert BubbaCharacterPromptBuilder.FUNCTION == "build_prompt"
-        assert BubbaCharacterPromptBuilder.CATEGORY == "Bubba Nodes"
+        assert BubbaCharacterPromptBuilder.CATEGORY == "Bubba Nodes/Prompt"
 
 
 class TestBubbaMetadataPromptBuilder:
@@ -440,7 +466,7 @@ class TestBubbaMetadataPromptBuilder:
     def test_metadata(self):
         assert BubbaMetadataPromptBuilder.RETURN_TYPES == ("BUBBA_METADATA", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
         assert BubbaMetadataPromptBuilder.FUNCTION == "build_prompt"
-        assert BubbaMetadataPromptBuilder.CATEGORY == "Bubba Nodes"
+        assert BubbaMetadataPromptBuilder.CATEGORY == "Bubba Nodes/Prompt"
 
 
 class TestBubbaPromptCleaner:
@@ -474,7 +500,7 @@ class TestBubbaPromptCleaner:
     def test_metadata(self):
         assert BubbaPromptCleaner.RETURN_TYPES == ("STRING", "STRING", "CONDITIONING", "CONDITIONING")
         assert BubbaPromptCleaner.FUNCTION == "clean_prompt"
-        assert BubbaPromptCleaner.CATEGORY == "Bubba Nodes"
+        assert BubbaPromptCleaner.CATEGORY == "Bubba Nodes/Prompt"
 
 
 class TestBubbaPromptInspector:
@@ -494,7 +520,7 @@ class TestBubbaPromptInspector:
     def test_metadata(self):
         assert BubbaPromptInspector.RETURN_TYPES == ("INT", "STRING", "STRING", "STRING")
         assert BubbaPromptInspector.FUNCTION == "inspect_prompt"
-        assert BubbaPromptInspector.CATEGORY == "Bubba Nodes"
+        assert BubbaPromptInspector.CATEGORY == "Bubba Nodes/Prompt"
 
 
 class TestMappings:
@@ -507,6 +533,7 @@ class TestMappings:
         assert "BubbaSaveImage" in NODE_CLASS_MAPPINGS
         assert "BubbaOverlay" in NODE_CLASS_MAPPINGS
         assert "BubbaOverlayFromMetadata" in NODE_CLASS_MAPPINGS
+        assert "BubbaWatermark" in NODE_CLASS_MAPPINGS
         assert "BubbaMetadataBundle" in NODE_CLASS_MAPPINGS
         assert "BubbaMetadataDebug" in NODE_CLASS_MAPPINGS
         assert "BubbaMetadataUpdate" in NODE_CLASS_MAPPINGS

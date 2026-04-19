@@ -121,7 +121,7 @@ class BubbaEmptyLatentBySize:
     RETURN_TYPES = ("LATENT", "INT", "INT")
     RETURN_NAMES = ("latent", "width", "height")
     FUNCTION = "build_empty_latent"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = "Creates an empty latent from a baked-in preset size list with optional aspect-ratio inversion."
 
     @staticmethod

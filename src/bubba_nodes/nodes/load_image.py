@@ -60,7 +60,7 @@ class BubbaLoadImageWithMetadata:
     RETURN_TYPES = ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
     RETURN_NAMES = ("image", "mask", "metadata", "metadata_text")
     FUNCTION = "load_image"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Image/Load"
     DESCRIPTION = "Loads an image using ComfyUI LoadImage behavior and returns mask plus embedded Bubba metadata (PNG text key 'bubba_metadata')."
 
     @staticmethod

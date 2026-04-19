@@ -138,7 +138,7 @@ class BubbaMetadataPromptBuilder:
     RETURN_TYPES = ("BUBBA_METADATA", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("metadata", "positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning")
     FUNCTION = "build_prompt"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Prompt"
     DESCRIPTION = "Builds positive/negative prompts from character sections, encodes conditioning, and updates metadata with sections."
 
     def build_prompt(

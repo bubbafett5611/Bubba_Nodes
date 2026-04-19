@@ -100,7 +100,7 @@ class BubbaKSampler:
     RETURN_TYPES = ("LATENT", "STRING", "BUBBA_METADATA")
     RETURN_NAMES = ("LATENT", "INFO", "metadata")
     FUNCTION = "sample"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = "Runs KSampler, outputs formatted info text, and updates metadata when provided."
 
     @staticmethod

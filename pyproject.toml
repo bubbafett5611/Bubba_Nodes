@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bubba_nodes"
-version = "0.0.1"
+version = "0.0.2"
 description = "A collection of custom nodes for ComfyUI"
 authors = [
-  {name = "BubbaNodes", email = "metalgfx@gmail.com"}
+  {name = "bubbafett5611", email = "metalgfx@gmail.com"}
 ]
 readme = "README.md"
 license = {text = "GNU General Public License v3"}

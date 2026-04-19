@@ -52,7 +52,7 @@ class BubbaSaveImage:
     RETURN_TYPES = ()
     FUNCTION = "save_images"
     OUTPUT_NODE = True
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Image/Save"
     DESCRIPTION = "Saves images using filepath or metadata.filepath, with optional preview-only temp mode and embedded Bubba metadata for PNG files."
 
     @staticmethod

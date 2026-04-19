@@ -8,46 +8,14 @@ from ..utils.prompting import (
     format_positive_prompt,
     split_prompt_tokens,
 )
+from ..utils.prompt_analysis import (
+    find_duplicate_prompt_tokens,
+    find_pair_conflicts,
+    normalize_prompt_csv,
+)
 
 # TODO(new-node): Add a prompt preset library node that can load/save reusable section sets by character or scene.
 # TODO(new-feature): Add token-budget guidance output (per-model limits) to warn before conditioning truncation.
-
-
-def _find_duplicates(parts: list[str]) -> list[str]:
-    seen: set[str] = set()
-    duplicates: list[str] = []
-    dup_seen: set[str] = set()
-    for part in parts:
-        key = part.lower()
-        if key in seen and key not in dup_seen:
-            duplicates.append(part)
-            dup_seen.add(key)
-            continue
-        seen.add(key)
-    return duplicates
-
-
-def _conflict_pairs() -> tuple[tuple[str, str], ...]:
-    # TODO(optimize): Move conflict pairs to a config file so users can tune rules without code edits.
-    # Keep this list concise and practical for prompt quality checks.
-    return (
-        ("solo", "multiple people"),
-        ("male", "female"),
-        ("day", "night"),
-        ("indoors", "outdoors"),
-        ("safe", "nsfw"),
-    )
-
-
-def _find_pair_conflicts(parts: list[str]) -> list[str]:
-    normalized = {part.strip().lower() for part in parts if part.strip()}
-    warnings: list[str] = []
-    for left, right in _conflict_pairs():
-        if left in normalized and right in normalized:
-            warnings.append(f"{left} <-> {right}")
-    return warnings
-
-
 def _build_prompts_from_sections(
     sections: dict[str, str],
     cleanup: bool,
@@ -180,7 +148,7 @@ class BubbaCharacterPromptBuilder:
     RETURN_TYPES = ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning")
     FUNCTION = "build_prompt"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Prompt"
     DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP."
 
     @staticmethod
@@ -288,17 +256,11 @@ class BubbaPromptCleaner:
     RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("clean_positive", "clean_negative", "positive_conditioning", "negative_conditioning")
     FUNCTION = "clean_prompt"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Prompt"
     DESCRIPTION = "Cleans positive and negative prompts and optionally encodes conditioning when CLIP is connected."
 
     def _normalize(self, text: str, cleanup: bool, dedupe: bool) -> str:
-        parts = BubbaCharacterPromptBuilder._split_tokens(text)
-        if cleanup:
-            parts = [BubbaCharacterPromptBuilder._clean_value(item) for item in parts]
-            parts = [item for item in parts if item]
-        if dedupe:
-            parts = BubbaCharacterPromptBuilder._dedupe_tokens(parts)
-        return ", ".join(parts)
+        return normalize_prompt_csv(text, cleanup=cleanup, dedupe=dedupe)
 
     @staticmethod
     def _empty_conditioning():
@@ -346,7 +308,7 @@ class BubbaPromptInspector:
     RETURN_TYPES = ("INT", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("token_count", "duplicate_tags", "conflict_warnings", "formatted_preview")
     FUNCTION = "inspect_prompt"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Prompt"
     DESCRIPTION = "Analyzes positive/negative prompts for token count, duplicates, conflicts, and cleaned preview text."
 
     @staticmethod
@@ -362,8 +324,8 @@ class BubbaPromptInspector:
 
         token_count = len(positive_parts) + len(negative_parts)
 
-        positive_duplicates = _find_duplicates(positive_parts)
-        negative_duplicates = _find_duplicates(negative_parts)
+        positive_duplicates = find_duplicate_prompt_tokens(positive_parts)
+        negative_duplicates = find_duplicate_prompt_tokens(negative_parts)
         duplicate_lines: list[str] = []
         if positive_duplicates:
             duplicate_lines.append(f"positive: {', '.join(positive_duplicates)}")
@@ -378,10 +340,10 @@ class BubbaPromptInspector:
         warning_lines: list[str] = []
         if cross_conflicts:
             warning_lines.append(f"present in both positive and negative: {', '.join(cross_conflicts)}")
-        positive_pair_conflicts = _find_pair_conflicts(positive_parts)
+        positive_pair_conflicts = find_pair_conflicts(positive_parts)
         if positive_pair_conflicts:
             warning_lines.append(f"positive pair conflicts: {', '.join(positive_pair_conflicts)}")
-        negative_pair_conflicts = _find_pair_conflicts(negative_parts)
+        negative_pair_conflicts = find_pair_conflicts(negative_parts)
         if negative_pair_conflicts:
             warning_lines.append(f"negative pair conflicts: {', '.join(negative_pair_conflicts)}")
         conflict_warnings = "\n".join(warning_lines) if warning_lines else "none"

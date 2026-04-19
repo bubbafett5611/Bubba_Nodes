@@ -12,7 +12,7 @@ class BubbaCheckpointLoader:
     RETURN_TYPES = ("MODEL", "CLIP", "VAE", "STRING")
     RETURN_NAMES = ("model", "clip", "vae", "checkpoint_name")
     FUNCTION = "load_checkpoint_with_name"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = "Loads a checkpoint and also outputs the selected checkpoint name as text."
 
     def load_checkpoint_with_name(self, ckpt_name):

@@ -33,7 +33,7 @@ class BubbaFilename:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("filepath",)
     FUNCTION = "build_path"
-    CATEGORY = "Bubba Nodes"
+    CATEGORY = "Bubba Nodes/Workflow"
     DESCRIPTION = "Combines a character name (folder) and scene name (filename) into a relative file path."
 
     def build_path(self, character_name, scene_name):
