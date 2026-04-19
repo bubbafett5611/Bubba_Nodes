@@ -77,6 +77,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "appearance"},
                         "tooltip": "Face, hair, age, and identifying visual traits.",
                     },
                 ),
@@ -85,6 +86,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "body"},
                         "tooltip": "Body proportions, physique, and anatomy descriptors.",
                     },
                 ),
@@ -93,6 +95,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "clothing"},
                         "tooltip": "Outfit, accessories, and materials.",
                     },
                 ),
@@ -101,6 +104,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "pose"},
                         "tooltip": "Body pose and camera-facing orientation.",
                     },
                 ),
@@ -109,6 +113,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "expression"},
                         "tooltip": "Facial expression and emotion.",
                     },
                 ),
@@ -117,6 +122,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "scene"},
                         "tooltip": "Environment, lighting, and composition context.",
                     },
                 ),
@@ -125,6 +131,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "style"},
                         "tooltip": "Style and rendering tags, comma-separated.",
                     },
                 ),
@@ -133,6 +140,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "quality"},
                         "tooltip": "Quality/detail tags, comma-separated.",
                     },
                 ),
@@ -141,6 +149,7 @@ class BubbaCharacterPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "negative"},
                         "tooltip": "Negative prompt tags, comma-separated.",
                     },
                 ),
@@ -238,6 +247,7 @@ class BubbaPromptCleaner:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "positive"},
                         "tooltip": "Input positive prompt to clean.",
                     },
                 ),
@@ -246,6 +256,7 @@ class BubbaPromptCleaner:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "negative"},
                         "tooltip": "Input negative prompt to clean.",
                     },
                 ),
@@ -316,6 +327,7 @@ class BubbaPromptInspector:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "positive"},
                         "tooltip": "Positive prompt text to inspect.",
                     },
                 ),
@@ -324,6 +336,7 @@ class BubbaPromptInspector:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "negative"},
                         "tooltip": "Negative prompt text to inspect.",
                     },
                 ),

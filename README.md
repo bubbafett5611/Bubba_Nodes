@@ -39,6 +39,7 @@ This extension currently registers 15 nodes:
 - Build prompt sections directly into metadata with prompt section persistence.
 - Normalize and dedupe prompt tags.
 - Inspect prompts for token count, duplicates, and conflict warnings.
+- Use in-node prompt autocomplete for Bubba multiline prompt fields (appearance/body/style/negative/etc.) with keyboard navigation.
 - Save images normally or preview-only through ComfyUI UI helpers, with optional filepath pulled from metadata.
 
 ## Installation
@@ -90,6 +91,20 @@ git clone https://github.com/bubbafett5611/bubba_nodes.git
 - Prompt conflict warnings currently include:
   - tags that appear in both positive and negative prompts
   - simple pair checks such as solo/multiple people, male/female, day/night, indoors/outdoors, and safe/nsfw
+
+## Autocomplete Notes
+
+- The frontend extension is loaded from [web/comfyui/autocomplete.js](web/comfyui/autocomplete.js).
+- Autocomplete is active on Bubba multiline prompt inputs (for example: appearance, style_tags, quality_tags, negative_tags).
+- Type part of a tag to open suggestions.
+- Use arrow keys to select, then press Tab or Enter to insert.
+- Add your own words from ComfyUI settings using: `Bubba: Edit Autocomplete Words`.
+- You can fetch Danbooru tags with usage counts from the API and cache them locally from settings using `Bubba: Danbooru Tag Cache`.
+- Enable or disable Danbooru-backed suggestions with `Bubba: Include Danbooru Tags`.
+- Danbooru suggestions are ranked by post count so common tags appear first.
+- A bundled cache file is supported at [web/comfyui/danbooru_cache.csv](web/comfyui/danbooru_cache.csv) and is used automatically when local cache is empty.
+- Use `Full Sync (All >= Min Count)` in settings to fetch all Danbooru tags above your minimum post count (for example, all tags with 50+ uses).
+- Use `Export Cache CSV` after syncing to download a prebuilt cache file you can commit back into [web/comfyui/danbooru_cache.csv](web/comfyui/danbooru_cache.csv) for future releases.
 
 ## Node Documentation
 

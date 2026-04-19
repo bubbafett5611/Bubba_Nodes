@@ -35,6 +35,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "appearance"},
                         "tooltip": "Face, hair, age, and identifying visual traits.",
                     },
                 ),
@@ -43,6 +44,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "body"},
                         "tooltip": "Body proportions, physique, and anatomy descriptors.",
                     },
                 ),
@@ -51,6 +53,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "clothing"},
                         "tooltip": "Outfit, accessories, and materials.",
                     },
                 ),
@@ -59,6 +62,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "pose"},
                         "tooltip": "Body pose and camera-facing orientation.",
                     },
                 ),
@@ -67,6 +71,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "expression"},
                         "tooltip": "Facial expression and emotion.",
                     },
                 ),
@@ -75,6 +80,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "scene"},
                         "tooltip": "Environment, lighting, and composition context.",
                     },
                 ),
@@ -83,6 +89,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "style"},
                         "tooltip": "Style and rendering tags, comma-separated.",
                     },
                 ),
@@ -91,6 +98,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "quality"},
                         "tooltip": "Quality/detail tags, comma-separated.",
                     },
                 ),
@@ -99,6 +107,7 @@ class BubbaMetadataPromptBuilder:
                     {
                         "default": "",
                         "multiline": True,
+                        "bubba.autocomplete": {"group": "negative"},
                         "tooltip": "Negative prompt tags, comma-separated.",
                     },
                 ),
