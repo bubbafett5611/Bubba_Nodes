@@ -147,6 +147,12 @@ class BubbaKSampler:
         )
         updated_metadata = BubbaMetadata.coerce(metadata).updated(
             sampler_info=info,
+            sampler_time_seconds=elapsed_seconds,
             seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler_name=sampler_name,
+            scheduler=scheduler,
+            denoise=denoise,
         )
         return (latent, info, updated_metadata)

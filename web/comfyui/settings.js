@@ -23,6 +23,11 @@ app.registerExtension({
 		ensureDanbooruCacheSeeded();
 	},
 	setup() {
+		const openAssetViewer = () => {
+			const url = `${window.location.origin}/extensions/bubba_nodes/comfyui/asset_viewer.html`;
+			window.open(url, "_blank", "noopener,noreferrer");
+		};
+
 		app.ui.settings.addSetting({
 			id: `${id}.Enabled`,
 			name: "Bubba: Prompt Autocomplete",
@@ -136,6 +141,26 @@ app.registerExtension({
 					]),
 				]);
 			},
+		});
+
+		app.ui.settings.addSetting({
+			id: `${id}.AssetViewer`,
+			name: "Bubba: Asset Viewer",
+			defaultValue: "",
+			type: () =>
+				$el("tr", [
+					$el("td", [
+						$el("label", {
+							textContent: "Bubba: Asset Viewer",
+						}),
+					]),
+					$el("td", [
+						$el("button", {
+							textContent: "Open Standalone Page",
+							onclick: () => openAssetViewer(),
+						}),
+					]),
+				]),
 		});
 	},
 });

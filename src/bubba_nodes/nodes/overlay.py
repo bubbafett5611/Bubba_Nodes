@@ -469,7 +469,7 @@ class BubbaOverlayFromMetadata:
 
         return (
             payload.model_name,
-            payload.sampler_info,
+            payload.formatted_sampler_info(),
             payload.positive_prompt,
             payload.negative_prompt,
         )

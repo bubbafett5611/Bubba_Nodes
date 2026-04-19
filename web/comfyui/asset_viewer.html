@@ -1,0 +1,1284 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Bubba Asset Viewer</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+	<link rel="stylesheet" href="./asset_viewer.css" />
+</head>
+<body>
+	<div class="page">
+		<div id="dropOverlay" class="drop-overlay" hidden>
+			<div class="drop-overlay-card">
+				<div class="drop-overlay-title">Drop images to upload</div>
+				<div class="drop-overlay-subtitle" id="dropOverlaySubtitle">Uploading to selected folder</div>
+			</div>
+		</div>
+
+		<header class="header">
+			<div class="header-copy">
+				<h1 class="title">Bubba Asset Viewer</h1>
+			</div>
+		</header>
+
+		<div class="layout" id="layoutRoot">
+			<section class="panel">
+				<div class="controls">
+					<div class="field">
+						<label for="rootSelect">Select Folder</label>
+						<select id="rootSelect" class="select" aria-label="Select Folder"></select>
+					</div>
+
+					<div class="field">
+						<label for="searchInput">Search</label>
+						<input id="searchInput" class="input" type="search" placeholder="Filename or subpath" />
+					</div>
+
+					<div class="field">
+						<label for="extSelect">Extension</label>
+						<select id="extSelect" class="select" aria-label="Extension filter">
+							<option value="">All extensions</option>
+							<option value=".png">.png</option>
+							<option value=".jpg">.jpg</option>
+							<option value=".jpeg">.jpeg</option>
+							<option value=".webp">.webp</option>
+							<option value=".bmp">.bmp</option>
+						</select>
+					</div>
+
+					<div class="field">
+						<label for="densitySelect">Density</label>
+						<select id="densitySelect" class="select" aria-label="Card density">
+							<option value="compact">Compact</option>
+							<option value="comfortable" selected>Comfortable</option>
+							<option value="large">Large</option>
+						</select>
+					</div>
+
+					<button id="refreshButton" class="button" type="button">Refresh</button>
+				</div>
+
+				<div class="results">
+					<div class="meta-row">
+						<div class="meta-group">
+							<span class="status-dot" aria-hidden="true"></span>
+							<span id="statusText">Loading roots...</span>
+						</div>
+						<div class="count-badge" id="countText"></div>
+					</div>
+					<div id="assetList" class="asset-list" aria-live="polite"></div>
+					<button id="loadMoreButton" class="button" type="button" hidden>Load More</button>
+				</div>
+			</section>
+
+			<div id="panelResizer" class="panel-resizer" role="separator" aria-orientation="vertical" aria-label="Resize details panel width" title="Drag to resize details panel width"></div>
+
+			<aside class="panel details" id="detailsPanel">
+				<div class="details-header">
+					<h2>Asset Details</h2>
+					<p class="details-subtitle">Select an item to inspect file info and embedded metadata.</p>
+				</div>
+				<div class="preview">
+					<div class="preview-frame">
+						<div class="preview-empty">No asset selected</div>
+					</div>
+				</div>
+				<div class="details-scroll">
+					<div class="empty">Select an asset to inspect fields.</div>
+				</div>
+			</aside>
+		</div>
+	</div>
+
+	<script>
+		const state = {
+			roots: [],
+			assets: [],
+			selectedPath: "",
+			cardDensity: "comfortable",
+			previewHeight: 320,
+			detailsWidth: 420,
+			currentOffset: 0,
+			hasMore: false,
+			listRequestToken: 0,
+			detailsRequestToken: 0,
+			listAbortController: null,
+			virtualizationEnabled: false,
+			virtualStartIndex: 0,
+			virtualEndIndex: 0,
+			virtualRafId: 0,
+		};
+
+		const VIRTUALIZATION_THRESHOLD = 500;
+		const PREVIEW_HEIGHT_MIN = 120;
+		const PREVIEW_HEIGHT_MAX = 560;
+		const DETAILS_WIDTH_MIN = 320;
+		const DETAILS_WIDTH_MAX_RATIO = 0.72;
+		const DENSITY_CONFIG = {
+			compact: { minWidth: 160, rowHeight: 270 },
+			comfortable: { minWidth: 180, rowHeight: 320 },
+			large: { minWidth: 210, rowHeight: 360 },
+		};
+		const VIRTUAL_GAP = 12;
+		const VIRTUAL_OVERSCAN_ROWS = 2;
+
+		let virtualSpacer = null;
+		let virtualWindow = null;
+
+		const rootSelect = document.getElementById("rootSelect");
+		const searchInput = document.getElementById("searchInput");
+		const extSelect = document.getElementById("extSelect");
+		const densitySelect = document.getElementById("densitySelect");
+		const refreshButton = document.getElementById("refreshButton");
+		const statusText = document.getElementById("statusText");
+		const countText = document.getElementById("countText");
+		const assetList = document.getElementById("assetList");
+		const loadMoreButton = document.getElementById("loadMoreButton");
+		const layoutRoot = document.getElementById("layoutRoot");
+		const panelResizer = document.getElementById("panelResizer");
+		const detailsPanel = document.getElementById("detailsPanel");
+		const dropOverlay = document.getElementById("dropOverlay");
+		const dropOverlaySubtitle = document.getElementById("dropOverlaySubtitle");
+		assetList.setAttribute("role", "listbox");
+
+		let dropHideTimer = 0;
+		let lastFileDragAt = 0;
+		let dragOverlayWatchTimer = 0;
+
+		const UPLOAD_ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"]);
+
+		const numberFmt = new Intl.NumberFormat();
+
+		function clampPreviewHeight(value) {
+			const numeric = Number(value);
+			if (!Number.isFinite(numeric)) {
+				return PREVIEW_HEIGHT_MIN;
+			}
+			return Math.max(PREVIEW_HEIGHT_MIN, Math.min(PREVIEW_HEIGHT_MAX, Math.round(numeric)));
+		}
+
+		function applyPreviewHeight(persist = true) {
+			state.previewHeight = clampPreviewHeight(state.previewHeight);
+			detailsPanel.style.setProperty("--preview-height", `${state.previewHeight}px`);
+			if (persist) {
+				try {
+					localStorage.setItem("bubba.assetViewerPreviewHeight", String(state.previewHeight));
+				} catch (error) {
+					console.warn("Could not persist preview height", error);
+				}
+			}
+		}
+
+		function clampDetailsWidth(value) {
+			const numeric = Number(value);
+			if (!Number.isFinite(numeric)) {
+				return 420;
+			}
+
+			const totalWidth = Math.max(layoutRoot?.clientWidth || 0, window.innerWidth || 0);
+			const maxWidth = Math.max(DETAILS_WIDTH_MIN + 40, Math.floor(totalWidth * DETAILS_WIDTH_MAX_RATIO));
+			return Math.max(DETAILS_WIDTH_MIN, Math.min(maxWidth, Math.round(numeric)));
+		}
+
+		function applyDetailsWidth(persist = true) {
+			state.detailsWidth = clampDetailsWidth(state.detailsWidth);
+			if (layoutRoot) {
+				layoutRoot.style.setProperty("--details-width", `${state.detailsWidth}px`);
+			}
+			if (persist) {
+				try {
+					localStorage.setItem("bubba.assetViewerDetailsWidth", String(state.detailsWidth));
+				} catch (error) {
+					console.warn("Could not persist panel width", error);
+				}
+			}
+		}
+
+		function setupPanelResizer() {
+			if (!panelResizer || !layoutRoot) {
+				return;
+			}
+
+			let startX = 0;
+			let startWidth = 0;
+
+			const onMove = (event) => {
+				if (window.matchMedia("(max-width: 1120px)").matches) {
+					return;
+				}
+				const delta = event.clientX - startX;
+				state.detailsWidth = startWidth - delta;
+				applyDetailsWidth(true);
+			};
+
+			const onUp = () => {
+				window.removeEventListener("mousemove", onMove);
+				window.removeEventListener("mouseup", onUp);
+				document.body.classList.remove("panel-resizing");
+			};
+
+			panelResizer.addEventListener("mousedown", (event) => {
+				if (window.matchMedia("(max-width: 1120px)").matches) {
+					return;
+				}
+				event.preventDefault();
+				startX = event.clientX;
+				startWidth = state.detailsWidth;
+				document.body.classList.add("panel-resizing");
+				window.addEventListener("mousemove", onMove);
+				window.addEventListener("mouseup", onUp);
+			});
+		}
+
+		function setupPreviewResizer() {
+			const resizer = detailsPanel.querySelector(".preview-resizer");
+			if (!resizer) {
+				return;
+			}
+
+			let startY = 0;
+			let startHeight = state.previewHeight;
+
+			const onMove = (event) => {
+				const delta = event.clientY - startY;
+				state.previewHeight = startHeight + delta;
+				applyPreviewHeight(true);
+			};
+
+			const onUp = () => {
+				window.removeEventListener("mousemove", onMove);
+				window.removeEventListener("mouseup", onUp);
+				document.body.classList.remove("preview-resizing");
+			};
+
+			resizer.addEventListener("mousedown", (event) => {
+				event.preventDefault();
+				startY = event.clientY;
+				startHeight = state.previewHeight;
+				document.body.classList.add("preview-resizing");
+				window.addEventListener("mousemove", onMove);
+				window.addEventListener("mouseup", onUp);
+			});
+		}
+
+		function fmtBytes(bytes) {
+			if (!Number.isFinite(bytes) || bytes < 0) {
+				return "?";
+			}
+			const units = ["B", "KB", "MB", "GB", "TB"];
+			let value = bytes;
+			let unit = units[0];
+			for (let i = 0; i < units.length; i += 1) {
+				unit = units[i];
+				if (value < 1024 || i === units.length - 1) {
+					break;
+				}
+				value /= 1024;
+			}
+			return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${unit}`;
+		}
+
+		function fmtDate(ts) {
+			if (!Number.isFinite(ts)) {
+				return "Unknown";
+			}
+			return new Date(ts * 1000).toLocaleString();
+		}
+
+		function escapeHtml(value) {
+			const text = String(value ?? "");
+			return text
+				.replaceAll("&", "&amp;")
+				.replaceAll("<", "&lt;")
+				.replaceAll(">", "&gt;");
+		}
+
+		function assetUrl(asset) {
+			return `/bubba/assets/file?path=${encodeURIComponent(asset.path)}`;
+		}
+
+		function assetThumbUrl(asset) {
+			return `/bubba/assets/thumb?size=256&path=${encodeURIComponent(asset.path)}`;
+		}
+
+		function handleCardImageError(imageElement) {
+			if (!imageElement) {
+				return;
+			}
+			imageElement.style.display = "none";
+			const fallback = imageElement.parentElement?.querySelector(".asset-thumb-fallback");
+			if (fallback) {
+				fallback.style.display = "grid";
+			}
+		}
+
+		async function fetchJson(url, options = {}) {
+			const res = await fetch(url, { cache: "no-store", ...options });
+			if (!res.ok) {
+				let serverMessage = "";
+				try {
+					const payload = await res.json();
+					if (payload && typeof payload.error === "string" && payload.error.trim()) {
+						serverMessage = payload.error.trim();
+					}
+				} catch (error) {
+					// Fall back to generic status text when body is not JSON.
+				}
+				throw new Error(serverMessage || `Request failed (${res.status})`);
+			}
+			return res.json();
+		}
+
+		function currentRootLabel() {
+			const option = rootSelect.selectedOptions && rootSelect.selectedOptions.length ? rootSelect.selectedOptions[0] : null;
+			if (option && option.textContent) {
+				return option.textContent.trim();
+			}
+			return rootSelect.value || "selected folder";
+		}
+
+		function setDropOverlayVisible(visible) {
+			if (!dropOverlay) {
+				return;
+			}
+			dropOverlay.hidden = !visible;
+			document.body.classList.toggle("drag-upload-active", visible);
+			if (visible && dropOverlaySubtitle) {
+				dropOverlaySubtitle.textContent = `Uploading to ${currentRootLabel()}`;
+			}
+		}
+
+		function clearDropHideTimer() {
+			if (!dropHideTimer) {
+				return;
+			}
+			clearTimeout(dropHideTimer);
+			dropHideTimer = 0;
+		}
+
+		function scheduleDropOverlayHide(delayMs = 160) {
+			clearDropHideTimer();
+			dropHideTimer = window.setTimeout(() => {
+				dropHideTimer = 0;
+				setDropOverlayVisible(false);
+			}, Math.max(0, delayMs));
+		}
+
+		function stopDragOverlayWatchdog() {
+			if (!dragOverlayWatchTimer) {
+				return;
+			}
+			clearInterval(dragOverlayWatchTimer);
+			dragOverlayWatchTimer = 0;
+		}
+
+		function startDragOverlayWatchdog() {
+			if (dragOverlayWatchTimer) {
+				return;
+			}
+			dragOverlayWatchTimer = window.setInterval(() => {
+				if (!dropOverlay || dropOverlay.hidden) {
+					stopDragOverlayWatchdog();
+					return;
+				}
+				if (Date.now() - lastFileDragAt > 280) {
+					clearDropHideTimer();
+					setDropOverlayVisible(false);
+					stopDragOverlayWatchdog();
+				}
+			}, 120);
+		}
+
+		function markFileDragActive() {
+			lastFileDragAt = Date.now();
+			setDropOverlayVisible(true);
+			startDragOverlayWatchdog();
+		}
+
+		function forceHideDropOverlay() {
+			clearDropHideTimer();
+			setDropOverlayVisible(false);
+			stopDragOverlayWatchdog();
+		}
+
+		function eventHasFileDrag(event) {
+			const dataTransfer = event.dataTransfer;
+			if (!dataTransfer) {
+				return false;
+			}
+
+			if (dataTransfer.items && dataTransfer.items.length) {
+				for (const item of dataTransfer.items) {
+					if (!item || item.kind !== "file") {
+						continue;
+					}
+					const itemType = String(item.type || "").toLowerCase();
+					if (itemType.startsWith("image/")) {
+						return true;
+					}
+					const maybeFile = typeof item.getAsFile === "function" ? item.getAsFile() : null;
+					if (isAllowedImageFile(maybeFile)) {
+						return true;
+					}
+				}
+				return false;
+			}
+
+			if (dataTransfer.files && dataTransfer.files.length) {
+				for (const file of dataTransfer.files) {
+					if (isAllowedImageFile(file)) {
+						return true;
+					}
+				}
+				return false;
+			}
+
+			return false;
+		}
+
+		function isAllowedImageFile(file) {
+			if (!file) {
+				return false;
+			}
+			if (typeof file.type === "string" && file.type.toLowerCase().startsWith("image/")) {
+				return true;
+			}
+			const name = String(file.name || "").toLowerCase();
+			for (const ext of UPLOAD_ALLOWED_EXTENSIONS) {
+				if (name.endsWith(ext)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		async function uploadDroppedFiles(files) {
+			const selectedRoot = rootSelect.value;
+			if (!selectedRoot) {
+				throw new Error("Select a folder before uploading.");
+			}
+
+			const allowedFiles = files.filter((file) => isAllowedImageFile(file));
+			if (!allowedFiles.length) {
+				throw new Error("Only image files can be uploaded.");
+			}
+
+			const form = new FormData();
+			for (const file of allowedFiles) {
+				form.append("files", file, file.name || "upload.png");
+			}
+
+			statusText.textContent = `Uploading ${allowedFiles.length} image(s) to ${currentRootLabel()}...`;
+			const params = new URLSearchParams();
+			params.set("root", selectedRoot);
+			const result = await fetchJson(`/bubba/assets/upload?${params.toString()}`, {
+				method: "POST",
+				body: form,
+			});
+
+			const uploaded = Array.isArray(result.uploaded) ? result.uploaded : [];
+			if (uploaded.length) {
+				state.selectedPath = String(uploaded[0].path || "");
+			}
+
+			await refreshAssets({ append: false });
+			const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
+			statusText.textContent = skipped
+				? `Uploaded ${uploaded.length} image(s), skipped ${skipped}`
+				: `Uploaded ${uploaded.length} image(s)`;
+		}
+
+		function setupDragAndDropUpload() {
+			window.addEventListener("dragenter", (event) => {
+				if (!eventHasFileDrag(event)) {
+					return;
+				}
+				event.preventDefault();
+				markFileDragActive();
+				scheduleDropOverlayHide(260);
+			});
+
+			window.addEventListener("dragover", (event) => {
+				if (!eventHasFileDrag(event)) {
+					return;
+				}
+				event.preventDefault();
+				event.dataTransfer.dropEffect = "copy";
+				markFileDragActive();
+				scheduleDropOverlayHide(220);
+			});
+
+			window.addEventListener("dragleave", (event) => {
+				if (!eventHasFileDrag(event)) {
+					return;
+				}
+				event.preventDefault();
+				scheduleDropOverlayHide(0);
+			});
+
+			window.addEventListener("drop", (event) => {
+				const files = Array.from(event.dataTransfer?.files || []);
+				const imageFiles = files.filter((file) => isAllowedImageFile(file));
+				if (!imageFiles.length) {
+					forceHideDropOverlay();
+					return;
+				}
+				event.preventDefault();
+				forceHideDropOverlay();
+				uploadDroppedFiles(imageFiles).catch(showError);
+			});
+
+			window.addEventListener("dragend", () => {
+				forceHideDropOverlay();
+			});
+
+			window.addEventListener("blur", () => {
+				forceHideDropOverlay();
+			});
+
+			document.addEventListener("visibilitychange", () => {
+				if (!document.hidden) {
+					return;
+				}
+				forceHideDropOverlay();
+			});
+
+			window.addEventListener("pointerdown", () => {
+				if (dropOverlay && !dropOverlay.hidden) {
+					forceHideDropOverlay();
+				}
+			});
+
+			window.addEventListener("keydown", () => {
+				if (dropOverlay && !dropOverlay.hidden) {
+					forceHideDropOverlay();
+				}
+			});
+
+			window.addEventListener("wheel", () => {
+				if (dropOverlay && !dropOverlay.hidden) {
+					forceHideDropOverlay();
+				}
+			}, { passive: true });
+		}
+
+		function renderRoots() {
+			const previousSelection = rootSelect.value;
+			rootSelect.innerHTML = "";
+			let outputKey = "";
+			for (const root of state.roots) {
+				const option = document.createElement("option");
+				option.value = root.key || root.path;
+				option.textContent = root.label || root.key || "Asset Root";
+				rootSelect.appendChild(option);
+				if (!outputKey && (root.key === "output" || /output/i.test(String(root.label || "")))) {
+					outputKey = option.value;
+				}
+			}
+
+			if (previousSelection && state.roots.some((root) => (root.key || root.path) === previousSelection)) {
+				rootSelect.value = previousSelection;
+			} else if (outputKey) {
+				rootSelect.value = outputKey;
+			}
+		}
+
+		function renderDetails(asset) {
+			let header = `
+				<div class="details-header">
+					<div class="details-title-row">
+						<h2>Asset Details</h2>
+					</div>
+					<p class="details-subtitle">${asset ? escapeHtml(asset.name) : "Select an item to inspect file info and embedded metadata."}</p>
+				</div>
+			`;
+
+			if (!asset) {
+				detailsPanel.innerHTML = `
+					${header}
+					<div class="preview">
+						<div class="preview-frame">
+							<div class="preview-empty">No asset selected</div>
+						</div>
+					</div>
+					<div class="preview-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize preview height" title="Drag to resize preview height"></div>
+					<div class="details-scroll">
+						<div class="empty">Select an asset to inspect fields.</div>
+					</div>
+				`;
+				applyPreviewHeight(false);
+				setupPreviewResizer();
+				return;
+			}
+
+			const metadataPairs = [];
+			const metadata = asset.metadata || {};
+			const embedded = metadata.metadata && typeof metadata.metadata === "object" ? metadata.metadata : {};
+			const bubbaMetadata = embedded.bubba_metadata && typeof embedded.bubba_metadata === "object" ? embedded.bubba_metadata : null;
+			const extractedGeneration = embedded.generation && typeof embedded.generation === "object" ? embedded.generation : null;
+			const generationSource = bubbaMetadata || extractedGeneration;
+
+			const hasValue = (value) => {
+				if (value === null || value === undefined) {
+					return false;
+				}
+				if (typeof value === "string") {
+					return value.trim().length > 0;
+				}
+				return true;
+			};
+
+			const makeRows = (pairs) =>
+				pairs
+					.map(([key, value]) => `
+						<div class="kv">
+							<div class="kv-key">${escapeHtml(key)}</div>
+							${(() => {
+								const rawValue = String(value ?? "");
+								const shouldClamp = (key === "positive_prompt" || key === "negative_prompt") && rawValue.length > 180;
+								if (!shouldClamp) {
+									return `<div class="kv-value">${escapeHtml(rawValue)}</div>`;
+								}
+								const targetId = `kv-${Math.random().toString(36).slice(2, 10)}`;
+								return `
+									<div class="kv-value-wrap">
+										<div id="${targetId}" class="kv-value kv-value-clamped">${escapeHtml(rawValue)}</div>
+										<button class="kv-toggle" type="button" data-target="${targetId}">Expand</button>
+									</div>
+								`;
+							})()}
+						</div>
+					`)
+					.join("");
+
+			const generationPairs = [];
+			if (generationSource) {
+				const addGenerationField = (label, key) => {
+					if (Object.prototype.hasOwnProperty.call(generationSource, key) && hasValue(generationSource[key])) {
+						generationPairs.push([label, String(generationSource[key])]);
+					}
+				};
+
+				addGenerationField("model", "model_name");
+				addGenerationField("seed", "seed");
+				addGenerationField("steps", "steps");
+				addGenerationField("cfg", "cfg");
+				addGenerationField("sampler", "sampler_name");
+				addGenerationField("scheduler", "scheduler");
+				addGenerationField("denoise", "denoise");
+				addGenerationField("time_seconds", "sampler_time_seconds");
+				addGenerationField("sampler_info", "sampler_info");
+				addGenerationField("positive_prompt", "positive_prompt");
+				addGenerationField("negative_prompt", "negative_prompt");
+				addGenerationField("prompt_sections", "prompt_sections");
+				addGenerationField("filepath", "filepath");
+			}
+
+			const extraBubbaPairs = [];
+			if (bubbaMetadata) {
+				const known = new Set([
+					"model_name",
+					"seed",
+					"steps",
+					"cfg",
+					"sampler_name",
+					"scheduler",
+					"denoise",
+					"sampler_time_seconds",
+					"sampler_info",
+					"positive_prompt",
+					"negative_prompt",
+					"prompt_sections",
+					"filepath",
+				]);
+				for (const [key, value] of Object.entries(bubbaMetadata)) {
+					if (known.has(key) || !hasValue(value)) {
+						continue;
+					}
+					extraBubbaPairs.push([`bubba.${key}`, typeof value === "string" ? value : JSON.stringify(value, null, 2)]);
+				}
+			}
+
+			if (metadata.format) {
+				metadataPairs.push(["format", metadata.format]);
+			}
+			if (Array.isArray(metadata.keys)) {
+				metadataPairs.push(["keys", metadata.keys.join(", ") || "(none)"]);
+			}
+			if (embedded && typeof embedded === "object") {
+				for (const [key, value] of Object.entries(embedded)) {
+					if (key === "bubba_metadata") {
+						continue;
+					}
+					metadataPairs.push([
+						key,
+						typeof value === "string" ? value : JSON.stringify(value, null, 2)
+					]);
+				}
+			}
+
+			const fileRows = [
+				["name", asset.name],
+				["path", asset.path],
+				["relative", asset.relative_path],
+				["extension", asset.extension || "(none)"],
+				["size", fmtBytes(asset.size_bytes)],
+				["modified", fmtDate(asset.modified_ts)],
+			];
+
+			const sectionBlocks = [];
+			sectionBlocks.push(`<div class="details-section-title">File</div>${makeRows(fileRows)}`);
+			if (generationPairs.length) {
+				sectionBlocks.push(`<div class="details-section-title">Generation</div>${makeRows(generationPairs)}`);
+			}
+			if (extraBubbaPairs.length) {
+				sectionBlocks.push(`<div class="details-section-title">Bubba Extra</div>${makeRows(extraBubbaPairs)}`);
+			}
+			if (metadataPairs.length) {
+				sectionBlocks.push(`<div class="details-section-title">Embedded Metadata</div>${makeRows(metadataPairs)}`);
+			}
+
+			const hasGenerationData = generationPairs.length > 0;
+			const hasAnyMetadata = hasGenerationData || metadataPairs.length > 0;
+			const metadataBadgeClass = hasGenerationData
+				? "metadata-status metadata-status-ok"
+				: hasAnyMetadata
+					? "metadata-status metadata-status-warn"
+					: "metadata-status metadata-status-none";
+			const metadataBadgeText = hasGenerationData
+				? "Generation data detected"
+				: hasAnyMetadata
+					? "Metadata found (no generation)"
+					: "No metadata detected";
+
+			header = `
+				<div class="details-header">
+					<div class="details-title-row">
+						<h2>Asset Details</h2>
+						<span class="${metadataBadgeClass}">${metadataBadgeText}</span>
+					</div>
+					<p class="details-subtitle">${escapeHtml(asset.name)}</p>
+				</div>
+			`;
+
+			const previewHref = assetUrl(asset);
+			const copyPromptValue = generationSource && hasValue(generationSource.positive_prompt)
+				? String(generationSource.positive_prompt)
+				: "";
+			const copySeedValue = generationSource && hasValue(generationSource.seed)
+				? String(generationSource.seed)
+				: "";
+
+			detailsPanel.innerHTML = `
+				${header}
+				<div class="preview">
+					<div class="preview-frame">
+						<a class="preview-link" href="${previewHref}" target="_blank" rel="noopener noreferrer" title="Open full image in new tab">
+							<img src="${previewHref}" alt="${escapeHtml(asset.name)}" loading="lazy" />
+						</a>
+					</div>
+					<div class="preview-actions">
+						<button type="button" class="preview-action" data-action="open-full" data-href="${previewHref}">Open Full</button>
+						<button type="button" class="preview-action" data-action="copy-path" data-value="${escapeHtml(asset.path)}">Copy Path</button>
+						<button type="button" class="preview-action" data-action="copy-prompt" data-value="${escapeHtml(copyPromptValue)}" ${copyPromptValue ? "" : "disabled"}>Copy Prompt</button>
+						<button type="button" class="preview-action" data-action="copy-seed" data-value="${escapeHtml(copySeedValue)}" ${copySeedValue ? "" : "disabled"}>Copy Seed</button>
+						<button type="button" class="preview-action preview-action-danger" data-action="delete-asset" data-value="${escapeHtml(asset.path)}">Delete</button>
+					</div>
+				</div>
+				<div class="preview-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize preview height" title="Drag to resize preview height"></div>
+				<div class="details-scroll">
+					<div class="details-grid">${sectionBlocks.join("")}</div>
+				</div>
+			`;
+
+			applyPreviewHeight(false);
+			setupPreviewResizer();
+
+			for (const toggle of detailsPanel.querySelectorAll(".kv-toggle")) {
+				toggle.addEventListener("click", () => {
+					const targetId = toggle.dataset.target;
+					if (!targetId) {
+						return;
+					}
+					const target = detailsPanel.querySelector(`#${CSS.escape(targetId)}`);
+					if (!target) {
+						return;
+					}
+					target.classList.toggle("kv-value-clamped");
+					toggle.textContent = target.classList.contains("kv-value-clamped") ? "Expand" : "Collapse";
+				});
+			}
+
+			for (const actionButton of detailsPanel.querySelectorAll(".preview-action")) {
+				actionButton.addEventListener("click", async () => {
+					const action = actionButton.dataset.action || "";
+					if (action === "open-full") {
+						const href = actionButton.dataset.href || "";
+						if (href) {
+							window.open(href, "_blank", "noopener,noreferrer");
+						}
+						return;
+					}
+
+					if (action === "delete-asset") {
+						const pathToDelete = actionButton.dataset.value || "";
+						if (!pathToDelete) {
+							return;
+						}
+
+						const ok = window.confirm(`Delete this file?\n\n${pathToDelete}`);
+						if (!ok) {
+							return;
+						}
+
+						actionButton.disabled = true;
+						try {
+							await fetchJson("/bubba/assets/delete", {
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({ path: pathToDelete }),
+							});
+							statusText.textContent = "Deleted file";
+							state.selectedPath = "";
+							await refreshAssets({ append: false });
+						} catch (error) {
+							showError(error);
+						} finally {
+							actionButton.disabled = false;
+						}
+						return;
+					}
+
+					const value = actionButton.dataset.value || "";
+					if (!value) {
+						return;
+					}
+
+					try {
+						if (navigator.clipboard && navigator.clipboard.writeText) {
+							await navigator.clipboard.writeText(value);
+						} else {
+							const area = document.createElement("textarea");
+							area.value = value;
+							document.body.appendChild(area);
+							area.select();
+							document.execCommand("copy");
+							document.body.removeChild(area);
+						}
+						statusText.textContent = action === "copy-path" ? "Copied path" : action === "copy-seed" ? "Copied seed" : "Copied prompt";
+					} catch (error) {
+						console.warn("Clipboard copy failed", error);
+					}
+				});
+			}
+		}
+
+		function getDensityConfig() {
+			return DENSITY_CONFIG[state.cardDensity] || DENSITY_CONFIG.comfortable;
+		}
+
+		function getGridColumnCount() {
+			const density = getDensityConfig();
+			const width = Math.max(1, assetList.clientWidth);
+			return Math.max(1, Math.floor((width + VIRTUAL_GAP) / (density.minWidth + VIRTUAL_GAP)));
+		}
+
+		function getAssetIndex(path) {
+			return state.assets.findIndex((item) => item.path === path);
+		}
+
+		function shouldVirtualize() {
+			return state.assets.length >= VIRTUALIZATION_THRESHOLD;
+		}
+
+		function handleCardKeydown(event, index) {
+			const columns = getGridColumnCount();
+			let nextIndex = index;
+			if (event.key === "ArrowRight") {
+				nextIndex = Math.min(state.assets.length - 1, index + 1);
+			} else if (event.key === "ArrowLeft") {
+				nextIndex = Math.max(0, index - 1);
+			} else if (event.key === "ArrowDown") {
+				nextIndex = Math.min(state.assets.length - 1, index + columns);
+			} else if (event.key === "ArrowUp") {
+				nextIndex = Math.max(0, index - columns);
+			} else {
+				return;
+			}
+			event.preventDefault();
+			const nextAsset = state.assets[nextIndex];
+			if (nextAsset) {
+				setSelectedAsset(nextAsset.path, { ensureVisible: true, focusCard: true });
+			}
+		}
+
+		function createAssetCard(asset, index) {
+			const card = document.createElement("button");
+			card.type = "button";
+			card.className = `asset-card${state.selectedPath === asset.path ? " active" : ""}`;
+			card.dataset.path = asset.path;
+			card.setAttribute("role", "option");
+			card.setAttribute("aria-selected", state.selectedPath === asset.path ? "true" : "false");
+			const thumbId = `thumb-${Math.random().toString(36).slice(2, 10)}`;
+			card.innerHTML = `
+				<div class="asset-thumb">
+					<img id="${thumbId}" src="${assetThumbUrl(asset)}" alt="${escapeHtml(asset.name)}" loading="lazy" />
+					<div class="asset-thumb-fallback">Preview unavailable</div>
+				</div>
+				<div class="asset-top">
+					<div class="asset-title">${escapeHtml(asset.name)}</div>
+					<div class="asset-chip">${escapeHtml(asset.extension || "(none)")}</div>
+				</div>
+				<div class="asset-path" title="${escapeHtml(asset.relative_path)}">${escapeHtml(asset.relative_path)}</div>
+				<div class="asset-extra">
+					<span>${escapeHtml(fmtBytes(asset.size_bytes))}</span>
+					<span>${escapeHtml(fmtDate(asset.modified_ts))}</span>
+				</div>
+			`;
+			const thumb = card.querySelector(`#${thumbId}`);
+			if (thumb) {
+				thumb.addEventListener("error", (event) => {
+					handleCardImageError(event.currentTarget);
+				});
+			}
+			card.addEventListener("click", () => {
+				setSelectedAsset(asset.path);
+			});
+			card.addEventListener("keydown", (event) => {
+				handleCardKeydown(event, index);
+			});
+			return card;
+		}
+
+		function getVirtualMetrics() {
+			const columns = getGridColumnCount();
+			const density = getDensityConfig();
+			const rowHeight = density.rowHeight;
+			const totalRows = Math.max(1, Math.ceil(state.assets.length / columns));
+			const viewportHeight = Math.max(1, assetList.clientHeight);
+			const visibleRows = Math.max(1, Math.ceil(viewportHeight / rowHeight));
+			const scrollTop = assetList.scrollTop;
+			const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - VIRTUAL_OVERSCAN_ROWS);
+			const endRow = Math.min(totalRows, startRow + visibleRows + (VIRTUAL_OVERSCAN_ROWS * 2));
+			return {
+				columns,
+				rowHeight,
+				totalRows,
+				startRow,
+				endRow,
+				startIndex: startRow * columns,
+				endIndex: Math.min(state.assets.length, endRow * columns),
+			};
+		}
+
+		function renderVirtualWindow() {
+			if (!state.virtualizationEnabled || !virtualWindow || !virtualSpacer) {
+				return;
+			}
+
+			const metrics = getVirtualMetrics();
+			state.virtualStartIndex = metrics.startIndex;
+			state.virtualEndIndex = metrics.endIndex;
+			virtualSpacer.style.height = `${metrics.totalRows * metrics.rowHeight}px`;
+			virtualWindow.style.transform = `translateY(${metrics.startRow * metrics.rowHeight}px)`;
+			virtualWindow.style.gridTemplateColumns = `repeat(${metrics.columns}, minmax(${getDensityConfig().minWidth}px, 1fr))`;
+			virtualWindow.innerHTML = "";
+
+			for (let index = metrics.startIndex; index < metrics.endIndex; index += 1) {
+				const asset = state.assets[index];
+				if (!asset) {
+					continue;
+				}
+				virtualWindow.appendChild(createAssetCard(asset, index));
+			}
+		}
+
+		function scheduleVirtualRender() {
+			if (!state.virtualizationEnabled) {
+				return;
+			}
+			if (state.virtualRafId) {
+				cancelAnimationFrame(state.virtualRafId);
+			}
+			state.virtualRafId = requestAnimationFrame(() => {
+				state.virtualRafId = 0;
+				renderVirtualWindow();
+			});
+		}
+
+		function ensureSelectedVisible(path) {
+			const index = getAssetIndex(path);
+			if (index < 0) {
+				return;
+			}
+
+			if (state.virtualizationEnabled) {
+				const columns = getGridColumnCount();
+				const rowHeight = getDensityConfig().rowHeight;
+				const row = Math.floor(index / columns);
+				const top = row * rowHeight;
+				const bottom = top + rowHeight;
+				if (top < assetList.scrollTop) {
+					assetList.scrollTop = top;
+				} else if (bottom > assetList.scrollTop + assetList.clientHeight) {
+					assetList.scrollTop = bottom - assetList.clientHeight;
+				}
+				scheduleVirtualRender();
+				return;
+			}
+
+			const card = assetList.querySelector(`.asset-card[data-path="${CSS.escape(path)}"]`);
+			if (card) {
+				card.scrollIntoView({ block: "nearest" });
+			}
+		}
+
+		function focusSelectedCard(path) {
+			const card = assetList.querySelector(`.asset-card[data-path="${CSS.escape(path)}"]`);
+			if (card) {
+				card.focus();
+				return;
+			}
+			if (state.virtualizationEnabled) {
+				scheduleVirtualRender();
+				requestAnimationFrame(() => {
+					const rerendered = assetList.querySelector(`.asset-card[data-path="${CSS.escape(path)}"]`);
+					if (rerendered) {
+						rerendered.focus();
+					}
+				});
+			}
+		}
+
+		async function ensureAssetDetails(path) {
+			const asset = state.assets.find((item) => item.path === path);
+			if (!asset || asset.metadata) {
+				return;
+			}
+
+			const token = ++state.detailsRequestToken;
+			const data = await fetchJson(`/bubba/assets/details?path=${encodeURIComponent(path)}`);
+			if (token !== state.detailsRequestToken) {
+				return;
+			}
+
+			const detailedAsset = data?.asset;
+			if (!detailedAsset || detailedAsset.path !== path) {
+				return;
+			}
+
+			const index = state.assets.findIndex((item) => item.path === path);
+			if (index < 0) {
+				return;
+			}
+			state.assets[index] = { ...state.assets[index], ...detailedAsset };
+			if (state.selectedPath === path) {
+				renderDetails(state.assets[index]);
+			}
+		}
+
+		function setSelectedAsset(path, options = {}) {
+			const { ensureVisible = false, focusCard = false } = options;
+			state.selectedPath = path;
+			const cards = assetList.querySelectorAll(".asset-card");
+			for (const card of cards) {
+				if (card.dataset.path === path) {
+					card.classList.add("active");
+					card.setAttribute("aria-selected", "true");
+				} else {
+					card.classList.remove("active");
+					card.setAttribute("aria-selected", "false");
+				}
+			}
+
+			const selected = state.assets.find((item) => item.path === path) || null;
+			renderDetails(selected);
+			if (ensureVisible) {
+				ensureSelectedVisible(path);
+			}
+			if (focusCard) {
+				focusSelectedCard(path);
+			}
+			ensureAssetDetails(path).catch((error) => {
+				console.warn("Failed to load asset details", error);
+			});
+		}
+
+		function renderAssets() {
+			assetList.innerHTML = "";
+			assetList.classList.remove("virtualized");
+			assetList.classList.remove("density-compact", "density-comfortable", "density-large");
+			assetList.classList.add(`density-${state.cardDensity}`);
+			assetList.style.setProperty("--asset-min-col-width", `${getDensityConfig().minWidth}px`);
+			virtualSpacer = null;
+			virtualWindow = null;
+			countText.textContent = `${numberFmt.format(state.assets.length)} item(s)${state.hasMore ? " +" : ""}`;
+			loadMoreButton.hidden = !state.hasMore;
+
+			if (!state.assets.length) {
+				assetList.innerHTML = `<div class="empty">No assets matched your filters.</div>`;
+				loadMoreButton.hidden = true;
+				renderDetails(null);
+				return;
+			}
+
+			if (!state.selectedPath) {
+				state.selectedPath = state.assets[0].path;
+			} else if (!state.assets.some((item) => item.path === state.selectedPath)) {
+				state.selectedPath = state.assets[0].path;
+			}
+
+			state.virtualizationEnabled = shouldVirtualize();
+			if (state.virtualizationEnabled) {
+				assetList.classList.add("virtualized");
+				virtualSpacer = document.createElement("div");
+				virtualSpacer.className = "asset-virtual-spacer";
+				virtualWindow = document.createElement("div");
+				virtualWindow.className = "asset-virtual-window";
+				assetList.appendChild(virtualSpacer);
+				assetList.appendChild(virtualWindow);
+				renderVirtualWindow();
+			} else {
+				for (let index = 0; index < state.assets.length; index += 1) {
+					const asset = state.assets[index];
+					assetList.appendChild(createAssetCard(asset, index));
+				}
+			}
+
+			const selected = state.assets.find((item) => item.path === state.selectedPath) || state.assets[0];
+			setSelectedAsset(selected.path, { ensureVisible: false, focusCard: false });
+		}
+
+		async function loadRoots() {
+			statusText.textContent = "Loading roots...";
+			const data = await fetchJson("/bubba/assets/roots");
+			state.roots = Array.isArray(data.roots) ? data.roots : [];
+			if (!state.roots.length) {
+				throw new Error("No asset roots were detected.");
+			}
+			renderRoots();
+		}
+
+		async function refreshAssets({ append = false } = {}) {
+			const token = ++state.listRequestToken;
+			if (state.listAbortController) {
+				state.listAbortController.abort();
+			}
+			state.listAbortController = new AbortController();
+
+			if (!append) {
+				state.currentOffset = 0;
+				state.hasMore = false;
+				state.assets = [];
+			}
+
+			statusText.textContent = append ? "Loading more assets..." : "Scanning assets...";
+			const params = new URLSearchParams();
+			params.set("root", rootSelect.value);
+			params.set("q", searchInput.value.trim());
+			params.set("limit", "300");
+			params.set("offset", String(state.currentOffset));
+			params.set("include_metadata", "false");
+			if (extSelect.value) {
+				params.set("ext", extSelect.value);
+			}
+
+			const data = await fetchJson(`/bubba/assets/list?${params.toString()}`, { signal: state.listAbortController.signal });
+			if (token !== state.listRequestToken) {
+				return;
+			}
+
+			const incoming = Array.isArray(data.assets) ? data.assets : [];
+			state.assets = append ? [...state.assets, ...incoming] : incoming;
+			state.currentOffset = Number.isFinite(data.next_offset) ? data.next_offset : state.assets.length;
+			state.hasMore = Boolean(data.has_more);
+			statusText.textContent = `Root: ${data.root_key || data.root || rootSelect.value}`;
+			renderAssets();
+		}
+
+		let searchDebounce = null;
+		searchInput.addEventListener("input", () => {
+			if (searchDebounce) {
+				clearTimeout(searchDebounce);
+			}
+			searchDebounce = setTimeout(() => {
+				refreshAssets({ append: false }).catch(showError);
+			}, 220);
+		});
+
+		rootSelect.addEventListener("change", () => {
+			state.selectedPath = "";
+			refreshAssets({ append: false }).catch(showError);
+		});
+
+		extSelect.addEventListener("change", () => {
+			state.selectedPath = "";
+			refreshAssets({ append: false }).catch(showError);
+		});
+
+		densitySelect.addEventListener("change", () => {
+			state.cardDensity = densitySelect.value in DENSITY_CONFIG ? densitySelect.value : "comfortable";
+			localStorage.setItem("bubba.assetViewerDensity", state.cardDensity);
+			renderAssets();
+		});
+
+		refreshButton.addEventListener("click", () => {
+			refreshAssets({ append: false }).catch(showError);
+		});
+
+		loadMoreButton.addEventListener("click", () => {
+			refreshAssets({ append: true }).catch(showError);
+		});
+
+		assetList.addEventListener("scroll", () => {
+			scheduleVirtualRender();
+		});
+
+		window.addEventListener("resize", () => {
+			applyDetailsWidth(false);
+			scheduleVirtualRender();
+		});
+
+		function showError(error) {
+			if (error?.name === "AbortError") {
+				return;
+			}
+			console.error(error);
+			statusText.textContent = `Error: ${error?.message || "request failed"}`;
+			countText.textContent = "";
+			loadMoreButton.hidden = true;
+			assetList.innerHTML = `<div class="empty">${escapeHtml(error?.message || "Unexpected error")}</div>`;
+			renderDetails(null);
+		}
+
+		(async () => {
+			try {
+				const savedDensity = localStorage.getItem("bubba.assetViewerDensity");
+				if (savedDensity && savedDensity in DENSITY_CONFIG) {
+					state.cardDensity = savedDensity;
+					densitySelect.value = savedDensity;
+				}
+				const savedPreviewHeight = localStorage.getItem("bubba.assetViewerPreviewHeight");
+				if (savedPreviewHeight) {
+					state.previewHeight = clampPreviewHeight(savedPreviewHeight);
+				}
+				const savedDetailsWidth = localStorage.getItem("bubba.assetViewerDetailsWidth");
+				if (savedDetailsWidth) {
+					state.detailsWidth = clampDetailsWidth(savedDetailsWidth);
+				}
+				setupPanelResizer();
+				setupDragAndDropUpload();
+				applyDetailsWidth(false);
+				applyPreviewHeight(false);
+				await loadRoots();
+				await refreshAssets({ append: false });
+			} catch (error) {
+				showError(error);
+			}
+		})();
+	</script>
+</body>
+</html>

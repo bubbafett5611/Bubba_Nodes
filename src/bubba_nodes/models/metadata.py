@@ -10,6 +10,12 @@ from typing import Any, Mapping
 class BubbaMetadata:
     model_name: str = ""
     sampler_info: str = ""
+    sampler_time_seconds: float = 0.0
+    steps: int = 0
+    cfg: float = 0.0
+    sampler_name: str = ""
+    scheduler: str = ""
+    denoise: float = 0.0
     positive_prompt: str = ""
     negative_prompt: str = ""
     seed: int = 0
@@ -28,11 +34,53 @@ class BubbaMetadata:
         except Exception:
             return 0
 
+    @staticmethod
+    def _normalize_non_negative_int(value: Any) -> int:
+        try:
+            parsed = int(value)
+            return parsed if parsed >= 0 else 0
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _normalize_non_negative_float(value: Any) -> float:
+        try:
+            parsed = float(value)
+            return parsed if parsed >= 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def formatted_sampler_info(self) -> str:
+        # Preserve any explicit sampler_info already set by upstream nodes.
+        explicit = self._normalize_text(self.sampler_info)
+        if explicit:
+            return explicit
+
+        if (
+            self.steps <= 0
+            and not self._normalize_text(self.sampler_name)
+            and not self._normalize_text(self.scheduler)
+            and self.denoise <= 0.0
+            and self.seed <= 0
+        ):
+            return ""
+
+        return (
+            f"Time: {self.sampler_time_seconds:.3f}s  Seed: {self.seed}  Steps: {self.steps}  CFG: {self.cfg}"
+            f"  Sampler: {self.sampler_name}  Scheduler: {self.scheduler}  Denoise: {self.denoise}"
+        )
+
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "BubbaMetadata":
         return cls(
             model_name=cls._normalize_text(payload.get("model_name", "")),
             sampler_info=cls._normalize_text(payload.get("sampler_info", "")),
+            sampler_time_seconds=cls._normalize_non_negative_float(payload.get("sampler_time_seconds", 0.0)),
+            steps=cls._normalize_non_negative_int(payload.get("steps", 0)),
+            cfg=cls._normalize_non_negative_float(payload.get("cfg", 0.0)),
+            sampler_name=cls._normalize_text(payload.get("sampler_name", "")),
+            scheduler=cls._normalize_text(payload.get("scheduler", "")),
+            denoise=cls._normalize_non_negative_float(payload.get("denoise", 0.0)),
             positive_prompt=cls._normalize_text(payload.get("positive_prompt", "")),
             negative_prompt=cls._normalize_text(payload.get("negative_prompt", "")),
             seed=cls._normalize_seed(payload.get("seed", 0)),
@@ -65,7 +113,13 @@ class BubbaMetadata:
     def to_dict(self) -> dict[str, Any]:
         return {
             "model_name": self._normalize_text(self.model_name),
-            "sampler_info": self._normalize_text(self.sampler_info),
+            "sampler_info": self.formatted_sampler_info(),
+            "sampler_time_seconds": self._normalize_non_negative_float(self.sampler_time_seconds),
+            "steps": self._normalize_non_negative_int(self.steps),
+            "cfg": self._normalize_non_negative_float(self.cfg),
+            "sampler_name": self._normalize_text(self.sampler_name),
+            "scheduler": self._normalize_text(self.scheduler),
+            "denoise": self._normalize_non_negative_float(self.denoise),
             "positive_prompt": self._normalize_text(self.positive_prompt),
             "negative_prompt": self._normalize_text(self.negative_prompt),
             "seed": self._normalize_seed(self.seed),

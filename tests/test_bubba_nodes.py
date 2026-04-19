@@ -310,11 +310,17 @@ class TestBubbaMetadataUpdate:
 class TestBubbaMetadataModel:
     def test_from_json_normalizes_types_and_whitespace(self):
         metadata = BubbaMetadata.from_json(
-            '{"model_name":" modelA ","sampler_info":" info ","positive_prompt":" pos ","negative_prompt":" neg ","seed":"123","filepath":" folder/file ","prompt_sections":" appearance: silver hair "}'
+            '{"model_name":" modelA ","sampler_info":" info ","sampler_time_seconds":"0.57","steps":"25","cfg":"7.5","sampler_name":" dpmpp_2m ","scheduler":" karras ","denoise":"1.0","positive_prompt":" pos ","negative_prompt":" neg ","seed":"123","filepath":" folder/file ","prompt_sections":" appearance: silver hair "}'
         )
 
         assert metadata.model_name == "modelA"
         assert metadata.sampler_info == "info"
+        assert metadata.sampler_time_seconds == 0.57
+        assert metadata.steps == 25
+        assert metadata.cfg == 7.5
+        assert metadata.sampler_name == "dpmpp_2m"
+        assert metadata.scheduler == "karras"
+        assert metadata.denoise == 1.0
         assert metadata.positive_prompt == "pos"
         assert metadata.negative_prompt == "neg"
         assert metadata.seed == 123
@@ -334,7 +340,12 @@ class TestBubbaMetadataModel:
     def test_to_json_round_trip(self):
         metadata = BubbaMetadata(
             model_name="myModel",
-            sampler_info="Time: 0.1s",
+            sampler_time_seconds=0.1,
+            steps=20,
+            cfg=8.0,
+            sampler_name="dpmpp_2m",
+            scheduler="karras",
+            denoise=1.0,
             positive_prompt="hero",
             negative_prompt="blurry",
             seed=7,
@@ -344,7 +355,13 @@ class TestBubbaMetadataModel:
         payload = json.loads(metadata.to_json())
 
         assert payload["model_name"] == "myModel"
-        assert payload["sampler_info"] == "Time: 0.1s"
+        assert payload["sampler_info"] == "Time: 0.100s  Seed: 7  Steps: 20  CFG: 8.0  Sampler: dpmpp_2m  Scheduler: karras  Denoise: 1.0"
+        assert payload["sampler_time_seconds"] == 0.1
+        assert payload["steps"] == 20
+        assert payload["cfg"] == 8.0
+        assert payload["sampler_name"] == "dpmpp_2m"
+        assert payload["scheduler"] == "karras"
+        assert payload["denoise"] == 1.0
         assert payload["positive_prompt"] == "hero"
         assert payload["negative_prompt"] == "blurry"
         assert payload["seed"] == 7

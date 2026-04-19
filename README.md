@@ -41,6 +41,19 @@ This extension currently registers 15 nodes:
 - Inspect prompts for token count, duplicates, and conflict warnings.
 - Use in-node prompt autocomplete for Bubba multiline prompt fields (appearance/body/style/negative/etc.) with keyboard navigation.
 - Save images normally or preview-only through ComfyUI UI helpers, with optional filepath pulled from metadata.
+- Open a standalone Asset Viewer web page to browse image assets in Comfy input/output folders and inspect embedded metadata outside the main ComfyUI canvas.
+
+## Standalone Asset Viewer
+
+- Open ComfyUI settings and use `Bubba: Asset Viewer -> Open Standalone Page`.
+- The viewer loads roots from Comfy image input and output folders and scans files recursively.
+- Metadata fields are parsed from `.png` text chunks where available.
+- You can also open directly by URL: `/extensions/bubba_nodes/comfyui/asset_viewer.html`
+
+Backend endpoints exposed by this extension:
+
+- `GET /bubba/assets/roots`
+- `GET /bubba/assets/list?root=<path-or-key>&q=<search>&ext=.png&limit=1200&include_metadata=true`
 
 ## Installation
 
@@ -61,6 +74,14 @@ git clone https://github.com/bubbafett5611/bubba_nodes.git
 ```
 
 2. Restart ComfyUI.
+
+3. If dependencies are missing in your ComfyUI Python environment, install them using the same interpreter ComfyUI runs with:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+If you use a dedicated ComfyUI venv/conda env, run that command from inside the active ComfyUI environment.
 
 ## Quick Workflow Example
 
