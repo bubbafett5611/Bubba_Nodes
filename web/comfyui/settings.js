@@ -1,27 +1,88 @@
-import { app } from "../../../scripts/app.js";
-import { $el } from "../../../scripts/ui.js";
+const { app } = window.comfyAPI.app;
 import {
-	id,
 	BubbaTextAutoComplete,
 	installStringWidgetHook,
-	ensureDanbooruCacheSeeded,
-	isDanbooruEnabled,
-	danbooruEnabledStorageKey,
-	debugStorageKey,
-	openCustomWordsEditor,
-	downloadDanbooruCacheFile,
-	refreshDanbooruTagsFromPrompts,
-	clearDanbooruTagCache,
-	parseStatusFromMeta,
+	ensureLocalCsvCacheSeeded,
+	exportLocalTagCacheCsv,
+	refreshLocalCsvCache,
+	clearLocalTagCache,
+	parseLocalTagCacheStatus,
 } from "./autocomplete.js";
+import { installCheckpointTieredMenus } from "./checkpoint_menu.js";
+
+const AUTOCOMPLETE_EXTENSION_NAME = "bubba.prompt_autocomplete";
+const ASSET_VIEWER_EXTENSION_NAME = "bubba.asset_viewer";
+const AUTOCOMPLETE_ENABLED_SETTING_ID = "bubba.Autocomplete.Enabled";
+const AUTOCOMPLETE_CACHE_SETTING_ID = "bubba.Autocomplete.DanbooruActions";
+const ASSET_VIEWER_SETTING_ID = "bubba.Autocomplete.AssetViewer";
 
 app.registerExtension({
-	name: id,
+	name: AUTOCOMPLETE_EXTENSION_NAME,
 	init() {
 		installStringWidgetHook();
-		BubbaTextAutoComplete.enabled = localStorage.getItem(`${id}.Enabled`) !== "false";
-		ensureDanbooruCacheSeeded();
+		installCheckpointTieredMenus();
+		BubbaTextAutoComplete.enabled = localStorage.getItem(AUTOCOMPLETE_ENABLED_SETTING_ID) !== "false";
+		ensureLocalCsvCacheSeeded();
 	},
+	setup() {
+		app.ui.settings.addSetting({
+			id: AUTOCOMPLETE_ENABLED_SETTING_ID,
+			name: "Bubba: Prompt Autocomplete",
+			type: "boolean",
+			defaultValue: true,
+			onChange: (value) => {
+				BubbaTextAutoComplete.enabled = !!value;
+				localStorage.setItem(AUTOCOMPLETE_ENABLED_SETTING_ID, String(!!value));
+			},
+		});
+
+		app.ui.settings.addSetting({
+			id: AUTOCOMPLETE_CACHE_SETTING_ID,
+			name: "Bubba: Local CSV Sync + Cache",
+			defaultValue: "",
+			type: () => {
+				const status = document.createElement("div");
+				status.textContent = parseLocalTagCacheStatus();
+				Object.assign(status.style, { fontSize: "12px", opacity: 0.8, marginBottom: "6px" });
+
+				const hint = document.createElement("div");
+				hint.textContent = "Autocomplete uses an in-memory search index built from this browser cache for fast typing.";
+				Object.assign(hint.style, { fontSize: "12px", opacity: 0.7, marginBottom: "6px" });
+
+				const refreshButton = document.createElement("button");
+				refreshButton.textContent = "Download Latest + Rebuild Cache";
+				refreshButton.onclick = async () => {
+					await refreshLocalCsvCache(refreshButton);
+					status.textContent = parseLocalTagCacheStatus();
+				};
+
+				const clearButton = document.createElement("button");
+				clearButton.textContent = "Clear Browser Cache";
+				clearButton.style.marginLeft = "8px";
+				clearButton.onclick = () => {
+					clearLocalTagCache();
+					status.textContent = parseLocalTagCacheStatus();
+				};
+
+				const exportButton = document.createElement("button");
+				exportButton.textContent = "Export Browser Cache CSV";
+				exportButton.style.marginLeft = "8px";
+				exportButton.onclick = () => exportLocalTagCacheCsv();
+
+				const buttonRow = document.createElement("div");
+				buttonRow.append(refreshButton, clearButton, exportButton);
+
+				const container = document.createElement("div");
+				container.append(status, hint, buttonRow);
+				return container;
+			},
+		});
+
+	},
+});
+
+app.registerExtension({
+	name: ASSET_VIEWER_EXTENSION_NAME,
 	setup() {
 		const openAssetViewer = () => {
 			const url = `${window.location.origin}/extensions/bubba_nodes/comfyui/asset_viewer.html`;
@@ -29,138 +90,17 @@ app.registerExtension({
 		};
 
 		app.ui.settings.addSetting({
-			id: `${id}.Enabled`,
-			name: "Bubba: Prompt Autocomplete",
-			type: "boolean",
-			defaultValue: true,
-			onChange: (value) => {
-				BubbaTextAutoComplete.enabled = !!value;
-				localStorage.setItem(`${id}.Enabled`, String(!!value));
-			},
-		});
-
-		app.ui.settings.addSetting({
-			id: `${id}.CustomWords`,
-			name: "Bubba: Edit Autocomplete Words",
-			defaultValue: "",
-			type: () =>
-				$el("tr", [
-					$el("td", [
-						$el("label", {
-							textContent: "Bubba: Edit Autocomplete Words",
-						}),
-					]),
-					$el("td", [
-						$el("button", {
-							textContent: "Open File",
-							onclick: () => openCustomWordsEditor(),
-						}),
-					]),
-				]),
-		});
-
-		app.ui.settings.addSetting({
-			id: `${id}.UseDanbooru`,
-			name: "Bubba: Include Danbooru Tags",
-			type: "boolean",
-			defaultValue: isDanbooruEnabled(),
-			onChange: (value) => {
-				localStorage.setItem(danbooruEnabledStorageKey, String(!!value));
-			},
-		});
-
-		app.ui.settings.addSetting({
-			id: `${id}.Debug`,
-			name: "Bubba: Debug Fetch Logs",
-			type: "boolean",
-			defaultValue: localStorage.getItem(debugStorageKey) === "true",
-			onChange: (value) => {
-				localStorage.setItem(debugStorageKey, String(!!value));
-			},
-		});
-
-		app.ui.settings.addSetting({
-			id: `${id}.DanbooruActions`,
-			name: "Bubba: Danbooru Tag Cache",
-			defaultValue: "",
-			type: () => {
-				const status = $el("div", {
-					textContent: parseStatusFromMeta(),
-					style: {
-						fontSize: "12px",
-						opacity: 0.8,
-						marginBottom: "6px",
-					},
-				});
-				const refreshButton = $el("button", {
-					textContent: "Refresh from Danbooru",
-					onclick: async () => {
-						await refreshDanbooruTagsFromPrompts(refreshButton, false);
-						status.textContent = parseStatusFromMeta();
-					},
-				});
-				const fullSyncButton = $el("button", {
-					textContent: "Full Sync (All >= Min Count)",
-					style: {
-						marginLeft: "8px",
-					},
-					onclick: async () => {
-						await refreshDanbooruTagsFromPrompts(fullSyncButton, true);
-						status.textContent = parseStatusFromMeta();
-					},
-				});
-				const clearButton = $el("button", {
-					textContent: "Clear Cache",
-					style: {
-						marginLeft: "8px",
-					},
-					onclick: () => {
-						clearDanbooruTagCache();
-						status.textContent = parseStatusFromMeta();
-					},
-				});
-				const exportButton = $el("button", {
-					textContent: "Export Cache CSV",
-					style: {
-						marginLeft: "8px",
-					},
-					onclick: () => {
-						downloadDanbooruCacheFile();
-					},
-				});
-
-				return $el("tr", [
-					$el("td", [
-						$el("label", {
-							textContent: "Bubba: Danbooru Tag Cache",
-						}),
-					]),
-					$el("td", [
-						status,
-						$el("div", [refreshButton, fullSyncButton, clearButton, exportButton]),
-					]),
-				]);
-			},
-		});
-
-		app.ui.settings.addSetting({
-			id: `${id}.AssetViewer`,
+			id: ASSET_VIEWER_SETTING_ID,
 			name: "Bubba: Asset Viewer",
 			defaultValue: "",
-			type: () =>
-				$el("tr", [
-					$el("td", [
-						$el("label", {
-							textContent: "Bubba: Asset Viewer",
-						}),
-					]),
-					$el("td", [
-						$el("button", {
-							textContent: "Open Standalone Page",
-							onclick: () => openAssetViewer(),
-						}),
-					]),
-				]),
+			type: () => {
+				const btn = document.createElement("button");
+				btn.textContent = "Open Standalone Page";
+				btn.onclick = () => openAssetViewer();
+				const container = document.createElement("div");
+				container.appendChild(btn);
+				return container;
+			},
 		});
 	},
 });

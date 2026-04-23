@@ -477,7 +477,9 @@ def scan_assets(
     files: list[dict[str, Any]] = []
     matched = 0
 
-    for current_dir, _, filenames in os.walk(normalized_root):
+    for current_dir, dirnames, filenames in os.walk(normalized_root):
+        dirnames.sort(key=str.lower)
+        filenames.sort(key=str.lower)
         for filename in filenames:
             if len(files) >= limit:
                 return files
@@ -492,16 +494,21 @@ def scan_assets(
 
             rel_path = os.path.relpath(abs_path, normalized_root)
             metadata_summary: dict[str, Any] = {}
-            should_parse_metadata = extension in {".safetensors", ".png"} and (include_metadata or (q and search_in_metadata))
-            if should_parse_metadata:
+            supports_metadata = extension in {".safetensors", ".png"}
+            base_search_blob = f"{filename} {rel_path}".lower()
+
+            needs_metadata_for_query = bool(q and search_in_metadata and supports_metadata and q not in base_search_blob)
+            needs_metadata_for_payload = bool(include_metadata and supports_metadata)
+            if needs_metadata_for_query or needs_metadata_for_payload:
                 metadata_summary = summarize_metadata(extension, abs_path)
 
             if q:
-                search_blob = f"{filename} {rel_path}".lower()
-                if metadata_summary:
-                    search_blob = f"{search_blob} {_flatten_to_search_text(metadata_summary).lower()}"
-                if q not in search_blob:
-                    continue
+                if q not in base_search_blob:
+                    if not metadata_summary:
+                        continue
+                    metadata_blob = _flatten_to_search_text(metadata_summary).lower()
+                    if q not in metadata_blob:
+                        continue
 
             if matched < offset:
                 matched += 1

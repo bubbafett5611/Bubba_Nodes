@@ -29,11 +29,12 @@ WEB_DIRECTORY = "./web"
 
 try:
     from email.utils import formatdate, parsedate_to_datetime
+    import urllib.request
+    import urllib.error
     import json
     import mimetypes
     import os
-    import platform
-    import subprocess
+    import re
     from aiohttp import web
     from server import PromptServer
     from .src.bubba_nodes.utils.asset_viewer import (
@@ -49,9 +50,73 @@ try:
         scan_assets,
     )
 
-    _CACHE_PATH = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "web", "comfyui", "danbooru_cache.csv"
+    _LOCAL_TAG_CACHE_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "web", "comfyui", "danbooru_e621_merged.csv"
     )
+    _UPSTREAM_TAG_LISTS_API_URL = "https://api.github.com/repos/DraconicDragon/dbr-e621-lists-archive/contents/tag-lists/danbooru_e621_merged"
+    _UPSTREAM_RAW_ROOT = "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists/danbooru_e621_merged"
+
+    _FILENAME_DATE_RE = re.compile(r"danbooru_e621_merged_(\d{4}-\d{2}-\d{2})_.*\.csv$", re.IGNORECASE)
+
+    def _pick_latest_upstream_csv(entries: list[dict]) -> str:
+        candidates: list[tuple[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("type", "")) != "file":
+                continue
+            name = str(entry.get("name", ""))
+            match = _FILENAME_DATE_RE.match(name)
+            if not match:
+                continue
+            date_key = match.group(1)
+            candidates.append((date_key, name))
+
+        if not candidates:
+            raise RuntimeError("No merged CSV files found in upstream folder.")
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+
+    def _download_text(url: str) -> str:
+        req = urllib.request.Request(url, headers={"User-Agent": "bubba_nodes/0.0.1"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        return data.decode("utf-8", errors="replace")
+
+    @PromptServer.instance.routes.post("/bubba/sync_upstream_cache")
+    async def _sync_upstream_cache(request):
+        del request
+        try:
+            listing_text = _download_text(_UPSTREAM_TAG_LISTS_API_URL)
+            listing_payload = json.loads(listing_text)
+            if not isinstance(listing_payload, list):
+                raise RuntimeError("Unexpected upstream listing payload.")
+
+            latest_name = _pick_latest_upstream_csv(listing_payload)
+            source_url = f"{_UPSTREAM_RAW_ROOT}/{latest_name}"
+            csv_text = _download_text(source_url)
+
+            if not csv_text or csv_text.count("\n") < 1000:
+                raise RuntimeError("Downloaded CSV looks too small or empty.")
+
+            os.makedirs(os.path.dirname(_LOCAL_TAG_CACHE_PATH), exist_ok=True)
+            with open(_LOCAL_TAG_CACHE_PATH, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(csv_text)
+
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "filename": latest_name,
+                    "source_url": source_url,
+                    "written_path": _LOCAL_TAG_CACHE_PATH,
+                    "line_count": csv_text.count("\n"),
+                }
+            )
+        except urllib.error.URLError as exc:
+            return web.json_response({"error": f"Upstream request failed: {exc}"}, status=502)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
 
     def _build_cache_headers(path: str, variant: str = "", max_age: int = 0) -> tuple[dict[str, str], float]:
         stat = os.stat(path)
@@ -82,26 +147,6 @@ try:
                 pass
 
         return False
-
-    @PromptServer.instance.routes.get("/bubba/open_cache")
-    async def _open_cache(request):
-        print(f"[bubba_nodes] opening cache file: {_CACHE_PATH}")
-        if platform.system() == "Windows":
-            os.startfile(_CACHE_PATH)
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", _CACHE_PATH])
-        else:
-            subprocess.Popen(["xdg-open", _CACHE_PATH])
-        return web.json_response({"status": "ok"})
-
-    @PromptServer.instance.routes.post("/bubba/write_cache")
-    async def _write_cache(request):
-        csv_text = await request.text()
-        os.makedirs(os.path.dirname(_CACHE_PATH), exist_ok=True)
-        with open(_CACHE_PATH, "w", encoding="utf-8", newline="\n") as f:
-            f.write(csv_text)
-        print(f"[bubba_nodes] wrote cache file: {_CACHE_PATH} ({len(csv_text)} bytes)")
-        return web.json_response({"status": "ok"})
 
     @PromptServer.instance.routes.get("/bubba/assets/roots")
     async def _asset_roots(request):

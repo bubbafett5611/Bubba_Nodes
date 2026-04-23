@@ -1,48 +1,26 @@
-import { ComfyWidgets } from "../../../scripts/widgets.js";
-import { $el } from "../../../scripts/ui.js";
+const { ComfyWidgets } = window.comfyAPI.widgets;
 
-const id = "bubba.Autocomplete";
-const customWordsStorageKey = `${id}.CustomWords`;
-const danbooruTagsStorageKey = `${id}.DanbooruTags`;
-const danbooruMetaStorageKey = `${id}.DanbooruMeta`;
-const danbooruEnabledStorageKey = `${id}.UseDanbooru`;
-const danbooruMinCountStorageKey = `${id}.DanbooruMinCount`;
-const debugStorageKey = `${id}.Debug`;
+const customWordsStorageKey = "bubba.Autocomplete.CustomWords";
+const danbooruTagsStorageKey = "bubba.Autocomplete.DanbooruTags";
+const danbooruMetaStorageKey = "bubba.Autocomplete.DanbooruMeta";
 const bundledCacheSchemaVersion = 1;
 
-const DANBOORU_BASE_URL = "https://danbooru.donmai.us/tags.json";
-const DANBOORU_MAX_PAGES = 20;
-const DANBOORU_MAX_FULL_SYNC_PAGES = 1000;
-const DANBOORU_PAGE_SIZE = 200;
-const DANBOORU_REQUEST_DELAY_MS = 200;
-const BUNDLED_DANBOORU_CACHE_URL = new URL("./danbooru_cache.csv", import.meta.url);
+const LOCAL_DANBOORU_MERGED_CSV_URL = new URL("./danbooru_e621_merged.csv", import.meta.url);
 
 let danbooruTagsMemoryCache = [];
-
-const GROUP_WORDS = {
-	common: [
-		"masterpiece",
-		"best quality",
-		"high detail",
-		"cinematic lighting",
-		"volumetric lighting",
-		"sharp focus",
-		"depth of field",
-	],
-	appearance: ["silver hair", "long hair", "amber eyes", "freckles", "cat ears", "wolf ears", "tail"],
-	body: ["slim", "athletic", "curvy", "petite", "tall", "soft body", "defined muscles"],
-	clothing: ["hoodie", "jacket", "leather outfit", "armor", "dress", "stockings", "gloves"],
-	pose: ["standing", "sitting", "dynamic pose", "looking at viewer", "from above", "cowboy shot"],
-	expression: ["smile", "serious", "smirk", "blush", "confident", "playful", "determined"],
-	scene: ["forest", "city street", "night", "sunset", "studio lighting", "rain", "indoors"],
-	style: ["anime", "semi-realistic", "illustration", "digital painting", "lineart", "vibrant colors"],
-	quality: ["8k", "ultra detailed", "detailed background", "clean lineart", "highres"],
-	positive: ["masterpiece", "best quality", "high detail", "detailed face", "dynamic lighting"],
-	negative: ["lowres", "blurry", "bad anatomy", "extra fingers", "deformed", "watermark", "text"],
+let danbooruTagsVersion = 0;
+let mergedWordListCache = {
+	key: null,
+	words: [],
+};
+let searchIndexCache = {
+	wordsRef: null,
+	index: null,
 };
 
-$el("style", {
-	textContent: `
+{
+	const style = document.createElement("style");
+	style.textContent = `
 		.bubba-autocomplete {
 			position: fixed;
 			z-index: 99999;
@@ -70,9 +48,14 @@ $el("style", {
 			opacity: 0.75;
 			margin-left: 8px;
 		}
-	`,
-	parent: document.body,
-});
+		.bubba-autocomplete-item-alt {
+			opacity: 0.85;
+			margin-left: 8px;
+			font-style: italic;
+		}
+	`;
+	document.body.appendChild(style);
+}
 
 function toInt(value, fallback) {
 	const parsed = Number.parseInt(String(value), 10);
@@ -80,10 +63,6 @@ function toInt(value, fallback) {
 		return fallback;
 	}
 	return parsed;
-}
-
-function clamp(value, min, max) {
-	return Math.max(min, Math.min(max, value));
 }
 
 function formatNumber(value) {
@@ -129,21 +108,152 @@ function parseJsonStorage(key, fallback) {
 	}
 }
 
-function isDebugEnabled() {
-	return localStorage.getItem(debugStorageKey) === "true";
+function normalizeSearchText(value) {
+	return String(value || "")
+		.toLowerCase()
+		.replace(/[\/_:\-]+/g, " ")
+		.replace(/[^a-z0-9\s]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
 }
 
-function logDebug(message) {
-	if (!isDebugEnabled()) {
-		return;
+function normalizeAliases(value) {
+	if (!value) {
+		return [];
 	}
-	console.info(message);
+	const raw = Array.isArray(value) ? value : String(value).split(/[|,]/g);
+	const deduped = new Set();
+	for (const item of raw) {
+		let alias = String(item || "").trim();
+		if (alias.startsWith('"') && alias.endsWith('"') && alias.length >= 2) {
+			alias = alias.slice(1, -1);
+		}
+		if (alias.startsWith("'") && alias.endsWith("'") && alias.length >= 2) {
+			alias = alias.slice(1, -1);
+		}
+		if (!alias) {
+			continue;
+		}
+		deduped.add(alias.toLowerCase());
+	}
+	return [...deduped.values()];
 }
 
-function delay(ms) {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
+function parseCsvRow(line) {
+	const text = String(line || "");
+	if (!text) {
+		return [];
+	}
+
+	const parts = [];
+	let current = "";
+	let inQuotes = false;
+
+	for (let i = 0; i < text.length; i += 1) {
+		const ch = text[i];
+		if (ch === '"') {
+			if (inQuotes && text[i + 1] === '"') {
+				current += '"';
+				i += 1;
+				continue;
+			}
+			inQuotes = !inQuotes;
+			continue;
+		}
+		if (ch === "," && !inQuotes) {
+			parts.push(current.trim());
+			current = "";
+			continue;
+		}
+		current += ch;
+	}
+
+	parts.push(current.trim());
+	return parts;
+}
+
+function toCsvField(value) {
+	const text = String(value ?? "");
+	if (!text.includes(",") && !text.includes('"') && !text.includes("\n") && !text.includes("\r")) {
+		return text;
+	}
+	return `"${text.replace(/"/g, '""')}"`;
+}
+
+function mergeAliases(left, right) {
+	const merged = new Set([...(left || []), ...(right || [])]);
+	return [...merged.values()];
+}
+
+function parseCustomWordEntry(rawText) {
+	const text = String(rawText || "").trim();
+	if (!text) {
+		return null;
+	}
+
+	if (text.includes("=>")) {
+		const [canonicalRaw, aliasesRaw] = text.split("=>", 2);
+		const canonical = String(canonicalRaw || "").trim();
+		if (!canonical) {
+			return null;
+		}
+		return {
+			text: canonical,
+			aliases: normalizeAliases(aliasesRaw),
+		};
+	}
+
+	if (text.includes("|")) {
+		const parts = text
+			.split("|")
+			.map((part) => part.trim())
+			.filter(Boolean);
+		if (!parts.length) {
+			return null;
+		}
+		return {
+			text: parts[0],
+			aliases: normalizeAliases(parts.slice(1)),
+		};
+	}
+
+	return {
+		text,
+		aliases: [],
+	};
+}
+
+function getSearchQueryVariations(query) {
+	const trimmed = String(query || "").trim().toLowerCase();
+	if (!trimmed) {
+		return [];
+	}
+
+	const variants = new Set([trimmed, normalizeSearchText(trimmed)]);
+
+	if (trimmed.includes(" ")) {
+		variants.add(trimmed.replace(/\s+/g, "_"));
+		variants.add(trimmed.replace(/\s+/g, ""));
+	}
+
+	if (trimmed.includes("_")) {
+		variants.add(trimmed.replace(/_+/g, " "));
+		variants.add(trimmed.replace(/_+/g, ""));
+	}
+
+	const spaceParts = trimmed.split(/\s+/g).filter(Boolean);
+	if (spaceParts.length > 1) {
+		variants.add(spaceParts[spaceParts.length - 1]);
+	}
+
+	for (const value of [...variants]) {
+		const normalized = normalizeSearchText(value);
+		variants.add(normalized);
+		variants.add(normalized.replace(/\s+/g, "_"));
+		variants.add(normalized.replace(/\s+/g, ""));
+	}
+
+	return [...variants.values()].filter(Boolean).slice(0, 12);
 }
 
 function normalizeEntry(entry, source) {
@@ -152,7 +262,8 @@ function normalizeEntry(entry, source) {
 	}
 
 	if (typeof entry === "string") {
-		const text = entry.trim();
+		const parsed = parseCustomWordEntry(entry);
+		const text = String(parsed?.text || "").trim();
 		if (!text) {
 			return null;
 		}
@@ -160,6 +271,7 @@ function normalizeEntry(entry, source) {
 			text,
 			source,
 			count: null,
+			aliases: normalizeAliases(parsed?.aliases),
 		};
 	}
 
@@ -174,11 +286,13 @@ function normalizeEntry(entry, source) {
 
 	const count = typeof entry.count === "number" ? entry.count : typeof entry.post_count === "number" ? entry.post_count : null;
 	const category = normalizeDanbooruCategory(entry.category ?? entry.tag_category);
+	const aliases = normalizeAliases(entry.aliases ?? entry.alias);
 	return {
 		text,
 		source,
 		count: Number.isFinite(count) ? count : null,
 		category,
+		aliases,
 	};
 }
 
@@ -197,8 +311,16 @@ function dedupeEntries(entries) {
 		const prevCount = typeof prev.count === "number" ? prev.count : -1;
 		const nextCount = typeof entry.count === "number" ? entry.count : -1;
 		if (nextCount > prevCount) {
-			map.set(key, entry);
+			map.set(key, {
+				...entry,
+				aliases: mergeAliases(prev.aliases, entry.aliases),
+			});
+			continue;
 		}
+		map.set(key, {
+			...prev,
+			aliases: mergeAliases(prev.aliases, entry.aliases),
+		});
 	}
 	return [...map.values()];
 }
@@ -215,11 +337,17 @@ function parseCustomWords(text) {
 	);
 }
 
-function getCustomWords() {
-	return parseCustomWords(localStorage.getItem(customWordsStorageKey) || "");
+function invalidateAutocompleteCaches() {
+	mergedWordListCache.key = null;
+	searchIndexCache.wordsRef = null;
+	searchIndexCache.index = null;
 }
 
 function getDanbooruTags() {
+	if (Array.isArray(danbooruTagsMemoryCache) && danbooruTagsMemoryCache.length > 0) {
+		return danbooruTagsMemoryCache;
+	}
+
 	const parsed = parseJsonStorage(danbooruTagsStorageKey, []);
 	if (Array.isArray(parsed) && parsed.length > 0) {
 		const normalized = dedupeEntries(
@@ -228,10 +356,8 @@ function getDanbooruTags() {
 				.filter(Boolean),
 		);
 		danbooruTagsMemoryCache = normalized;
+		danbooruTagsVersion += 1;
 		return normalized;
-	}
-	if (Array.isArray(danbooruTagsMemoryCache) && danbooruTagsMemoryCache.length > 0) {
-		return danbooruTagsMemoryCache;
 	}
 	return [];
 }
@@ -241,16 +367,19 @@ function setDanbooruTags(tags) {
 		text: tag.text,
 		count: tag.count,
 		category: tag.category,
+		aliases: normalizeAliases(tag.aliases),
 	}));
 	danbooruTagsMemoryCache = dedupeEntries(
 		serialized
 			.map((entry) => normalizeEntry(entry, "danbooru"))
 			.filter(Boolean),
 	);
+	danbooruTagsVersion += 1;
+	invalidateAutocompleteCaches();
 	try {
 		localStorage.setItem(danbooruTagsStorageKey, JSON.stringify(serialized));
 	} catch (error) {
-		console.warn("Bubba Autocomplete: localStorage quota exceeded for Danbooru tags, using in-memory cache only.", error);
+		console.warn("Bubba Autocomplete: localStorage quota exceeded for local tags, using in-memory cache only.", error);
 		try {
 			localStorage.removeItem(danbooruTagsStorageKey);
 		} catch {
@@ -267,23 +396,15 @@ function getDanbooruMeta() {
 	return parseJsonStorage(danbooruMetaStorageKey, null);
 }
 
-function isDanbooruEnabled() {
-	return localStorage.getItem(danbooruEnabledStorageKey) !== "false";
-}
-
-function getDanbooruMinCount() {
-	return Math.max(0, toInt(localStorage.getItem(danbooruMinCountStorageKey) || "0", 0));
-}
-
 async function loadBundledDanbooruCache() {
-	const response = await fetch(BUNDLED_DANBOORU_CACHE_URL, {
+	const response = await fetch(LOCAL_DANBOORU_MERGED_CSV_URL, {
 		cache: "no-store",
 		headers: {
 			"Accept": "text/csv, text/plain;q=0.9, */*;q=0.8",
 		},
 	});
 	if (!response.ok) {
-		throw new Error(`Unable to load bundled Danbooru cache (${response.status}).`);
+		throw new Error(`Unable to load local merged Danbooru cache (${response.status}).`);
 	}
 	const csvText = await response.text();
 	const tags = [];
@@ -293,8 +414,39 @@ async function loadBundledDanbooruCache() {
 		.filter(Boolean);
 
 	let generatedAt = null;
-	let minCount = 0;
-	let pages = 0;
+	let columnMap = null;
+
+	const inferColumnMapFromRow = (rowParts) => {
+		if (!Array.isArray(rowParts) || rowParts.length < 3) {
+			return {
+				nameIdx: 0,
+				countIdx: 1,
+				categoryIdx: 2,
+				aliasesIdx: rowParts.length >= 4 ? 3 : -1,
+			};
+		}
+
+		const second = toInt(String(rowParts[1] || "").trim(), Number.NaN);
+		const third = toInt(String(rowParts[2] || "").trim(), Number.NaN);
+		const secondLooksCategory = Number.isFinite(second) && second >= 0 && second <= 15;
+		const thirdLooksCount = Number.isFinite(third) && third > 15;
+
+		if (secondLooksCategory && thirdLooksCount) {
+			return {
+				nameIdx: 0,
+				countIdx: 2,
+				categoryIdx: 1,
+				aliasesIdx: rowParts.length >= 4 ? 3 : -1,
+			};
+		}
+
+		return {
+			nameIdx: 0,
+			countIdx: 1,
+			categoryIdx: 2,
+			aliasesIdx: rowParts.length >= 4 ? 3 : -1,
+		};
+	};
 
 	for (const line of lines) {
 		if (line.startsWith("#")) {
@@ -306,32 +458,44 @@ async function loadBundledDanbooruCache() {
 			const value = match[2];
 			if (key === "generated_at") {
 				generatedAt = value;
-			} else if (key === "min_post_count") {
-				minCount = Math.max(0, toInt(value, 0));
-			} else if (key === "pages_fetched") {
-				pages = Math.max(0, toInt(value, 0));
 			}
 			continue;
 		}
 
 		const header = line.toLowerCase();
-		if (
-			header === "tag,count" ||
-			header === "tag,count,category" ||
-			header === "name,post_count" ||
-			header === "name,post_count,category"
-		) {
+		if (header.startsWith("tag,") || header.startsWith("name,")) {
+			const cols = parseCsvRow(line).map((part) => String(part || "").trim().toLowerCase());
+			const nameIdx = cols.indexOf("tag") >= 0 ? cols.indexOf("tag") : cols.indexOf("name");
+			const countIdx = cols.indexOf("post_count") >= 0 ? cols.indexOf("post_count") : cols.indexOf("count");
+			const categoryIdx = cols.indexOf("category") >= 0 ? cols.indexOf("category") : cols.indexOf("type");
+			const aliasesIdx = cols.indexOf("aliases") >= 0 ? cols.indexOf("aliases") : cols.indexOf("alias");
+
+			columnMap = {
+				nameIdx: nameIdx >= 0 ? nameIdx : 0,
+				countIdx: countIdx >= 0 ? countIdx : 1,
+				categoryIdx,
+				aliasesIdx,
+			};
 			continue;
 		}
-		const parts = line.split(",");
+		const parts = parseCsvRow(line);
 		if (parts.length < 2) {
 			continue;
 		}
+		if (!columnMap) {
+			columnMap = inferColumnMapFromRow(parts);
+		}
 
-		const tag = parts[0].trim();
-		const count = Math.max(0, toInt(parts[1].trim(), 0));
-		const category = parts.length >= 3 ? normalizeDanbooruCategory(parts[2].trim()) : null;
-		const entry = normalizeEntry({ name: tag, count, category }, "danbooru");
+		const nameIdx = columnMap?.nameIdx ?? 0;
+		const countIdx = columnMap?.countIdx ?? 1;
+		const categoryIdx = Number.isInteger(columnMap?.categoryIdx) ? columnMap.categoryIdx : 2;
+		const aliasesIdx = Number.isInteger(columnMap?.aliasesIdx) ? columnMap.aliasesIdx : 3;
+
+		const tag = String(parts[nameIdx] || "").trim();
+		const count = Math.max(0, toInt(String(parts[countIdx] || "0").trim(), 0));
+		const category = categoryIdx >= 0 ? normalizeDanbooruCategory(String(parts[categoryIdx] || "").trim()) : null;
+		const aliases = aliasesIdx >= 0 ? String(parts[aliasesIdx] || "").trim() : "";
+		const entry = normalizeEntry({ name: tag, count, category, aliases }, "danbooru");
 		if (entry) {
 			tags.push(entry);
 		}
@@ -340,19 +504,21 @@ async function loadBundledDanbooruCache() {
 	return {
 		tags,
 		meta: {
-			seedSource: "bundled",
+			seedSource: "upstream",
 			schemaVersion: bundledCacheSchemaVersion,
 			generatedAt,
-			minCount,
-			pages,
 		},
 	};
 }
 
-async function ensureDanbooruCacheSeeded() {
+async function ensureLocalCsvCacheSeeded() {
 	const existing = getDanbooruTags();
 	if (existing.length > 0) {
-		return;
+		const hasAliasData = existing.some((entry) => Array.isArray(entry?.aliases) && entry.aliases.length > 0);
+		const hasSwappedData = hasLikelySwappedCountCategory(existing);
+		if (hasAliasData && !hasSwappedData) {
+			return;
+		}
 	}
 
 	try {
@@ -364,163 +530,340 @@ async function ensureDanbooruCacheSeeded() {
 		setDanbooruMeta({
 			updatedAt: new Date().toISOString(),
 			count: bundled.tags.length,
-			pages: bundled.meta.pages,
-			minCount: bundled.meta.minCount,
 			seedSource: bundled.meta.seedSource,
 			schemaVersion: bundled.meta.schemaVersion,
 			bundledGeneratedAt: bundled.meta.generatedAt,
-			fetchMode: "bundled",
+			fetchMode: "local-csv",
+			sourceUrl: String(LOCAL_DANBOORU_MERGED_CSV_URL),
 		});
-		localStorage.setItem(danbooruMinCountStorageKey, String(bundled.meta.minCount));
 	} catch (error) {
-		console.warn("Bubba Autocomplete: failed to load bundled Danbooru cache", error);
+		console.warn("Bubba Autocomplete: failed to load local merged Danbooru cache", error);
 	}
 }
 
-async function fetchDanbooruTags(options) {
-	const fullSync = !!options?.fullSync;
-	const pages = options?.pages;
-	const minCount = options?.minCount;
-	const safePages = clamp(toInt(pages, 3), 1, DANBOORU_MAX_PAGES);
-	const safeMinCount = Math.max(0, toInt(minCount, 0));
-	const collected = new Map();
-	let pagesFetched = 0;
-	let truncated = false;
-	const maxPages = fullSync ? DANBOORU_MAX_FULL_SYNC_PAGES : safePages;
-	logDebug(`Bubba Autocomplete: Starting ${fullSync ? "full" : "paged"} fetch (maxPages=${maxPages}, minCount=${safeMinCount}).`);
-
-	for (let page = 1; page <= maxPages; page += 1) {
-		logDebug(`Bubba Autocomplete: Fetching Danbooru page ${page}/${maxPages}...`);
-		const params = new URLSearchParams();
-		params.set("limit", String(DANBOORU_PAGE_SIZE));
-		params.set("page", String(page));
-		params.set("search[order]", "count");
-		params.set("search[hide_empty]", "true");
-
-		const url = `${DANBOORU_BASE_URL}?${params.toString()}`;
-		const response = await fetch(url, {
-			headers: {
-				"Accept": "application/json",
-			},
-			cache: "no-store",
-		});
-
-		if (!response.ok) {
-			throw new Error(`Danbooru API failed: ${response.status} ${response.statusText}`);
-		}
-
-		const payload = await response.json();
-		if (!Array.isArray(payload)) {
-			throw new Error("Danbooru API returned an unexpected payload.");
-		}
-		pagesFetched += 1;
-
-		if (payload.length === 0) {
-			logDebug(`Bubba Autocomplete: Page ${page} returned 0 rows, stopping.`);
-			break;
-		}
-
-		let lowestCountInPage = Number.POSITIVE_INFINITY;
-
-		for (const row of payload) {
-			const name = String(row?.name || "").trim();
-			const count = toInt(row?.post_count ?? 0, 0);
-			const category = normalizeDanbooruCategory(row?.category);
-			lowestCountInPage = Math.min(lowestCountInPage, count);
-			if (!name || count < safeMinCount) {
-				continue;
-			}
-			const prev = collected.get(name);
-			if (!prev || count > prev.count) {
-				collected.set(name, { count, category });
-			}
-		}
-
-		logDebug(`Bubba Autocomplete: Page ${page} processed (${payload.length} rows, ${collected.size} tags cached so far).`);
-
-		if (payload.length < DANBOORU_PAGE_SIZE) {
-			logDebug(`Bubba Autocomplete: Page ${page} below page size (${payload.length} < ${DANBOORU_PAGE_SIZE}), stopping.`);
-			break;
-		}
-
-		if (fullSync && lowestCountInPage < safeMinCount) {
-			logDebug(`Bubba Autocomplete: Page ${page} dropped below minCount (${lowestCountInPage} < ${safeMinCount}), stopping.`);
-			break;
-		}
-
-		if (page < maxPages) {
-			await delay(DANBOORU_REQUEST_DELAY_MS);
-		}
-	}
-
-	if (fullSync && pagesFetched >= DANBOORU_MAX_FULL_SYNC_PAGES) {
-		truncated = true;
-		logDebug(`Bubba Autocomplete: Reached safety cap (${DANBOORU_MAX_FULL_SYNC_PAGES} pages), truncating.`);
-	}
-
-	const tags = [...collected.entries()]
-		.map(([text, data]) => ({ text, count: data.count, category: data.category, source: "danbooru" }))
+async function fetchLocalCsvTags() {
+	const bundled = await loadBundledDanbooruCache();
+	const tags = bundled.tags
+		.slice()
 		.sort((a, b) => {
-			if (b.count !== a.count) {
-				return b.count - a.count;
+			const aCount = typeof a.count === "number" ? a.count : -1;
+			const bCount = typeof b.count === "number" ? b.count : -1;
+			if (bCount !== aCount) {
+				return bCount - aCount;
 			}
 			return a.text.localeCompare(b.text);
 		});
 
 	return {
 		tags,
-		pagesFetched,
-		truncated,
-		minCount: safeMinCount,
-		mode: fullSync ? "full" : "paged",
+		truncated: false,
+		mode: "local-csv",
 	};
 }
 
-function parseStatusFromMeta() {
+function parseLocalTagCacheStatus() {
 	const meta = getDanbooruMeta();
 	if (!meta || !meta.updatedAt) {
-		return "No cached Danbooru tags.";
+		return "No local tag cache loaded.";
 	}
 	const date = new Date(meta.updatedAt);
 	const dateText = Number.isNaN(date.getTime()) ? String(meta.updatedAt) : date.toLocaleString();
 	const countText = typeof meta.count === "number" ? formatNumber(meta.count) : "0";
-	const pageText = typeof meta.pages === "number" ? String(meta.pages) : "?";
-	const minCountText = typeof meta.minCount === "number" ? String(meta.minCount) : "0";
-	const modeText = meta.fetchMode ? `, mode ${meta.fetchMode}` : "";
-	const sourceText = meta.seedSource ? `, source ${meta.seedSource}` : "";
-	const truncText = meta.truncated ? ", truncated" : "";
-	return `Cached ${countText} Danbooru tags (${pageText} pages, min count ${minCountText}${modeText}${sourceText}${truncText}) on ${dateText}.`;
+	const details = [];
+	if (meta.fetchMode) {
+		details.push(`mode ${meta.fetchMode}`);
+	}
+	if (meta.seedSource) {
+		details.push(`source ${meta.seedSource}`);
+	}
+	if (meta.truncated) {
+		details.push("truncated");
+	}
+	const detailText = details.length ? ` (${details.join(", ")})` : "";
+	return `Cached ${countText} local tags${detailText}. Updated ${dateText}.`;
 }
 
-function getWordList(group) {
+function getWordList() {
+	const customRaw = localStorage.getItem(customWordsStorageKey) || "";
+	const cacheKey = `1|${danbooruTagsVersion}|${customRaw}`;
+	if (mergedWordListCache.key === cacheKey && Array.isArray(mergedWordListCache.words)) {
+		return mergedWordListCache.words;
+	}
+
 	const words = [];
-	for (const item of GROUP_WORDS.common) {
-		words.push({ text: item, source: "builtin", count: null });
-	}
-	for (const item of GROUP_WORDS[group] || []) {
-		words.push({ text: item, source: "builtin", count: null });
-	}
-	for (const item of getCustomWords()) {
+	for (const item of parseCustomWords(customRaw)) {
 		words.push(item);
 	}
-	if (isDanbooruEnabled()) {
-		for (const item of getDanbooruTags()) {
-			words.push(item);
+	for (const item of getDanbooruTags()) {
+		words.push(item);
+	}
+
+	const deduped = dedupeEntries(words);
+	mergedWordListCache = {
+		key: cacheKey,
+		words: deduped,
+	};
+	invalidateAutocompleteCaches();
+	return deduped;
+}
+
+function addIndexBucket(map, key, index) {
+	if (!key) {
+		return;
+	}
+	const list = map.get(key);
+	if (list) {
+		list.push(index);
+		return;
+	}
+	map.set(key, [index]);
+}
+
+function buildSearchIndex(words) {
+	const entries = [];
+	const prefixBuckets = new Map();
+
+	for (let i = 0; i < words.length; i += 1) {
+		const item = words[i];
+		const textNorm = normalizeSearchText(item.text);
+		const textCompact = textNorm.replace(/\s+/g, "");
+		const aliasNorm = normalizeAliases(item.aliases).map((alias) => normalizeSearchText(alias)).filter(Boolean);
+		const aliasCompact = aliasNorm.map((alias) => alias.replace(/\s+/g, ""));
+
+		entries.push({
+			item,
+			textNorm,
+			textCompact,
+			aliasNorm,
+			aliasCompact,
+		});
+
+		const keys = [textNorm, textCompact, ...aliasNorm, ...aliasCompact].filter(Boolean);
+		for (const key of keys) {
+			addIndexBucket(prefixBuckets, key.slice(0, 1), i);
+			addIndexBucket(prefixBuckets, key.slice(0, 2), i);
+			addIndexBucket(prefixBuckets, key.slice(0, 3), i);
 		}
 	}
-	return dedupeEntries(words);
+
+	return {
+		entries,
+		prefixBuckets,
+	};
+}
+
+function getSearchIndex(words) {
+	if (searchIndexCache.wordsRef === words && searchIndexCache.index) {
+		return searchIndexCache.index;
+	}
+	const index = buildSearchIndex(words);
+	searchIndexCache.wordsRef = words;
+	searchIndexCache.index = index;
+	return index;
+}
+
+function scoreTextMatch(rawText, queryVariations) {
+	const text = String(rawText || "").toLowerCase();
+	if (!text || !queryVariations.length) {
+		return 0;
+	}
+
+	const normalizedText = normalizeSearchText(text);
+	const compactText = normalizedText.replace(/\s+/g, "");
+	const preparedQueries = buildPreparedQueries(queryVariations);
+	return scorePreparedText(normalizedText, compactText, preparedQueries);
+}
+
+function scorePreparedText(normText, compactText, preparedQueries) {
+	let best = 0;
+	for (const query of preparedQueries) {
+		const normalizedQuery = query.norm;
+		const compactQuery = query.compact;
+		if (!normalizedQuery) {
+			continue;
+		}
+
+		if (normText === normalizedQuery) {
+			best = Math.max(best, 1200);
+		}
+		if (normText.startsWith(normalizedQuery)) {
+			best = Math.max(best, 1050);
+		}
+		if (normText.includes(` ${normalizedQuery}`)) {
+			best = Math.max(best, 900);
+		}
+
+		const idxNorm = normText.indexOf(normalizedQuery);
+		if (idxNorm >= 0) {
+			best = Math.max(best, 780 - Math.min(idxNorm, 200));
+		}
+
+		if (compactQuery && compactText === compactQuery) {
+			best = Math.max(best, 1000);
+		}
+		if (compactQuery && compactText.startsWith(compactQuery)) {
+			best = Math.max(best, 860);
+		}
+		if (compactQuery) {
+			const idxCompact = compactText.indexOf(compactQuery);
+			if (idxCompact >= 0) {
+				best = Math.max(best, 700 - Math.min(idxCompact, 200));
+			}
+		}
+	}
+
+	return best;
+}
+
+function buildPreparedQueries(queryVariations) {
+	const prepared = [];
+	const seen = new Set();
+	for (const query of queryVariations) {
+		const norm = normalizeSearchText(query);
+		if (!norm || seen.has(norm)) {
+			continue;
+		}
+		seen.add(norm);
+		prepared.push({
+			norm,
+			compact: norm.replace(/\s+/g, ""),
+		});
+	}
+	return prepared;
+}
+
+function findMatchesFromIndex(index, queryVariations) {
+	const preparedQueries = buildPreparedQueries(queryVariations);
+	if (!preparedQueries.length) {
+		return [];
+	}
+
+	const candidateIndices = new Set();
+	for (const query of preparedQueries) {
+		const keys = [
+			query.norm.slice(0, 3),
+			query.norm.slice(0, 2),
+			query.norm.slice(0, 1),
+			query.compact.slice(0, 3),
+			query.compact.slice(0, 2),
+			query.compact.slice(0, 1),
+		].filter(Boolean);
+
+		for (const key of keys) {
+			const bucket = index.prefixBuckets.get(key);
+			if (!bucket) {
+				continue;
+			}
+			for (let i = 0; i < bucket.length; i += 1) {
+				candidateIndices.add(bucket[i]);
+			}
+		}
+	}
+
+	if (!candidateIndices.size) {
+		for (let i = 0; i < index.entries.length; i += 1) {
+			candidateIndices.add(i);
+		}
+	}
+
+	const matched = [];
+	for (const idx of candidateIndices) {
+		const entry = index.entries[idx];
+		let bestScore = scorePreparedText(entry.textNorm, entry.textCompact, preparedQueries);
+		let bestAlias = null;
+
+		for (let i = 0; i < entry.aliasNorm.length; i += 1) {
+			const aliasScore = scorePreparedText(entry.aliasNorm[i], entry.aliasCompact[i], preparedQueries) - 20;
+			if (aliasScore > bestScore) {
+				bestScore = aliasScore;
+				bestAlias = entry.aliasNorm[i];
+			}
+		}
+
+		if (bestScore > 0) {
+			matched.push({
+				...entry.item,
+				matchScore: bestScore,
+				matchedAlias: bestAlias,
+			});
+		}
+	}
+
+	return matched;
+}
+
+function hasLikelySwappedCountCategory(entries) {
+	if (!Array.isArray(entries) || !entries.length) {
+		return false;
+	}
+
+	const sampleSize = Math.min(entries.length, 500);
+	let checked = 0;
+	let suspicious = 0;
+
+	for (let i = 0; i < sampleSize; i += 1) {
+		const entry = entries[i];
+		if (typeof entry?.count !== "number" || typeof entry?.category !== "number") {
+			continue;
+		}
+		checked += 1;
+		if (entry.count <= 20 && entry.category > 1000) {
+			suspicious += 1;
+		}
+	}
+
+	if (checked < 25) {
+		return false;
+	}
+
+	return suspicious / checked >= 0.3;
+}
+
+function findMatchMetadata(item, queryVariations) {
+	if (!item?.text || !queryVariations.length) {
+		return null;
+	}
+
+	const text = String(item.text || "");
+	const aliases = Array.isArray(item.aliases) ? item.aliases : [];
+	let bestScore = scoreTextMatch(text, queryVariations);
+	let bestAlias = null;
+
+	for (const alias of aliases) {
+		const aliasScore = scoreTextMatch(alias, queryVariations) - 20;
+		if (aliasScore > bestScore) {
+			bestScore = aliasScore;
+			bestAlias = alias;
+		}
+	}
+
+	if (bestScore <= 0) {
+		return null;
+	}
+
+	return {
+		score: bestScore,
+		matchedAlias: bestAlias,
+	};
 }
 
 class BubbaTextAutoComplete {
 	constructor(inputEl, group) {
 		this.inputEl = inputEl;
 		this.group = group || "common";
-		this.menuEl = $el("div.bubba-autocomplete", { parent: document.body });
+		this.menuEl = document.createElement("div");
+		this.menuEl.classList.add("bubba-autocomplete");
+		document.body.appendChild(this.menuEl);
 		this.menuEl.style.display = "none";
 		this.items = [];
 		this.selectedIndex = -1;
+		this.searchDebounceMs = 20;
+		this.searchTimer = null;
+		this.previousQuery = "";
+		this.previousMatchedPool = null;
 
 		this.onInput = this.onInput.bind(this);
+		this.onInputImmediate = this.onInputImmediate.bind(this);
 		this.onKeyDown = this.onKeyDown.bind(this);
 		this.onBlur = this.onBlur.bind(this);
 		this.onFocus = this.onFocus.bind(this);
@@ -561,24 +904,29 @@ class BubbaTextAutoComplete {
 		this.menuEl.replaceChildren();
 		for (let i = 0; i < items.length; i += 1) {
 			const item = items[i];
-			const row = $el("div.bubba-autocomplete-item", {
-				onmousedown: (event) => {
-					event.preventDefault();
-					this.insert(item);
-				},
-				parent: this.menuEl,
-			});
-			$el("span", {
-				textContent: item.text,
-				parent: row,
-			});
+			const row = document.createElement("div");
+			row.classList.add("bubba-autocomplete-item");
+			row.onmousedown = (event) => {
+				event.preventDefault();
+				this.insert(item);
+			};
+			this.menuEl.appendChild(row);
+			const textSpan = document.createElement("span");
+			textSpan.textContent = item.text;
+			row.appendChild(textSpan);
 			if (typeof item.count === "number") {
 				const categoryLabel = getDanbooruCategoryLabel(item.category);
 				const metaText = categoryLabel ? `${formatNumber(item.count)} | ${categoryLabel}` : formatNumber(item.count);
-				$el("span.bubba-autocomplete-item-meta", {
-					textContent: metaText,
-					parent: row,
-				});
+				const metaSpan = document.createElement("span");
+				metaSpan.classList.add("bubba-autocomplete-item-meta");
+				metaSpan.textContent = metaText;
+				row.appendChild(metaSpan);
+			}
+			if (item.matchedAlias) {
+				const altSpan = document.createElement("span");
+				altSpan.classList.add("bubba-autocomplete-item-alt");
+				altSpan.textContent = `<- ${item.matchedAlias}`;
+				row.appendChild(altSpan);
 			}
 			if (i === 0) {
 				row.classList.add("selected");
@@ -630,43 +978,107 @@ class BubbaTextAutoComplete {
 		this.hide();
 	}
 
+	getMatchBucket(matchScore) {
+		const score = Number.isFinite(matchScore) ? matchScore : 0;
+		if (score >= 850) {
+			return 3;
+		}
+		if (score >= 700) {
+			return 2;
+		}
+		if (score > 0) {
+			return 1;
+		}
+		return 0;
+	}
+
 	onInput() {
+		if (this.searchTimer) {
+			clearTimeout(this.searchTimer);
+			this.searchTimer = null;
+		}
+		this.searchTimer = setTimeout(this.onInputImmediate, this.searchDebounceMs);
+	}
+
+	onInputImmediate() {
 		if (!BubbaTextAutoComplete.enabled) {
 			this.hide();
 			return;
 		}
 		const { query } = this.getQuery();
 		if (!query) {
+			this.previousQuery = "";
+			this.previousMatchedPool = null;
 			this.hide();
 			return;
 		}
+		const queryVariations = getSearchQueryVariations(query);
+		const words = getWordList();
+		const index = getSearchIndex(words);
 
-		const results = getWordList(this.group)
-			.filter((item) => item.text.toLowerCase().includes(query))
+		let candidatePool = null;
+		if (
+			this.previousQuery &&
+			query.startsWith(this.previousQuery) &&
+			Array.isArray(this.previousMatchedPool) &&
+			this.previousMatchedPool.length > 0
+		) {
+			candidatePool = this.previousMatchedPool;
+		}
+
+		const matched = (candidatePool
+			? candidatePool
+					.map((item) => {
+						const match = findMatchMetadata(item, queryVariations);
+						if (!match) {
+							return null;
+						}
+						return {
+							...item,
+							matchScore: match.score,
+							matchedAlias: match.matchedAlias,
+						};
+					})
+					.filter(Boolean)
+			: findMatchesFromIndex(index, queryVariations)
+		)
 			.sort((a, b) => {
-				const aStarts = a.text.toLowerCase().startsWith(query) ? 1 : 0;
-				const bStarts = b.text.toLowerCase().startsWith(query) ? 1 : 0;
-				if (bStarts !== aStarts) {
-					return bStarts - aStarts;
+				const aBucket = this.getMatchBucket(a.matchScore);
+				const bBucket = this.getMatchBucket(b.matchScore);
+				if (bBucket !== aBucket) {
+					return bBucket - aBucket;
 				}
 				const aCount = typeof a.count === "number" ? a.count : -1;
 				const bCount = typeof b.count === "number" ? b.count : -1;
 				if (bCount !== aCount) {
 					return bCount - aCount;
 				}
+				const aScore = Number.isFinite(a.matchScore) ? a.matchScore : 0;
+				const bScore = Number.isFinite(b.matchScore) ? b.matchScore : 0;
+				if (bScore !== aScore) {
+					return bScore - aScore;
+				}
 				return a.text.localeCompare(b.text);
-			})
-			.slice(0, BubbaTextAutoComplete.suggestionLimit);
+			});
+
+		this.previousQuery = query;
+		this.previousMatchedPool = matched;
+
+		const results = matched.slice(0, BubbaTextAutoComplete.suggestionLimit);
 
 		this.show(results);
 	}
 
 	onFocus() {
 		if (!BubbaTextAutoComplete.enabled) return;
-		this.onInput();
+		this.onInputImmediate();
 	}
 
 	onBlur() {
+		if (this.searchTimer) {
+			clearTimeout(this.searchTimer);
+			this.searchTimer = null;
+		}
 		setTimeout(() => this.hide(), 100);
 	}
 
@@ -754,35 +1166,16 @@ function installStringWidgetHook() {
 	ComfyWidgets.STRING.__bubbaAutoCompletePatched = true;
 }
 
-async function openCustomWordsEditor() {
-	try {
-		logDebug("Bubba Autocomplete: Open File requested.");
-		const tags = getDanbooruTags();
-		if (tags.length) {
-			const meta = getDanbooruMeta() || {};
-			logDebug(`Bubba Autocomplete: Syncing ${tags.length} cached tags to danbooru_cache.csv before opening.`);
-			await writeDanbooruCacheToFile(tags, meta);
-		}
-		await fetch("/bubba/open_cache");
-		logDebug("Bubba Autocomplete: Opened danbooru_cache.csv.");
-	} catch (e) {
-		console.error("Bubba Autocomplete: could not open cache file", e);
-	}
-}
-
-function buildDanbooruCacheCsvLines(tags, meta = {}) {
+function buildLocalTagCacheCsvLines(tags, meta = {}) {
 	const generatedAt = new Date().toISOString();
-	const minCount = typeof meta.minCount === "number" ? meta.minCount : getDanbooruMinCount();
-	const pagesFetched = typeof meta.pages === "number" ? meta.pages : 0;
+	void meta;
 
 	const lines = [
 		`# schema_version=${bundledCacheSchemaVersion}`,
 		"# source=danbooru",
 		`# generated_at=${generatedAt}`,
-		`# min_post_count=${minCount}`,
-		`# pages_fetched=${pagesFetched}`,
 		`# tag_count=${tags.length}`,
-		"tag,count,category",
+		"tag,count,category,aliases",
 	];
 
 	for (const tag of tags) {
@@ -792,43 +1185,28 @@ function buildDanbooruCacheCsvLines(tags, meta = {}) {
 		}
 		const count = typeof tag.count === "number" ? tag.count : 0;
 		const category = normalizeDanbooruCategory(tag.category);
-		lines.push(`${text},${count},${category ?? ""}`);
+		const aliases = normalizeAliases(tag.aliases).join(",");
+		lines.push(`${toCsvField(text)},${count},${category ?? ""},${toCsvField(aliases)}`);
 	}
 
 	return lines;
 }
 
-async function writeDanbooruCacheToFile(tags, meta = {}) {
-	const csvText = `${buildDanbooruCacheCsvLines(tags, meta).join("\n")}\n`;
-	logDebug(`Bubba Autocomplete: Writing ${tags.length} tags to danbooru_cache.csv.`);
-	const response = await fetch("/bubba/write_cache", {
-		method: "POST",
-		headers: {
-			"Content-Type": "text/csv;charset=utf-8",
-		},
-		body: csvText,
-	});
-	if (!response.ok) {
-		throw new Error(`Failed to write cache file (${response.status}).`);
-	}
-	logDebug("Bubba Autocomplete: Cache file write complete.");
-}
-
-function downloadDanbooruCacheFile() {
+function exportLocalTagCacheCsv() {
 	const tags = getDanbooruTags();
 	if (!tags.length) {
-		alert("Bubba Autocomplete: no Danbooru cache available to export.");
+		alert("Bubba Autocomplete: no local tag cache available to export.");
 		return;
 	}
 
 	const meta = getDanbooruMeta() || {};
-	const lines = buildDanbooruCacheCsvLines(tags, meta);
+	const lines = buildLocalTagCacheCsvLines(tags, meta);
 
 	const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
-	a.download = "danbooru_cache.csv";
+	a.download = "danbooru_e621_merged.csv";
 	a.style.display = "none";
 	document.body.appendChild(a);
 	a.click();
@@ -836,89 +1214,72 @@ function downloadDanbooruCacheFile() {
 	URL.revokeObjectURL(url);
 }
 
-async function refreshDanbooruTagsFromPrompts(buttonEl, fullSync = false) {
-	const currentMeta = getDanbooruMeta();
-	const defaultPages = String(currentMeta?.pages ?? 10);
-	const defaultMinCount = String(currentMeta?.minCount ?? getDanbooruMinCount());
-	let pages = 1;
-
-	if (!fullSync) {
-		const pagesInput = window.prompt(`How many Danbooru pages to fetch? (1-${DANBOORU_MAX_PAGES}, ${DANBOORU_PAGE_SIZE} tags per page)`, defaultPages);
-		if (pagesInput === null) {
-			return;
-		}
-		pages = clamp(toInt(pagesInput, toInt(defaultPages, 10)), 1, DANBOORU_MAX_PAGES);
-	}
-
-	const minCountInput = window.prompt("Minimum post count for tags (0 for all):", defaultMinCount);
-	if (minCountInput === null) {
-		return;
-	}
-	const minCount = Math.max(0, toInt(minCountInput, toInt(defaultMinCount, 0)));
-
-	if (fullSync) {
-		const ok = window.confirm(`Full sync will fetch every Danbooru tag with post count >= ${minCount}. This can take a while. Continue?`);
-		if (!ok) {
-			return;
-		}
-	}
-
+async function refreshLocalCsvCache(buttonEl) {
 	if (buttonEl) {
 		buttonEl.disabled = true;
-		buttonEl.textContent = fullSync ? "Full Sync..." : "Fetching...";
+		buttonEl.textContent = "Downloading...";
 	}
 
 	try {
-		const result = await fetchDanbooruTags({
-			pages,
-			minCount,
-			fullSync,
+		const syncResponse = await fetch("/bubba/sync_upstream_cache", {
+			method: "POST",
+			cache: "no-store",
 		});
-		logDebug(`Bubba Autocomplete: Fetch complete (${result.tags.length} tags from ${result.pagesFetched} pages).`);
+		if (!syncResponse.ok) {
+			let message = `HTTP ${syncResponse.status}`;
+			try {
+				const payload = await syncResponse.json();
+				if (payload?.error) {
+					message = String(payload.error);
+				}
+			} catch {
+				// ignore parse failures
+			}
+			throw new Error(`Failed to sync local CSV from upstream: ${message}`);
+		}
+
+		if (buttonEl) {
+			buttonEl.textContent = "Refreshing...";
+		}
+
+		const result = await fetchLocalCsvTags();
 		const nextMeta = {
 			updatedAt: new Date().toISOString(),
 			count: result.tags.length,
-			pages: result.pagesFetched,
-			minCount,
 			fetchMode: result.mode,
 			truncated: result.truncated,
-			seedSource: "live",
+			seedSource: "local",
+			sourceUrl: String(LOCAL_DANBOORU_MERGED_CSV_URL),
 			schemaVersion: bundledCacheSchemaVersion,
 		};
 		setDanbooruTags(result.tags);
 		setDanbooruMeta(nextMeta);
-		localStorage.setItem(danbooruMinCountStorageKey, String(minCount));
-		await writeDanbooruCacheToFile(result.tags, nextMeta);
-		logDebug("Bubba Autocomplete: Cache persisted to localStorage and danbooru_cache.csv.");
-		const truncText = result.truncated ? " (reached safety page cap)" : "";
-		alert(`Bubba Autocomplete: Cached ${formatNumber(result.tags.length)} Danbooru tags from ${result.pagesFetched} pages${truncText}.`);
+		alert(`Bubba Autocomplete: Cached ${formatNumber(result.tags.length)} tags from local merged CSV.`);
 	} catch (error) {
 		console.error(error);
-		alert(`Bubba Autocomplete: Failed to fetch Danbooru tags. ${error?.message || "Unknown error"}`);
+		alert(`Bubba Autocomplete: Failed to refresh local CSV. ${error?.message || "Unknown error"}`);
 	} finally {
 		if (buttonEl) {
 			buttonEl.disabled = false;
-			buttonEl.textContent = fullSync ? "Full Sync (All >= Min Count)" : "Refresh from Danbooru";
+			buttonEl.textContent = "Download Latest + Rebuild Cache";
 		}
 	}
 }
 
-function clearDanbooruTagCache() {
+function clearLocalTagCache() {
 	localStorage.removeItem(danbooruTagsStorageKey);
 	localStorage.removeItem(danbooruMetaStorageKey);
+	danbooruTagsMemoryCache = [];
+	danbooruTagsVersion += 1;
+	invalidateAutocompleteCaches();
 }
 
 export {
-	id,
 	BubbaTextAutoComplete,
 	installStringWidgetHook,
-	ensureDanbooruCacheSeeded,
-	isDanbooruEnabled,
-	danbooruEnabledStorageKey,
-	debugStorageKey,
-	openCustomWordsEditor,
-	downloadDanbooruCacheFile,
-	refreshDanbooruTagsFromPrompts,
-	clearDanbooruTagCache,
-	parseStatusFromMeta,
+	ensureLocalCsvCacheSeeded,
+	exportLocalTagCacheCsv,
+	refreshLocalCsvCache,
+	clearLocalTagCache,
+	parseLocalTagCacheStatus,
 };

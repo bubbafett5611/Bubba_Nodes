@@ -8,6 +8,10 @@
 import json
 
 import pytest
+from PIL import Image
+from comfy_api.latest import UI
+
+import src.bubba_nodes.nodes.save_image as save_image_module
 
 from src.bubba_nodes.nodes import (
     BubbaFilename,
@@ -216,6 +220,133 @@ class TestBubbaWatermark:
         assert BubbaWatermark.RETURN_TYPES == ("IMAGE",)
         assert BubbaWatermark.FUNCTION == "add_watermark"
         assert BubbaWatermark.CATEGORY == "Bubba Nodes/Image/Overlay"
+
+
+class TestBubbaSaveImage:
+    def test_input_types_expose_workflow_toggle_and_hidden_metadata(self):
+        input_types = BubbaSaveImage.INPUT_TYPES()
+
+        assert "save_workflow_metadata" in input_types["required"]
+        assert input_types["required"]["save_workflow_metadata"][1]["default"] is True
+        assert input_types["hidden"] == {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"}
+
+    def test_save_images_embeds_comfy_workflow_metadata_when_enabled(self, tmp_path, monkeypatch):
+        class _FolderPathsStub:
+            @staticmethod
+            def get_output_directory():
+                return str(tmp_path)
+
+        monkeypatch.setattr(save_image_module, "folder_paths", _FolderPathsStub)
+
+        image_path = tmp_path / "Hero" / "shot_00001_.png"
+        image_path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color=(10, 20, 30)).save(image_path)
+
+        UI.ImageSaveHelper.get_save_images_ui.return_value.as_dict.return_value = {
+            "images": [{"filename": image_path.name, "subfolder": "Hero", "type": "output"}],
+        }
+
+        node = BubbaSaveImage()
+        prompt = {"12": {"class_type": "KSampler", "inputs": {"seed": 42}}}
+        extra_pnginfo = {"workflow": {"version": 1, "nodes": [{"id": 12}]}}
+
+        result = node.save_images(
+            images=[object()],
+            filepath="Hero/shot",
+            preview_only=False,
+            save_workflow_metadata=True,
+            prompt=prompt,
+            extra_pnginfo=extra_pnginfo,
+        )
+
+        with Image.open(image_path) as saved:
+            assert json.loads(saved.info["prompt"]) == prompt
+            assert json.loads(saved.info["workflow"]) == extra_pnginfo["workflow"]
+
+        assert result["ui"]["images"][0]["filename"] == image_path.name
+
+    def test_save_images_skips_workflow_metadata_when_disabled(self, tmp_path, monkeypatch):
+        class _FolderPathsStub:
+            @staticmethod
+            def get_output_directory():
+                return str(tmp_path)
+
+        monkeypatch.setattr(save_image_module, "folder_paths", _FolderPathsStub)
+
+        image_path = tmp_path / "Hero" / "shot_00002_.png"
+        image_path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color=(40, 50, 60)).save(image_path)
+
+        UI.ImageSaveHelper.get_save_images_ui.return_value.as_dict.return_value = {
+            "images": [{"filename": image_path.name, "subfolder": "Hero", "type": "output"}],
+        }
+
+        node = BubbaSaveImage()
+        metadata = BubbaMetadata(model_name="nova", seed=9, filepath="Hero/shot")
+
+        node.save_images(
+            images=[object()],
+            filepath="Hero/shot",
+            preview_only=False,
+            save_workflow_metadata=False,
+            metadata=metadata,
+            prompt={"12": {"class_type": "KSampler"}},
+            extra_pnginfo={"workflow": {"version": 1}},
+        )
+
+        with Image.open(image_path) as saved:
+            assert "prompt" not in saved.info
+            assert "workflow" not in saved.info
+            assert json.loads(saved.info["bubba_metadata"])["model_name"] == "nova"
+
+    def test_save_then_load_preserves_bubba_metadata_for_multi_image_batch(self, tmp_path, monkeypatch):
+        class _FolderPathsStub:
+            @staticmethod
+            def get_output_directory():
+                return str(tmp_path)
+
+        monkeypatch.setattr(save_image_module, "folder_paths", _FolderPathsStub)
+
+        first_path = tmp_path / "Hero" / "batch_00001_.png"
+        second_path = tmp_path / "Hero" / "batch_00002_.png"
+        first_path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color=(10, 11, 12)).save(first_path)
+        Image.new("RGB", (8, 8), color=(13, 14, 15)).save(second_path)
+
+        UI.ImageSaveHelper.get_save_images_ui.return_value.as_dict.return_value = {
+            "images": [
+                {"filename": first_path.name, "subfolder": "Hero", "type": "output"},
+                {"filename": second_path.name, "subfolder": "Hero", "type": "output"},
+            ],
+        }
+
+        node = BubbaSaveImage()
+        metadata = BubbaMetadata(
+            model_name="nova_batch",
+            sampler_info="Time: 0.9s Seed: 77",
+            positive_prompt="hero portrait",
+            negative_prompt="blurry",
+            seed=77,
+            filepath="Hero/batch",
+        )
+
+        node.save_images(
+            images=[object(), object()],
+            filepath="Hero/batch",
+            preview_only=False,
+            save_workflow_metadata=False,
+            metadata=metadata,
+            prompt={"12": {"class_type": "KSampler"}},
+            extra_pnginfo={"workflow": {"version": 1}},
+        )
+
+        for path in [first_path, second_path]:
+            with Image.open(path) as saved:
+                loaded, text = BubbaLoadImageWithMetadata._extract_bubba_metadata(saved.info)
+            assert loaded.model_name == "nova_batch"
+            assert loaded.seed == 77
+            assert loaded.positive_prompt == "hero portrait"
+            assert "nova_batch" in text
 
 
 class TestBubbaMetadataBundle:

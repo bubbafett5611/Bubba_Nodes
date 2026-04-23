@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+from typing import Any, Mapping
 
 from comfy_api.latest import UI
 from PIL import Image
@@ -38,6 +40,13 @@ class BubbaSaveImage:
                         "tooltip": "Enable to save as temp preview images instead of writing to output.",
                     },
                 ),
+                "save_workflow_metadata": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Enable to embed ComfyUI prompt/workflow metadata into saved PNGs, matching the default Save Image node behavior.",
+                    },
+                ),
             },
             "optional": {
                 "metadata": (
@@ -47,13 +56,17 @@ class BubbaSaveImage:
                     },
                 ),
             },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
 
     RETURN_TYPES = ()
     FUNCTION = "save_images"
     OUTPUT_NODE = True
     CATEGORY = "Bubba Nodes/Image/Save"
-    DESCRIPTION = "Saves images using filepath or metadata.filepath, with optional preview-only temp mode and embedded Bubba metadata for PNG files."
+    DESCRIPTION = "Saves images using filepath or metadata.filepath, with optional preview-only temp mode, optional ComfyUI workflow metadata embedding, and embedded Bubba metadata for PNG files."
 
     @staticmethod
     def _is_default_metadata(metadata: BubbaMetadata) -> bool:
@@ -79,21 +92,58 @@ class BubbaSaveImage:
         return (base_dir / subfolder / filename).resolve()
 
     @staticmethod
-    def _embed_metadata_in_png(image_path: Path, metadata_json: str) -> None:
-        if image_path.suffix.lower() != ".png" or not image_path.exists():
+    def _serialize_png_text_value(value: Any) -> str | None:
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value)
+        except Exception:
+            return None
+
+    @classmethod
+    def _build_png_text_entries(
+        cls,
+        metadata_json: str | None,
+        save_workflow_metadata: bool,
+        prompt: Any,
+        extra_pnginfo: Mapping[str, Any] | None,
+    ) -> dict[str, str]:
+        entries: dict[str, str] = {}
+        if save_workflow_metadata:
+            prompt_text = cls._serialize_png_text_value(prompt)
+            if prompt_text is not None:
+                entries["prompt"] = prompt_text
+            if isinstance(extra_pnginfo, Mapping):
+                for key, value in extra_pnginfo.items():
+                    text_value = cls._serialize_png_text_value(value)
+                    if text_value is not None:
+                        entries[str(key)] = text_value
+        if metadata_json:
+            entries["bubba_metadata"] = metadata_json
+        return entries
+
+    @staticmethod
+    def _embed_metadata_in_png(image_path: Path, text_entries: Mapping[str, str]) -> None:
+        if image_path.suffix.lower() != ".png" or not image_path.exists() or not text_entries:
             return
 
         with Image.open(image_path) as source:
+            existing_text = {key: value for key, value in source.info.items() if isinstance(value, str)}
+            if all(existing_text.get(str(key)) == value for key, value in text_entries.items()):
+                return
+
             png_info = PngInfo()
-            for key, value in source.info.items():
-                if isinstance(value, str):
-                    png_info.add_text(key, value)
-            png_info.add_text("bubba_metadata", metadata_json)
+            for key, value in existing_text.items():
+                png_info.add_text(key, value)
+            for key, value in text_entries.items():
+                png_info.add_text(key, value)
             source.save(image_path, pnginfo=png_info)
 
     @classmethod
-    def _embed_metadata_in_saved_images(cls, save_result: dict, metadata_json: str) -> None:
+    def _embed_metadata_in_saved_images(cls, save_result: dict, text_entries: Mapping[str, str]) -> None:
         # TODO(optimize): Parallelize metadata embedding when multiple images are saved in one batch.
+        if not text_entries:
+            return
         for item in save_result.get("images", []):
             if not isinstance(item, dict):
                 continue
@@ -101,12 +151,12 @@ class BubbaSaveImage:
             if path is None:
                 continue
             try:
-                cls._embed_metadata_in_png(path, metadata_json)
+                cls._embed_metadata_in_png(path, text_entries)
             except Exception:
                 # Keep save flow resilient if metadata embedding fails on any file.
                 continue
 
-    def save_images(self, images, filepath, preview_only, metadata=None):
+    def save_images(self, images, filepath, preview_only, save_workflow_metadata, metadata=None, prompt=None, extra_pnginfo=None):
         normalized_metadata = BubbaMetadata.coerce(metadata)
         resolved_filepath = (filepath or "").strip() or normalized_metadata.filepath or "Character/Scene"
         has_metadata = not self._is_default_metadata(normalized_metadata)
@@ -122,8 +172,14 @@ class BubbaSaveImage:
                 filename_prefix=resolved_filepath,
                 cls=None,
             ).as_dict()
+        png_text_entries = self._build_png_text_entries(
+            normalized_metadata.to_json(pretty=False) if has_metadata else None,
+            save_workflow_metadata,
+            prompt,
+            extra_pnginfo,
+        )
+        if png_text_entries:
+            self._embed_metadata_in_saved_images(result, png_text_entries)
         if has_metadata:
-            metadata_json = normalized_metadata.to_json(pretty=False)
-            self._embed_metadata_in_saved_images(result, metadata_json)
             result["metadata_text"] = normalized_metadata.to_json(pretty=True)
         return {"ui": result}

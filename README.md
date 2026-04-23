@@ -119,13 +119,12 @@ If you use a dedicated ComfyUI venv/conda env, run that command from inside the 
 - Autocomplete is active on Bubba multiline prompt inputs (for example: appearance, style_tags, quality_tags, negative_tags).
 - Type part of a tag to open suggestions.
 - Use arrow keys to select, then press Tab or Enter to insert.
-- Add your own words from ComfyUI settings using: `Bubba: Edit Autocomplete Words`.
-- You can fetch Danbooru tags with usage counts from the API and cache them locally from settings using `Bubba: Danbooru Tag Cache`.
-- Enable or disable Danbooru-backed suggestions with `Bubba: Include Danbooru Tags`.
-- Danbooru suggestions are ranked by post count so common tags appear first.
-- A bundled cache file is supported at [web/comfyui/danbooru_cache.csv](web/comfyui/danbooru_cache.csv) and is used automatically when local cache is empty.
-- Use `Full Sync (All >= Min Count)` in settings to fetch all Danbooru tags above your minimum post count (for example, all tags with 50+ uses).
-- Use `Export Cache CSV` after syncing to download a prebuilt cache file you can commit back into [web/comfyui/danbooru_cache.csv](web/comfyui/danbooru_cache.csv) for future releases.
+- Add your own words from ComfyUI settings using local storage.
+- Enable or disable local-tag suggestions with `Bubba: Include Local CSV Tags`.
+- Tag data is read from the local file `web/comfyui/danbooru_e621_merged.csv`.
+- Use `Bubba: Local CSV Source` to open the current local CSV.
+- Use `Bubba: Local CSV Sync + Cache` and `Download Latest + Rebuild Cache` to download the newest DraconicDragon merged CSV and refresh browser cache from that local file.
+- Suggestions are ranked by canonical and alias prefix match, then post count.
 
 ## Node Documentation
 

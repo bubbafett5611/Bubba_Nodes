@@ -299,3 +299,79 @@ def test_make_unique_destination_path_adds_numeric_suffix(tmp_path):
 
     third_path = make_unique_destination_path(str(root), "sample.png")
     assert third_path.endswith("sample_2.png")
+
+
+def test_scan_assets_returns_deterministic_sorted_order(tmp_path):
+    root = tmp_path / "output"
+    root.mkdir()
+
+    (root / "zeta.png").write_bytes(b"png")
+    (root / "Alpha.png").write_bytes(b"png")
+    (root / "mid.png").write_bytes(b"png")
+
+    first = scan_assets(root=str(root), extensions=[".png"], limit=10, include_metadata=False)
+    second = scan_assets(root=str(root), extensions=[".png"], limit=10, include_metadata=False)
+
+    first_names = [item["name"] for item in first]
+    second_names = [item["name"] for item in second]
+    assert first_names == second_names
+    assert first_names == ["Alpha.png", "mid.png", "zeta.png"]
+
+
+def test_scan_assets_skips_metadata_parse_when_filename_matches_query(tmp_path, monkeypatch):
+    root = tmp_path / "output"
+    root.mkdir()
+    image_path = root / "hero_shot.png"
+    Image.new("RGB", (8, 8), color=(11, 22, 33)).save(image_path)
+
+    calls = {"count": 0}
+    original = summarize_metadata
+
+    def _counted(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("src.bubba_nodes.utils.asset_viewer.summarize_metadata", _counted)
+
+    assets = scan_assets(
+        root=str(root),
+        query="hero",
+        extensions=[".png"],
+        limit=10,
+        include_metadata=False,
+        search_in_metadata=True,
+    )
+
+    assert len(assets) == 1
+    assert calls["count"] == 0
+
+
+def test_scan_assets_still_parses_metadata_for_metadata_only_query(tmp_path, monkeypatch):
+    root = tmp_path / "output"
+    root.mkdir()
+    image_path = root / "sample.png"
+
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text("bubba_metadata", json.dumps({"positive_prompt": "dragon rider"}))
+    Image.new("RGB", (8, 8), color=(9, 8, 7)).save(image_path, pnginfo=png_info)
+
+    calls = {"count": 0}
+    original = summarize_metadata
+
+    def _counted(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("src.bubba_nodes.utils.asset_viewer.summarize_metadata", _counted)
+
+    assets = scan_assets(
+        root=str(root),
+        query="dragon rider",
+        extensions=[".png"],
+        limit=10,
+        include_metadata=False,
+        search_in_metadata=True,
+    )
+
+    assert len(assets) == 1
+    assert calls["count"] >= 1
