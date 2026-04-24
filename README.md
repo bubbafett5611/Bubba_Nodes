@@ -81,7 +81,7 @@ git clone https://github.com/bubbafett5611/bubba_nodes.git
 python -m pip install -r requirements.txt
 ```
 
-Run dependency installs with the same interpreter ComfyUI launches with (typically its `venv`).
+If you use a dedicated ComfyUI venv/conda env, run that command from inside the active ComfyUI environment.
 
 ## Quick Workflow Example
 
@@ -132,49 +132,20 @@ Detailed node input/output docs are in [web/docs/Example/en.md](web/docs/Example
 
 ## Development
 
-For the smoothest ComfyUI custom-node workflow, develop with the same Python interpreter ComfyUI runs with.
+Install in editable mode with dev tools:
 
-Detailed Windows notes: [docs/windows-dev.md](docs/windows-dev.md)
-
-Default path in this repo: `C:\StabilityMatrix\Data\Packages\ComfyUI\venv\Scripts\python.exe`
-
-### One-time setup (PowerShell)
-
-```powershell
-C:\StabilityMatrix\Data\Packages\ComfyUI\venv\Scripts\python.exe -m pip install -e .[dev]
-C:\StabilityMatrix\Data\Packages\ComfyUI\venv\Scripts\python.exe -m pre_commit install
+```bash
+cd bubba_nodes
+pip install -e .[dev]
+pre-commit install
 ```
 
-Or run the helper script:
+Useful commands:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\dev_setup.ps1
-```
-
-### Daily commands (PowerShell)
-
-```powershell
-C:\StabilityMatrix\Data\Packages\ComfyUI\venv\Scripts\python.exe -m ruff check .
-C:\StabilityMatrix\Data\Packages\ComfyUI\venv\Scripts\python.exe -m mypy .
-C:\StabilityMatrix\Data\Packages\ComfyUI\venv\Scripts\python.exe -m pytest
-```
-
-Or run tests via helper script:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\run_tests.ps1
-```
-
-### Launch ComfyUI from this repo
-
-```powershell
-.\launch_comfy.bat
-```
-
-Pass through normal ComfyUI args if needed:
-
-```powershell
-.\launch_comfy.bat --listen --port 8188
+```bash
+ruff check .
+mypy .
+pytest
 ```
 
 ## Tests
