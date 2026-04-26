@@ -31,6 +31,7 @@ try:
     from email.utils import formatdate, parsedate_to_datetime
     import urllib.request
     import urllib.error
+    import urllib.parse
     import json
     import mimetypes
     import os
@@ -50,13 +51,23 @@ try:
         scan_assets,
     )
 
-    _LOCAL_TAG_CACHE_PATH = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "web", "comfyui", "danbooru_e621_merged.csv"
+    _LOCAL_TAG_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "comfyui", "danbooru_e621_merged.csv")
+    _UPSTREAM_TAG_LISTS_API_URL = (
+        "https://api.github.com/repos/DraconicDragon/dbr-e621-lists-archive/contents/tag-lists/danbooru_e621_merged"
     )
-    _UPSTREAM_TAG_LISTS_API_URL = "https://api.github.com/repos/DraconicDragon/dbr-e621-lists-archive/contents/tag-lists/danbooru_e621_merged"
     _UPSTREAM_RAW_ROOT = "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists/danbooru_e621_merged"
+    _TAG_EXAMPLE_ALLOWED_HOSTS = {
+        "danbooru.donmai.us",
+        "cdn.donmai.us",
+        "hijiribe.donmai.us",
+        "e621.net",
+        "static1.e621.net",
+    }
 
     _FILENAME_DATE_RE = re.compile(r"danbooru_e621_merged_(\d{4}-\d{2}-\d{2})_.*\.csv$", re.IGNORECASE)
+
+    # Server-side embeddings cache: persists for the lifetime of the server process
+    _embeddings_cache = {"items": None}
 
     def _pick_latest_upstream_csv(entries: list[dict]) -> str:
         candidates: list[tuple[str, str]] = []
@@ -78,11 +89,161 @@ try:
         candidates.sort(key=lambda item: item[0], reverse=True)
         return candidates[0][1]
 
-    def _download_text(url: str) -> str:
-        req = urllib.request.Request(url, headers={"User-Agent": "bubba_nodes/0.0.1"})
+    def _download_text(url: str, headers: dict[str, str] | None = None) -> str:
+        merged_headers = {"User-Agent": "bubba_nodes/0.0.1"}
+        if isinstance(headers, dict):
+            merged_headers.update(headers)
+        req = urllib.request.Request(url, headers=merged_headers)
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = resp.read()
         return data.decode("utf-8", errors="replace")
+
+    def _to_absolute_url(base: str, url: str | None) -> str:
+        raw = str(url or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith("http://") or raw.startswith("https://"):
+            return raw
+        if raw.startswith("//"):
+            return f"https:{raw}"
+        return urllib.parse.urljoin(base, raw)
+
+    def _is_allowed_tag_example_image_url(raw_url: str) -> bool:
+        try:
+            parsed = urllib.parse.urlsplit(str(raw_url or "").strip())
+        except Exception:
+            return False
+
+        if parsed.scheme not in {"http", "https"}:
+            return False
+
+        host = (parsed.hostname or "").lower().strip(".")
+        if not host:
+            return False
+
+        if host in _TAG_EXAMPLE_ALLOWED_HOSTS:
+            return True
+
+        return host.endswith(".donmai.us") or host.endswith(".e621.net")
+
+    def _is_danbooru_excluded_post(post: dict[str, object]) -> bool:
+        ext = str(post.get("file_ext", "") or "").lower()
+        return ext in {"webm", "mp4", "swf", "gif"}
+
+    def _is_e621_excluded_post(post: dict[str, object]) -> bool:
+        file_obj = post.get("file") if isinstance(post.get("file"), dict) else {}
+        ext = str(file_obj.get("ext", "") or "").lower()
+        return ext in {"webm", "mp4", "swf", "gif"}
+
+    def _fetch_danbooru_example(tag: str) -> dict[str, object]:
+        # Use the known-good Danbooru query pattern for fast, image-only results.
+        candidate_queries = [
+            f"{tag} order:score age:<1month -is:mp4 -is:gif",
+        ]
+
+        last_error = ""
+        post: dict[str, object] = {}
+
+        for tag_query in candidate_queries:
+            query = urllib.parse.urlencode({"tags": tag_query, "limit": "1"})
+            url = f"https://danbooru.donmai.us/posts.json?{query}"
+            try:
+                payload = json.loads(_download_text(url))
+            except urllib.error.HTTPError as exc:
+                last_error = f"HTTP {exc.code}"
+                # Retry with next fallback on unprocessable/invalid query combinations.
+                if exc.code == 422:
+                    continue
+                raise
+
+            posts = payload if isinstance(payload, list) else []
+            normalized_posts = [entry for entry in posts if isinstance(entry, dict)]
+            image_posts = [entry for entry in normalized_posts if not _is_danbooru_excluded_post(entry)]
+            if image_posts:
+                post = image_posts[0]
+                break
+
+        if not post:
+            result: dict[str, object] = {"site": "danbooru", "status": "empty"}
+            if last_error:
+                result["error"] = last_error
+            return result
+
+        post_id = post.get("id")
+        post_url = f"https://danbooru.donmai.us/posts/{post_id}" if post_id is not None else ""
+        image_url = _to_absolute_url(
+            "https://danbooru.donmai.us",
+            post.get("large_file_url") or post.get("file_url") or post.get("preview_file_url"),
+        )
+        return {
+            "site": "danbooru",
+            "status": "ok" if image_url else "empty",
+            "post_url": post_url,
+            "image_url": image_url,
+            "post_id": post_id,
+            "score": post.get("score") or 0,
+        }
+
+    def _fetch_e621_example(tag: str) -> dict[str, object]:
+        # Some top-scoring posts may be unavailable for preview/file URL even though the tag has results.
+        # Pull a small window and pick the first post that has a usable image URL.
+        query = urllib.parse.urlencode({"tags": f"{tag} order:score -type:webm -type:swf -type:mp4 -type:gif", "limit": "10"})
+        url = f"https://e621.net/posts.json?{query}"
+        payload = json.loads(
+            _download_text(
+                url,
+                headers={
+                    "User-Agent": "bubba_nodes/0.0.1 (contact: metalgfx@gmail.com)",
+                    "Accept": "application/json",
+                },
+            )
+        )
+        posts = payload.get("posts") if isinstance(payload, dict) else []
+        posts = posts if isinstance(posts, list) else []
+        if not posts:
+            return {"site": "e621", "status": "empty"}
+
+        post = {}
+        image_url = ""
+        for entry in posts:
+            if not isinstance(entry, dict):
+                continue
+            if _is_e621_excluded_post(entry):
+                continue
+
+            sample = entry.get("sample") if isinstance(entry.get("sample"), dict) else {}
+            file_obj = entry.get("file") if isinstance(entry.get("file"), dict) else {}
+            preview = entry.get("preview") if isinstance(entry.get("preview"), dict) else {}
+            candidate_url = _to_absolute_url(
+                "https://e621.net",
+                sample.get("url") or file_obj.get("url") or preview.get("url"),
+            )
+            if not candidate_url:
+                continue
+
+            post = entry
+            image_url = candidate_url
+            break
+
+        if not post:
+            return {
+                "site": "e621",
+                "status": "empty",
+                "error": "No usable image URL found in top results.",
+            }
+
+        post_id = post.get("id")
+        post_url = f"https://e621.net/posts/{post_id}" if post_id is not None else ""
+        score_obj = post.get("score") if isinstance(post.get("score"), dict) else {}
+        score = score_obj.get("total") if isinstance(score_obj, dict) else 0
+        return {
+            "site": "e621",
+            "status": "ok" if image_url else "empty",
+            "post_url": post_url,
+            "image_url": image_url,
+            "post_id": post_id,
+            "score": score or 0,
+        }
 
     @PromptServer.instance.routes.post("/bubba/sync_upstream_cache")
     async def _sync_upstream_cache(request):
@@ -101,6 +262,9 @@ try:
                 raise RuntimeError("Downloaded CSV looks too small or empty.")
 
             os.makedirs(os.path.dirname(_LOCAL_TAG_CACHE_PATH), exist_ok=True)
+            header = "name,category,count,aliases\n"
+            if not csv_text.startswith("name,") and not csv_text.startswith("tag,"):
+                csv_text = header + csv_text
             with open(_LOCAL_TAG_CACHE_PATH, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(csv_text)
 
@@ -118,11 +282,160 @@ try:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
 
+    def _to_embedding_autocomplete_entry(raw_name: str) -> dict[str, object] | None:
+        name = str(raw_name or "").strip()
+        if not name:
+            return None
+
+        normalized = name.replace("\\", "/").strip("/")
+        if not normalized:
+            return None
+
+        stem, _ext = os.path.splitext(normalized)
+        if stem:
+            normalized = stem
+
+        backslash_name = normalized.replace("/", "\\")
+        leaf = backslash_name.split("\\")[-1] if backslash_name else ""
+
+        aliases = [
+            f"embedding:{normalized}",
+            f"embedding:{backslash_name}",
+            normalized,
+            backslash_name,
+        ]
+        if leaf:
+            aliases.extend([leaf, f"embedding:{leaf}"])
+
+        deduped_aliases: list[str] = []
+        seen: set[str] = set()
+        for alias in aliases:
+            key = alias.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_aliases.append(alias)
+
+        return {
+            "text": f"embedding:{backslash_name}",
+            "aliases": deduped_aliases,
+        }
+
+    def _get_embeddings_cached() -> tuple[list[dict[str, object]], str]:
+        """Get embeddings list from cache or build it once. Returns (items, status)."""
+        import folder_paths  # type: ignore
+
+        # Return cached items if available (cache persists for server lifetime)
+        if _embeddings_cache["items"] is not None:
+            return _embeddings_cache["items"], "cached"
+
+        # Build cache from filesystem (first access only)
+        try:
+            if not hasattr(folder_paths, "get_filename_list"):
+                return [], "folder_paths_unavailable"
+
+            raw_embeddings = folder_paths.get_filename_list("embeddings")
+            items: list[dict[str, object]] = []
+            for raw in raw_embeddings or []:
+                entry = _to_embedding_autocomplete_entry(str(raw))
+                if entry is not None:
+                    items.append(entry)
+
+            # Cache for the lifetime of the server
+            _embeddings_cache["items"] = items
+
+            return items, "ok"
+        except Exception as exc:
+            return [], f"error: {exc}"
+
+    @PromptServer.instance.routes.get("/bubba/autocomplete/embeddings")
+    async def _autocomplete_embeddings(request):
+        del request
+        try:
+            import folder_paths  # type: ignore
+        except Exception:
+            folder_paths = None
+
+        if folder_paths is None or not hasattr(folder_paths, "get_filename_list"):
+            return web.json_response({"embeddings": [], "count": 0, "status": "folder_paths_unavailable"})
+
+        items, status = _get_embeddings_cached()
+        return web.json_response({"embeddings": items, "count": len(items), "status": status})
+
+    @PromptServer.instance.routes.get("/bubba/tag_examples")
+    async def _tag_examples(request):
+        raw_tag = str(request.query.get("tag", "") or "").strip()
+        tag = raw_tag[:120]
+        if not tag:
+            return web.json_response({"error": "Missing tag parameter."}, status=400)
+
+        def _capture(fetch_fn):
+            try:
+                return fetch_fn(tag)
+            except Exception as exc:
+                return {"status": "error", "error": str(exc)}
+
+        danbooru = _capture(_fetch_danbooru_example)
+        e621 = _capture(_fetch_e621_example)
+
+        return web.json_response(
+            {
+                "tag": tag,
+                "examples": {
+                    "danbooru": danbooru,
+                    "e621": e621,
+                },
+            },
+            dumps=lambda payload: json.dumps(payload, ensure_ascii=False),
+        )
+
+    @PromptServer.instance.routes.get("/bubba/tag_example_image")
+    async def _tag_example_image(request):
+        raw_url = str(request.query.get("url", "") or "").strip()
+        if not raw_url:
+            return web.json_response({"error": "Missing image URL."}, status=400)
+
+        if not _is_allowed_tag_example_image_url(raw_url):
+            return web.json_response({"error": "Image host is not allowed."}, status=403)
+
+        parsed = urllib.parse.urlsplit(raw_url)
+        host = (parsed.hostname or "").lower()
+        headers = {
+            "User-Agent": "bubba_nodes/0.0.1",
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+
+        # Danbooru media servers may enforce hotlinking rules unless a referer is set.
+        if host.endswith(".donmai.us") or host == "danbooru.donmai.us":
+            headers["Referer"] = "https://danbooru.donmai.us/"
+
+        try:
+            req = urllib.request.Request(raw_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                data = resp.read()
+                content_type = str(resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        except urllib.error.HTTPError as exc:
+            return web.json_response({"error": f"Upstream image request failed: HTTP {exc.code}"}, status=502)
+        except urllib.error.URLError as exc:
+            return web.json_response({"error": f"Upstream image request failed: {exc}"}, status=502)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+
+        if not content_type or not content_type.startswith("image/"):
+            guessed, _enc = mimetypes.guess_type(raw_url)
+            content_type = guessed or "application/octet-stream"
+
+        return web.Response(
+            body=data,
+            content_type=content_type,
+            headers={"Cache-Control": "public, max-age=600"},
+        )
+
     def _build_cache_headers(path: str, variant: str = "", max_age: int = 0) -> tuple[dict[str, str], float]:
         stat = os.stat(path)
         mtime = float(stat.st_mtime)
         mtime_ns = int(getattr(stat, "st_mtime_ns", int(mtime * 1_000_000_000)))
-        tag = f"W/\"{mtime_ns:x}-{int(stat.st_size):x}-{variant}\""
+        tag = f'W/"{mtime_ns:x}-{int(stat.st_size):x}-{variant}"'
         headers = {
             "ETag": tag,
             "Last-Modified": formatdate(mtime, usegmt=True),
@@ -163,6 +476,24 @@ try:
         search_query = query.get("q", "")
         extensions_raw = query.get("ext", "")
         include_metadata = query.get("include_metadata", "false").lower() != "false"
+        sort_by = str(query.get("sort_by", "name") or "name").strip().lower()
+        sort_dir = str(query.get("sort_dir", "asc") or "asc").strip().lower()
+        metadata_mode = str(query.get("metadata_mode", "all") or "all").strip().lower()
+
+        try:
+            min_size_bytes = int(query.get("min_size_bytes", "")) if query.get("min_size_bytes") else None
+        except ValueError:
+            min_size_bytes = None
+
+        try:
+            max_size_bytes = int(query.get("max_size_bytes", "")) if query.get("max_size_bytes") else None
+        except ValueError:
+            max_size_bytes = None
+
+        try:
+            modified_after_ts = float(query.get("modified_after_ts", "")) if query.get("modified_after_ts") else None
+        except ValueError:
+            modified_after_ts = None
 
         try:
             limit = int(query.get("limit", "600"))
@@ -189,6 +520,12 @@ try:
             include_metadata=include_metadata,
             offset=offset,
             search_in_metadata=True,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            min_size_bytes=min_size_bytes,
+            max_size_bytes=max_size_bytes,
+            modified_after_ts=modified_after_ts,
+            metadata_mode=metadata_mode,
         )
 
         has_more = len(assets) > limit
@@ -302,29 +639,59 @@ try:
         except Exception:
             payload = {}
 
-        requested_path = ""
+        # requested_root = ""
+        requested_paths = []
         if isinstance(payload, dict):
-            requested_path = str(payload.get("path", "") or "")
+            # requested_root = str(payload.get("root", "") or "")
+            # Support both single file (legacy) and bulk delete (new)
+            if "path" in payload:
+                requested_paths = [str(payload.get("path", "") or "")]
+            elif "paths" in payload and isinstance(payload.get("paths"), list):
+                requested_paths = [str(p or "") for p in payload.get("paths", [])]
 
-        try:
-            file_path = resolve_requested_file(requested_path, roots)
-        except ValueError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-        except FileNotFoundError as exc:
-            return web.json_response({"error": str(exc)}, status=404)
-        except PermissionError as exc:
-            return web.json_response({"error": str(exc)}, status=403)
+        if not requested_paths:
+            return web.json_response({"error": "No paths provided"}, status=400)
 
-        try:
-            os.remove(file_path)
-        except FileNotFoundError as exc:
-            return web.json_response({"error": str(exc)}, status=404)
-        except PermissionError as exc:
-            return web.json_response({"error": str(exc)}, status=403)
-        except OSError as exc:
-            return web.json_response({"error": str(exc)}, status=500)
+        # # Resolve root
+        # try:
+        #     root_path = resolve_requested_root(requested_root, roots) if requested_root else roots[0].path
+        # except ValueError as exc:
+        #     return web.json_response({"error": str(exc)}, status=400)
 
-        return web.json_response({"status": "ok", "deleted_path": file_path})
+        deleted_paths = []
+        errors = []
+
+        for file_path_str in requested_paths:
+            try:
+                file_path = resolve_requested_file(file_path_str, roots)
+            except ValueError as exc:
+                errors.append({"path": file_path_str, "error": str(exc)})
+                continue
+            except FileNotFoundError as exc:
+                errors.append({"path": file_path_str, "error": str(exc)})
+                continue
+            except PermissionError as exc:
+                errors.append({"path": file_path_str, "error": str(exc)})
+                continue
+
+            try:
+                os.remove(file_path)
+                deleted_paths.append(file_path)
+            except FileNotFoundError as exc:
+                errors.append({"path": file_path_str, "error": str(exc)})
+            except PermissionError as exc:
+                errors.append({"path": file_path_str, "error": str(exc)})
+            except OSError as exc:
+                errors.append({"path": file_path_str, "error": str(exc)})
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "deleted_count": len(deleted_paths),
+                "deleted_paths": deleted_paths,
+                "errors": errors,
+            }
+        )
 
     @PromptServer.instance.routes.post("/bubba/assets/upload")
     async def _asset_upload(request):

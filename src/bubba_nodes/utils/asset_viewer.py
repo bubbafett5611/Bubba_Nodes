@@ -233,8 +233,7 @@ def _parse_png_metadata(path: str) -> dict[str, Any]:
                 parsed = None
             if isinstance(parsed, dict):
                 cleaned[normalized_key] = {
-                    str(meta_key): _sanitize_text(meta_value, max_len=2000)
-                    for meta_key, meta_value in parsed.items()
+                    str(meta_key): _sanitize_text(meta_value, max_len=2000) for meta_key, meta_value in parsed.items()
                 }
                 continue
         if isinstance(value, (str, int, float, bool)):
@@ -463,6 +462,12 @@ def scan_assets(
     include_metadata: bool = True,
     offset: int = 0,
     search_in_metadata: bool = True,
+    sort_by: str = "name",
+    sort_dir: str = "asc",
+    min_size_bytes: int | None = None,
+    max_size_bytes: int | None = None,
+    modified_after_ts: float | None = None,
+    metadata_mode: str = "all",
 ) -> list[dict[str, Any]]:
     normalized_root = os.path.abspath(root)
     requested_exts = [ext.lower() for ext in (extensions or []) if ext.strip()]
@@ -474,6 +479,41 @@ def scan_assets(
     q = query.strip().lower()
     limit = max(1, min(int(limit), 3000))
     offset = max(0, int(offset))
+
+    requested_sort_by = str(sort_by or "name").strip().lower()
+    if requested_sort_by not in {"name", "modified", "size", "metadata"}:
+        requested_sort_by = "name"
+
+    requested_sort_dir = str(sort_dir or "asc").strip().lower()
+    if requested_sort_dir not in {"asc", "desc"}:
+        requested_sort_dir = "asc"
+
+    requested_metadata_mode = str(metadata_mode or "all").strip().lower()
+    _valid_metadata_modes = {
+        "all",
+        "has_generation",
+        "missing_generation",
+        "has_bubba_metadata",
+        "missing_bubba_metadata",
+        "has_workflow",
+        "missing_workflow",
+    }
+    if requested_metadata_mode not in _valid_metadata_modes:
+        requested_metadata_mode = "all"
+
+    min_size = int(min_size_bytes) if isinstance(min_size_bytes, int) else None
+    if min_size is not None and min_size < 0:
+        min_size = 0
+
+    max_size = int(max_size_bytes) if isinstance(max_size_bytes, int) else None
+    if max_size is not None and max_size < 0:
+        max_size = None
+
+    modified_after = float(modified_after_ts) if isinstance(modified_after_ts, (int, float)) else None
+
+    # Fast path keeps streaming behavior for default sort.
+    stream_fast_path = requested_sort_by == "name" and requested_sort_dir == "asc"
+
     files: list[dict[str, Any]] = []
     matched = 0
 
@@ -481,9 +521,6 @@ def scan_assets(
         dirnames.sort(key=str.lower)
         filenames.sort(key=str.lower)
         for filename in filenames:
-            if len(files) >= limit:
-                return files
-
             extension = Path(filename).suffix.lower()
             if requested_exts and extension not in requested_exts:
                 continue
@@ -510,29 +547,95 @@ def scan_assets(
                     if q not in metadata_blob:
                         continue
 
-            if matched < offset:
-                matched += 1
-                continue
-
-            matched += 1
-
             try:
                 stat = os.stat(abs_path)
             except OSError:
                 continue
+
+            size_bytes = int(stat.st_size)
+            modified_ts = float(stat.st_mtime)
+
+            if min_size is not None and size_bytes < min_size:
+                continue
+            if max_size is not None and size_bytes > max_size:
+                continue
+            if modified_after is not None and modified_ts < modified_after:
+                continue
+
+            if requested_metadata_mode != "all":
+                if supports_metadata:
+                    if not metadata_summary:
+                        metadata_summary = summarize_metadata(extension, abs_path)
+                    metadata_obj = metadata_summary.get("metadata") if isinstance(metadata_summary.get("metadata"), dict) else {}
+
+                    # generation (ComfyUI prompt chunk)
+                    generation_obj = metadata_obj.get("generation") if isinstance(metadata_obj, dict) else {}
+                    has_generation = bool(isinstance(generation_obj, dict) and generation_obj)
+
+                    # bubba metadata chunk
+                    bubba_obj = metadata_obj.get("bubba_metadata") if isinstance(metadata_obj, dict) else None
+                    has_bubba_metadata = bool(bubba_obj)
+
+                    # workflow chunk (stored as non-empty string)
+                    workflow_val = metadata_obj.get("workflow") if isinstance(metadata_obj, dict) else None
+                    has_workflow = bool(workflow_val and str(workflow_val).strip())
+                else:
+                    has_generation = False
+                    has_bubba_metadata = False
+                    has_workflow = False
+
+                if requested_metadata_mode == "has_generation" and not has_generation:
+                    continue
+                if requested_metadata_mode == "missing_generation" and has_generation:
+                    continue
+                if requested_metadata_mode == "has_bubba_metadata" and not has_bubba_metadata:
+                    continue
+                if requested_metadata_mode == "missing_bubba_metadata" and has_bubba_metadata:
+                    continue
+                if requested_metadata_mode == "has_workflow" and not has_workflow:
+                    continue
+                if requested_metadata_mode == "missing_workflow" and has_workflow:
+                    continue
 
             item: dict[str, Any] = {
                 "name": filename,
                 "path": abs_path,
                 "relative_path": rel_path,
                 "extension": extension,
-                "size_bytes": int(stat.st_size),
-                "modified_ts": float(stat.st_mtime),
+                "size_bytes": size_bytes,
+                "modified_ts": modified_ts,
             }
 
             if include_metadata and metadata_summary:
                 item["metadata"] = metadata_summary
 
+            if stream_fast_path:
+                if matched < offset:
+                    matched += 1
+                    continue
+
+                matched += 1
+                files.append(item)
+                if len(files) >= limit:
+                    return files
+                continue
+
             files.append(item)
 
-    return files
+    if stream_fast_path:
+        return files
+
+    def _sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        name_key = str(item.get("name") or "").lower()
+        path_key = str(item.get("relative_path") or "").lower()
+        if requested_sort_by == "modified":
+            return (float(item.get("modified_ts") or 0.0), name_key, path_key)
+        if requested_sort_by == "size":
+            return (int(item.get("size_bytes") or 0), name_key, path_key)
+        if requested_sort_by == "metadata":
+            has_metadata = 1 if item.get("metadata") else 0
+            return (has_metadata, name_key, path_key)
+        return (name_key, path_key)
+
+    files.sort(key=_sort_key, reverse=requested_sort_dir == "desc")
+    return files[offset : offset + limit]
