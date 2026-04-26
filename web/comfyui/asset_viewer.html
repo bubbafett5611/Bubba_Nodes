@@ -18,50 +18,136 @@
 			</div>
 		</div>
 
+		<div id="delete-confirm-modal" class="delete-confirm-modal" hidden>
+			<div class="delete-confirm-card">
+				<div class="delete-confirm-title">Delete <span class="delete-count">0</span> asset(s)?</div>
+				<div class="delete-confirm-message">This action cannot be undone.</div>
+				<div class="delete-confirm-buttons">
+					<button class="btn btn-secondary" type="button" onclick="hideDeleteConfirmModal()">Cancel</button>
+					<button class="btn btn-danger" type="button" onclick="confirmDelete()">Delete</button>
+				</div>
+			</div>
+		</div>
+
 		<header class="header">
 			<div class="header-copy">
 				<h1 class="title">Bubba Asset Viewer</h1>
 			</div>
+			<nav class="tab-nav" aria-label="Viewer sections">
+				<button id="assetsTabButton" class="tab-button is-active" type="button" data-tab="assets" aria-pressed="true">Assets</button>
+				<button id="tagsTabButton" class="tab-button" type="button" data-tab="tags" aria-pressed="false">Tag Browser</button>
+			</nav>
 		</header>
 
-		<div class="layout" id="layoutRoot">
+		<div class="layout tab-panel" id="layoutRoot">
 			<section class="panel">
-				<div class="controls">
-					<div class="field">
-						<label for="rootSelect">Select Folder</label>
-						<select id="rootSelect" class="select" aria-label="Select Folder"></select>
+				<div class="controls assets-controls">
+					<div class="assets-main-row">
+						<div class="field field--narrow">
+							<label for="rootSelect">Select Folder</label>
+							<select id="rootSelect" class="select" aria-label="Select Folder"></select>
+						</div>
+
+						<div class="field field--grow">
+							<label for="searchInput">Search</label>
+							<input id="searchInput" class="input" type="search" placeholder="Filename or subpath" />
+						</div>
+
+						<div class="field">
+							<label for="extSelect">Extension</label>
+							<select id="extSelect" class="select" aria-label="Extension filter">
+								<option value="">All extensions</option>
+								<option value=".png">.png</option>
+								<option value=".jpg">.jpg</option>
+								<option value=".jpeg">.jpeg</option>
+								<option value=".webp">.webp</option>
+								<option value=".bmp">.bmp</option>
+							</select>
+						</div>
+
+						<div class="field">
+							<label for="sortBySelect">Sort By</label>
+							<select id="sortBySelect" class="select" aria-label="Sort field">
+								<option value="name">Name</option>
+								<option value="modified">Modified time</option>
+								<option value="size">Size</option>
+								<option value="metadata">Metadata presence</option>
+							</select>
+						</div>
+
+						<div class="field">
+							<label for="sortDirSelect">Order</label>
+							<select id="sortDirSelect" class="select" aria-label="Sort direction">
+								<option value="asc">Ascending</option>
+								<option value="desc">Descending</option>
+							</select>
+						</div>
+
+						<div class="field">
+							<label for="densitySelect">Density</label>
+							<select id="densitySelect" class="select" aria-label="Card density">
+								<option value="compact">Compact</option>
+								<option value="comfortable" selected>Comfortable</option>
+								<option value="large">Large</option>
+							</select>
+						</div>
+						<div class="assets-row-actions">
+							<button id="advancedFiltersToggle" class="button button--ghost" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel">Filters</button>
+							<button id="refreshButton" class="button" type="button">Refresh</button>
+						</div>
 					</div>
 
-					<div class="field">
-						<label for="searchInput">Search</label>
-						<input id="searchInput" class="input" type="search" placeholder="Filename or subpath" />
-					</div>
+					<div id="advancedFiltersPanel" class="advanced-filters-panel" hidden>
+						<div class="field">
+							<label for="collectionSelect">Collection</label>
+							<select id="collectionSelect" class="select" aria-label="Smart collection">
+								<option value="custom">None</option>
+								<option value="recent_1d">Recent 24 hours</option>
+								<option value="recent_7d">Recent 7 days</option>
+								<option value="large_files">Large files (5MB+)</option>
+								<option value="has_generation">Has generation metadata</option>
+								<option value="missing_generation">Missing generation metadata</option>
+							</select>
+						</div>
 
-					<div class="field">
-						<label for="extSelect">Extension</label>
-						<select id="extSelect" class="select" aria-label="Extension filter">
-							<option value="">All extensions</option>
-							<option value=".png">.png</option>
-							<option value=".jpg">.jpg</option>
-							<option value=".jpeg">.jpeg</option>
-							<option value=".webp">.webp</option>
-							<option value=".bmp">.bmp</option>
-						</select>
-					</div>
+						<div class="field">
+							<label for="minSizeInput">Min Size (MB)</label>
+							<input id="minSizeInput" class="input" type="number" min="0" step="0.1" placeholder="Any" />
+						</div>
 
-					<div class="field">
-						<label for="densitySelect">Density</label>
-						<select id="densitySelect" class="select" aria-label="Card density">
-							<option value="compact">Compact</option>
-							<option value="comfortable" selected>Comfortable</option>
-							<option value="large">Large</option>
-						</select>
-					</div>
+						<div class="field">
+							<label for="maxSizeInput">Max Size (MB)</label>
+							<input id="maxSizeInput" class="input" type="number" min="0" step="0.1" placeholder="Any" />
+						</div>
 
-					<button id="refreshButton" class="button" type="button">Refresh</button>
+						<div class="field">
+							<label for="modifiedDaysInput">Modified (Days)</label>
+							<input id="modifiedDaysInput" class="input" type="number" min="0" step="1" placeholder="Any" />
+						</div>
+
+						<div class="field">
+							<label for="metadataModeSelect">Metadata</label>
+							<select id="metadataModeSelect" class="select" aria-label="Metadata filter mode">
+								<option value="all">All</option>
+								<optgroup label="Bubba Metadata">
+									<option value="has_bubba_metadata">Has Bubba metadata</option>
+									<option value="missing_bubba_metadata">Missing Bubba metadata</option>
+								</optgroup>
+								<optgroup label="ComfyUI Workflow">
+									<option value="has_workflow">Has workflow</option>
+									<option value="missing_workflow">Missing workflow</option>
+								</optgroup>
+								<optgroup label="Generation Data">
+									<option value="has_generation">Has generation data</option>
+									<option value="missing_generation">Missing generation data</option>
+								</optgroup>
+							</select>
+						</div>
+					</div>
 				</div>
 
 				<div class="results">
+					<div id="activeFilterChips" class="active-filter-chips" hidden></div>
 					<div class="meta-row">
 						<div class="meta-group">
 							<span class="status-dot" aria-hidden="true"></span>
@@ -91,13 +177,78 @@
 				</div>
 			</aside>
 		</div>
+
+		<div class="layout tab-panel" id="tagsTabPanel" hidden>
+			<section class="panel">
+				<div class="controls tag-controls">
+					<div class="field">
+						<label for="tagSearchInput">Tag Search</label>
+						<input id="tagSearchInput" class="input" type="search" placeholder="Tag or alias" />
+					</div>
+
+					<div class="field">
+						<label for="tagCategorySelect">Category</label>
+						<select id="tagCategorySelect" class="select" aria-label="Tag category filter">
+							<option value="">All categories</option>
+						</select>
+					</div>
+
+					<div class="field">
+						<label for="tagViewSelect">View</label>
+						<select id="tagViewSelect" class="select" aria-label="Tag view filter">
+							<option value="all">All tags</option>
+							<option value="favorites">Favorites only</option>
+							<option value="recent">Recent only</option>
+						</select>
+					</div>
+                    <div class="field">
+						<label for="tagReloadButton">Controls</label>
+                        <button id="tagReloadButton" class="button" type="button">Reload Tags</button>
+					</div>
+
+
+				</div>
+
+				<div class="results">
+					<div class="meta-row">
+						<div class="meta-group">
+							<span class="status-dot" aria-hidden="true"></span>
+							<span id="tagStatusText">Open Tag Browser to load local CSV...</span>
+						</div>
+						<div class="count-badge" id="tagCountText"></div>
+					</div>
+					<div id="tagList" class="tag-list" aria-live="polite"></div>
+				</div>
+			</section>
+
+			<aside class="panel details" id="tagDetailsPanel">
+				<div class="details-header">
+					<h2>Tag Details</h2>
+					<p class="details-subtitle">Select a tag to inspect category, count, and aliases.</p>
+				</div>
+				<div class="details-scroll">
+					<div class="empty">No tag selected.</div>
+				</div>
+			</aside>
+		</div>
 	</div>
 
 	<script>
 		const state = {
+			activeTab: "assets",
 			roots: [],
 			assets: [],
 			selectedPath: "",
+			selectedPaths: new Set(),
+			lastSelectedIndex: -1,
+			sortBy: "name",
+			sortDir: "asc",
+			collectionPreset: "custom",
+			minSizeMb: "",
+			maxSizeMb: "",
+			modifiedDays: "",
+			metadataMode: "all",
+			restoreScrollTop: null,
 			cardDensity: "comfortable",
 			previewHeight: 320,
 			detailsWidth: 420,
@@ -110,6 +261,15 @@
 			virtualStartIndex: 0,
 			virtualEndIndex: 0,
 			virtualRafId: 0,
+			tags: [],
+			tagsLoaded: false,
+			tagLoadPromise: null,
+			selectedTagText: "",
+			tagExamplesRequestToken: 0,
+			tagExampleCache: new Map(),
+			tagViewMode: "all",
+			favoriteTags: new Set(),
+			recentTags: [],
 		};
 
 		const VIRTUALIZATION_THRESHOLD = 500;
@@ -124,22 +284,70 @@
 		};
 		const VIRTUAL_GAP = 12;
 		const VIRTUAL_OVERSCAN_ROWS = 2;
+		const TAG_CSV_URL = "./danbooru_e621_merged.csv";
+		const TAG_RESULT_LIMIT = 500;
+		const TAG_RECENT_LIMIT = 40;
+		const TAG_EXAMPLE_CACHE_TTL_MS = 5 * 60 * 1000;
+		const FAVORITES_STORAGE_KEY = "bubba.assetViewerFavoriteTags";
+		const RECENTS_STORAGE_KEY = "bubba.assetViewerRecentTags";
+		const VIEW_MODE_STORAGE_KEY = "bubba.assetViewerTagViewMode";
+		const ASSET_VIEW_STATE_STORAGE_KEY = "bubba.assetViewerAssetsViewState";
+		const TAG_CATEGORY_LABELS = {
+			// Danbooru categories
+			0: "general",
+			1: "artist",
+			2: "unknown",
+			3: "copyright",
+			4: "character",
+			5: "meta",
+			6: "model",
+			// e621 categories (offset +7 in merged CSV)
+			7: "general",
+			8: "artist",
+			9: "lore",
+			10: "copyright",
+			11: "character",
+			12: "species",
+			14: "meta",
+			15: "lore",
+		};
 
 		let virtualSpacer = null;
 		let virtualWindow = null;
 
+		const assetsTabButton = document.getElementById("assetsTabButton");
+		const tagsTabButton = document.getElementById("tagsTabButton");
+		const tagsTabPanel = document.getElementById("tagsTabPanel");
 		const rootSelect = document.getElementById("rootSelect");
 		const searchInput = document.getElementById("searchInput");
 		const extSelect = document.getElementById("extSelect");
+		const sortBySelect = document.getElementById("sortBySelect");
+		const sortDirSelect = document.getElementById("sortDirSelect");
+		const collectionSelect = document.getElementById("collectionSelect");
+		const minSizeInput = document.getElementById("minSizeInput");
+		const maxSizeInput = document.getElementById("maxSizeInput");
+		const modifiedDaysInput = document.getElementById("modifiedDaysInput");
+		const metadataModeSelect = document.getElementById("metadataModeSelect");
 		const densitySelect = document.getElementById("densitySelect");
 		const refreshButton = document.getElementById("refreshButton");
+		const advancedFiltersToggle = document.getElementById("advancedFiltersToggle");
+		const advancedFiltersPanel = document.getElementById("advancedFiltersPanel");
 		const statusText = document.getElementById("statusText");
 		const countText = document.getElementById("countText");
 		const assetList = document.getElementById("assetList");
+		const activeFilterChips = document.getElementById("activeFilterChips");
 		const loadMoreButton = document.getElementById("loadMoreButton");
 		const layoutRoot = document.getElementById("layoutRoot");
 		const panelResizer = document.getElementById("panelResizer");
 		const detailsPanel = document.getElementById("detailsPanel");
+		const tagSearchInput = document.getElementById("tagSearchInput");
+		const tagCategorySelect = document.getElementById("tagCategorySelect");
+		const tagViewSelect = document.getElementById("tagViewSelect");
+		const tagReloadButton = document.getElementById("tagReloadButton");
+		const tagStatusText = document.getElementById("tagStatusText");
+		const tagCountText = document.getElementById("tagCountText");
+		const tagList = document.getElementById("tagList");
+		const tagDetailsPanel = document.getElementById("tagDetailsPanel");
 		const dropOverlay = document.getElementById("dropOverlay");
 		const dropOverlaySubtitle = document.getElementById("dropOverlaySubtitle");
 		assetList.setAttribute("role", "listbox");
@@ -288,12 +496,141 @@
 			return new Date(ts * 1000).toLocaleString();
 		}
 
+		function loadAssetViewState() {
+			try {
+				const parsed = JSON.parse(localStorage.getItem(ASSET_VIEW_STATE_STORAGE_KEY) || "{}");
+				if (!parsed || typeof parsed !== "object") {
+					return {};
+				}
+				return parsed;
+			} catch (error) {
+				console.warn("Could not load asset view state", error);
+				return {};
+			}
+		}
+
+		function persistAssetViewState() {
+			const payload = {
+				root: String(rootSelect.value || ""),
+				search: String(searchInput.value || ""),
+				ext: String(extSelect.value || ""),
+				sortBy: String(state.sortBy || "name"),
+				sortDir: String(state.sortDir || "asc"),
+				collectionPreset: String(state.collectionPreset || "custom"),
+				minSizeMb: String(state.minSizeMb || ""),
+				maxSizeMb: String(state.maxSizeMb || ""),
+				modifiedDays: String(state.modifiedDays || ""),
+				metadataMode: String(state.metadataMode || "all"),
+				selectedPath: String(state.selectedPath || ""),
+				scrollTop: Math.max(0, Math.floor(assetList.scrollTop || 0)),
+			};
+
+			try {
+				localStorage.setItem(ASSET_VIEW_STATE_STORAGE_KEY, JSON.stringify(payload));
+			} catch (error) {
+				console.warn("Could not save asset view state", error);
+			}
+		}
+
 		function escapeHtml(value) {
 			const text = String(value ?? "");
 			return text
 				.replaceAll("&", "&amp;")
 				.replaceAll("<", "&lt;")
 				.replaceAll(">", "&gt;");
+		}
+
+		function escapeAttr(value) {
+			return escapeHtml(value).replaceAll('"', "&quot;");
+		}
+
+		function parsePromptTagsFromText(value) {
+			const text = String(value || "").trim();
+			if (!text) {
+				return [];
+			}
+
+			const tags = [];
+			let current = "";
+			let depth = 0;
+			for (let i = 0; i < text.length; i += 1) {
+				const ch = text[i];
+				if (ch === "\\") {
+					current += ch;
+					if (i + 1 < text.length) {
+						current += text[i + 1];
+						i += 1;
+					}
+					continue;
+				}
+
+				if (ch === "(" || ch === "[" || ch === "{") {
+					depth += 1;
+					current += ch;
+					continue;
+				}
+
+				if (ch === ")" || ch === "]" || ch === "}") {
+					depth = Math.max(0, depth - 1);
+					current += ch;
+					continue;
+				}
+
+				if (ch === "," && depth === 0) {
+					const tag = current.trim();
+					if (tag) {
+						tags.push(tag);
+					}
+					current = "";
+					continue;
+				}
+
+				current += ch;
+			}
+
+			const tail = current.trim();
+			if (tail) {
+				tags.push(tail);
+			}
+
+			const deduped = [];
+			const seen = new Set();
+			for (const raw of tags) {
+				const normalized = String(raw || "").trim();
+				if (!normalized) {
+					continue;
+				}
+				const key = normalized.toLowerCase();
+				if (seen.has(key)) {
+					continue;
+				}
+				seen.add(key);
+				deduped.push(normalized);
+			}
+
+			return deduped;
+		}
+
+		function navigateToTagBrowserFromPrompt(tagText) {
+			const text = String(tagText || "").trim();
+			if (!text) {
+				return;
+			}
+
+			setActiveTab("tags");
+			localStorage.setItem("bubba.assetViewerActiveTab", "tags");
+			setTagViewMode("all");
+			tagSearchInput.value = text;
+
+			ensureTagsLoaded()
+				.then(() => {
+					applyTagFilters();
+					const exact = state.tags.find((entry) => String(entry.text || "").toLowerCase() === text.toLowerCase());
+					if (exact) {
+						setSelectedTag(exact.text, { userInitiated: true });
+					}
+				})
+				.catch(showTagError);
 		}
 
 		function assetUrl(asset) {
@@ -330,6 +667,699 @@
 				throw new Error(serverMessage || `Request failed (${res.status})`);
 			}
 			return res.json();
+		}
+
+		function setActiveTab(nextTab) {
+			state.activeTab = nextTab === "tags" ? "tags" : "assets";
+			const isAssets = state.activeTab === "assets";
+
+			layoutRoot.hidden = !isAssets;
+			tagsTabPanel.hidden = isAssets;
+			assetsTabButton.classList.toggle("is-active", isAssets);
+			tagsTabButton.classList.toggle("is-active", !isAssets);
+			assetsTabButton.setAttribute("aria-pressed", isAssets ? "true" : "false");
+			tagsTabButton.setAttribute("aria-pressed", !isAssets ? "true" : "false");
+
+			if (isAssets) {
+				refreshAssets({ append: false }).catch(showError);
+				return;
+			}
+
+			forceHideDropOverlay();
+			ensureTagsLoaded().catch(showTagError);
+		}
+
+		function parseCsvRow(line) {
+			const text = String(line || "");
+			if (!text) {
+				return [];
+			}
+
+			const parts = [];
+			let current = "";
+			let inQuotes = false;
+
+			for (let i = 0; i < text.length; i += 1) {
+				const ch = text[i];
+				if (ch === '"') {
+					if (inQuotes && text[i + 1] === '"') {
+						current += '"';
+						i += 1;
+						continue;
+					}
+					inQuotes = !inQuotes;
+					continue;
+				}
+				if (ch === "," && !inQuotes) {
+					parts.push(current.trim());
+					current = "";
+					continue;
+				}
+				current += ch;
+			}
+
+			parts.push(current.trim());
+			return parts;
+		}
+
+		function normalizeTagCategory(value) {
+			const parsed = Number.parseInt(String(value || ""), 10);
+			if (!Number.isFinite(parsed) || parsed < 0) {
+				return null;
+			}
+			return parsed;
+		}
+
+		function getTagCategoryLabel(category) {
+			if (Number.isFinite(category) && Object.prototype.hasOwnProperty.call(TAG_CATEGORY_LABELS, category)) {
+				return TAG_CATEGORY_LABELS[category];
+			}
+			if (Number.isFinite(category)) {
+				return `unknown (${category})`;
+			}
+			return "uncategorized";
+		}
+
+		function getTagCategoryFilterKey(category) {
+			const label = getTagCategoryLabel(category);
+			if (Number.isFinite(category) && Object.prototype.hasOwnProperty.call(TAG_CATEGORY_LABELS, category)) {
+				return `label:${label}`;
+			}
+			return `category:${label}`;
+		}
+
+		function loadTagUiState() {
+			try {
+				const rawFavorites = JSON.parse(localStorage.getItem(FAVORITES_STORAGE_KEY) || "[]");
+				if (Array.isArray(rawFavorites)) {
+					state.favoriteTags = new Set(rawFavorites.map((item) => String(item || "").trim()).filter(Boolean));
+				}
+			} catch (error) {
+				console.warn("Could not load favorite tags", error);
+			}
+
+			try {
+				const rawRecents = JSON.parse(localStorage.getItem(RECENTS_STORAGE_KEY) || "[]");
+				if (Array.isArray(rawRecents)) {
+					state.recentTags = rawRecents.map((item) => String(item || "").trim()).filter(Boolean).slice(0, TAG_RECENT_LIMIT);
+				}
+			} catch (error) {
+				console.warn("Could not load recent tags", error);
+			}
+
+			const savedViewMode = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+			if (savedViewMode === "favorites" || savedViewMode === "recent") {
+				state.tagViewMode = savedViewMode;
+			}
+			tagViewSelect.value = state.tagViewMode;
+		}
+
+		function persistFavoriteTags() {
+			try {
+				localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...state.favoriteTags.values()]));
+			} catch (error) {
+				console.warn("Could not save favorite tags", error);
+			}
+		}
+
+		function persistRecentTags() {
+			try {
+				localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(state.recentTags.slice(0, TAG_RECENT_LIMIT)));
+			} catch (error) {
+				console.warn("Could not save recent tags", error);
+			}
+		}
+
+		function setTagViewMode(nextMode) {
+			state.tagViewMode = nextMode === "favorites" || nextMode === "recent" ? nextMode : "all";
+			tagViewSelect.value = state.tagViewMode;
+			localStorage.setItem(VIEW_MODE_STORAGE_KEY, state.tagViewMode);
+		}
+
+		function markTagAsRecent(tagText) {
+			const text = String(tagText || "").trim();
+			if (!text) {
+				return;
+			}
+			state.recentTags = [text, ...state.recentTags.filter((entry) => entry !== text)].slice(0, TAG_RECENT_LIMIT);
+			persistRecentTags();
+		}
+
+		function toggleFavoriteTag(tagText) {
+			const text = String(tagText || "").trim();
+			if (!text) {
+				return false;
+			}
+			if (state.favoriteTags.has(text)) {
+				state.favoriteTags.delete(text);
+				persistFavoriteTags();
+				return false;
+			}
+			state.favoriteTags.add(text);
+			persistFavoriteTags();
+			return true;
+		}
+
+		function formatExampleScore(value) {
+			const numeric = Number(value);
+			if (!Number.isFinite(numeric)) {
+				return "-";
+			}
+			return numberFmt.format(Math.round(numeric));
+		}
+
+		function renderTagExamples(exampleMap) {
+			const sites = [
+				{ key: "danbooru", label: "Danbooru", data: exampleMap?.danbooru || {} },
+				{ key: "e621", label: "e621", data: exampleMap?.e621 || {} },
+			];
+
+			const cards = sites
+				.map((site) => {
+					const status = String(site.data?.status || "empty");
+					if (status !== "ok" || !site.data?.image_url) {
+						const errorText = site.data?.error ? ` (${site.data.error})` : "";
+						return `
+							<div class="tag-example-card">
+								<div class="tag-example-header">
+									<span class="tag-example-site">${escapeHtml(site.label)}</span>
+								</div>
+								<div class="empty empty-inline">No example available${escapeHtml(errorText)}</div>
+							</div>
+						`;
+					}
+
+					const imageUrl = String(site.data.image_url || "");
+					const proxiedImageUrl = `/bubba/tag_example_image?url=${encodeURIComponent(imageUrl)}`;
+					const postUrl = String(site.data.post_url || "");
+					return `
+						<div class="tag-example-card">
+							<div class="tag-example-header">
+								<span class="tag-example-site">${escapeHtml(site.label)}</span>
+								<span class="tag-example-score">score ${escapeHtml(formatExampleScore(site.data.score))}</span>
+							</div>
+							<a class="tag-example-thumb-link" href="${escapeAttr(postUrl || imageUrl)}" target="_blank" rel="noopener noreferrer">
+								<img class="tag-example-thumb" src="${escapeAttr(proxiedImageUrl)}" alt="${escapeAttr(`${site.label} top example`) }" data-site-label="${escapeAttr(site.label)}" loading="lazy" referrerpolicy="no-referrer" />
+							</a>
+							<a class="tag-example-open" href="${escapeAttr(postUrl || imageUrl)}" target="_blank" rel="noopener noreferrer">Open post</a>
+						</div>
+					`;
+				})
+				.join("");
+
+			return `<div class="tag-example-grid">${cards}</div>`;
+		}
+
+		async function loadTagExamples(tagText) {
+			const requestedTag = String(tagText || "").trim();
+			const cacheKey = requestedTag.toLowerCase();
+			const mount = tagDetailsPanel.querySelector("#tagExamplesSection");
+			if (!requestedTag || !mount) {
+				return;
+			}
+
+			const cached = state.tagExampleCache.get(cacheKey);
+			if (cached && Date.now() - cached.cachedAt < TAG_EXAMPLE_CACHE_TTL_MS) {
+				mount.innerHTML = renderTagExamples(cached.examples);
+				attachTagExampleImageFallbackHandlers(mount);
+				return;
+			}
+
+			const requestToken = ++state.tagExamplesRequestToken;
+			mount.innerHTML = '<div class="empty empty-inline">Loading examples...</div>';
+
+			try {
+				const payload = await fetchJson(`/bubba/tag_examples?tag=${encodeURIComponent(requestedTag)}`);
+				if (requestToken !== state.tagExamplesRequestToken || state.selectedTagText !== requestedTag) {
+					return;
+				}
+				const examples = payload && typeof payload === "object" && payload.examples && typeof payload.examples === "object" ? payload.examples : {};
+				state.tagExampleCache.set(cacheKey, {
+					examples,
+					cachedAt: Date.now(),
+				});
+				mount.innerHTML = renderTagExamples(examples);
+				attachTagExampleImageFallbackHandlers(mount);
+			} catch (error) {
+				if (requestToken !== state.tagExamplesRequestToken || state.selectedTagText !== requestedTag) {
+					return;
+				}
+				mount.innerHTML = `<div class="empty empty-inline">Could not load examples: ${escapeHtml(error?.message || "request failed")}</div>`;
+			}
+		}
+
+		function attachTagExampleImageFallbackHandlers(root) {
+			if (!root) {
+				return;
+			}
+			for (const imageEl of root.querySelectorAll(".tag-example-thumb")) {
+				imageEl.addEventListener("error", () => {
+					const siteLabel = imageEl.getAttribute("data-site-label") || "Site";
+					const card = imageEl.closest(".tag-example-card");
+					if (!card) {
+						return;
+					}
+					const existing = card.querySelector(".tag-example-image-missing");
+					if (existing) {
+						return;
+					}
+					imageEl.style.display = "none";
+					const note = document.createElement("div");
+					note.className = "empty empty-inline tag-example-image-missing";
+					note.textContent = `${siteLabel} image unavailable. Use Open post.`;
+					const thumbLink = card.querySelector(".tag-example-thumb-link");
+					if (thumbLink) {
+						thumbLink.appendChild(note);
+					}
+				});
+			}
+		}
+
+		function renderTagDetails(tag) {
+			if (!tag) {
+				tagDetailsPanel.innerHTML = `
+					<div class="details-header">
+						<h2>Tag Details</h2>
+						<p class="details-subtitle">Select a tag to inspect category, count, and aliases.</p>
+					</div>
+					<div class="details-scroll">
+						<div class="empty">No tag selected.</div>
+					</div>
+				`;
+				return;
+			}
+
+			const aliases = Array.isArray(tag.aliases) ? tag.aliases : [];
+			const aliasText = aliases.length ? aliases.join(", ") : "(none)";
+			const encodedTag = encodeURIComponent(String(tag.text || "").trim());
+			const isFavorite = state.favoriteTags.has(tag.text);
+			const recentTags = state.recentTags.filter((entry) => entry !== tag.text).slice(0, 10);
+			const externalLinks = [
+				{
+					label: "Search on Danbooru",
+					href: `https://danbooru.donmai.us/posts?tags=${encodedTag}`,
+				},
+				{
+					label: "Search on e621",
+					href: `https://e621.net/posts?tags=${encodedTag}`,
+				},
+				{
+					label: "Danbooru Wiki",
+					href: `https://danbooru.donmai.us/wiki_pages?search[title]=${encodedTag}`,
+				},
+				{
+					label: "e621 Wiki",
+					href: `https://e621.net/wiki_pages?search[title]=${encodedTag}`,
+				},
+			];
+			const rows = [
+				["tag", tag.text],
+				["category", getTagCategoryLabel(tag.category)],
+				["post_count", numberFmt.format(typeof tag.count === "number" ? tag.count : 0)],
+				["aliases", aliasText],
+			];
+
+			const makeRows = (pairs) =>
+				pairs
+					.map(([key, value]) => `
+						<div class="kv">
+							<div class="kv-key">${escapeHtml(key)}</div>
+							<div class="kv-value">${escapeHtml(String(value ?? ""))}</div>
+						</div>
+					`)
+					.join("");
+
+			const makeTagChipList = (tags, chipClass, emptyText) => {
+				if (!tags.length) {
+					return `<div class="empty empty-inline">${escapeHtml(emptyText)}</div>`;
+				}
+				return tags
+					.map(
+						(entry) =>
+							`<button type="button" class="${chipClass}" data-tag-select="${encodeURIComponent(String(entry.text || entry))}">${escapeHtml(entry.text || entry)}</button>`
+					)
+					.join("");
+			};
+
+			tagDetailsPanel.innerHTML = `
+				<div class="details-header">
+					<div class="details-title-row">
+						<h2>Tag Details</h2>
+						<span class="metadata-status metadata-status-ok">${escapeHtml(getTagCategoryLabel(tag.category))}</span>
+					</div>
+					<p class="details-subtitle">${escapeHtml(tag.text)}</p>
+				</div>
+				<div class="details-scroll">
+					<div class="details-grid">
+						<div class="details-section-title">Actions</div>
+						<div class="tag-action-row">
+							<button type="button" class="tag-action-button" id="copyTagButton">Copy tag</button>
+							<button type="button" class="tag-action-button" id="favoriteTagButton">${isFavorite ? "Unfavorite" : "Favorite"}</button>
+						</div>
+						<div class="details-section-title">Tag Info</div>
+						${makeRows(rows)}
+						<div class="details-section-title">Quick Links</div>
+						<div class="tag-link-list">
+							${externalLinks
+								.map(
+									(link) =>
+										`<a class="tag-search-link" href="${escapeAttr(link.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label)}</a>`
+								)
+								.join("")}
+						</div>
+						<div class="details-section-title">Top Examples</div>
+						<div id="tagExamplesSection" class="tag-example-grid">
+							<div class="empty empty-inline">Loading examples...</div>
+						</div>
+						<div class="details-section-title">Recent Tags</div>
+						<div class="tag-chip-list">
+							${makeTagChipList(recentTags, "tag-pill-button tag-pill-muted", "No recent selections yet.")}
+						</div>
+					</div>
+				</div>
+			`;
+
+			const copyTagButton = tagDetailsPanel.querySelector("#copyTagButton");
+			if (copyTagButton) {
+				copyTagButton.addEventListener("click", async () => {
+					try {
+						await navigator.clipboard.writeText(String(tag.text || ""));
+						copyTagButton.textContent = "Copied";
+						setTimeout(() => {
+							copyTagButton.textContent = "Copy tag";
+						}, 900);
+					} catch (error) {
+						console.warn("Clipboard write failed", error);
+						copyTagButton.textContent = "Copy failed";
+						setTimeout(() => {
+							copyTagButton.textContent = "Copy tag";
+						}, 1200);
+					}
+				});
+			}
+
+			const favoriteTagButton = tagDetailsPanel.querySelector("#favoriteTagButton");
+			if (favoriteTagButton) {
+				favoriteTagButton.addEventListener("click", () => {
+					toggleFavoriteTag(tag.text);
+					renderTagDetails(tag);
+					applyTagFilters();
+				});
+			}
+
+			for (const chip of tagDetailsPanel.querySelectorAll("[data-tag-select]")) {
+				chip.addEventListener("click", () => {
+					const encoded = chip.getAttribute("data-tag-select") || "";
+					const nextTag = encoded ? decodeURIComponent(encoded) : "";
+					if (!nextTag) {
+						return;
+					}
+					setSelectedTag(nextTag, { userInitiated: true });
+				});
+			}
+
+			loadTagExamples(tag.text);
+		}
+
+		function setSelectedTag(tagText, options = {}) {
+			const { userInitiated = false } = options;
+			state.selectedTagText = String(tagText || "");
+			if (userInitiated) {
+				markTagAsRecent(state.selectedTagText);
+			}
+			const rows = tagList.querySelectorAll(".tag-row");
+			for (const row of rows) {
+				const isActive = row.dataset.tagText === state.selectedTagText;
+				row.classList.toggle("active", isActive);
+				row.setAttribute("aria-selected", isActive ? "true" : "false");
+			}
+
+			const selected = state.tags.find((entry) => entry.text === state.selectedTagText) || null;
+			renderTagDetails(selected);
+		}
+
+		function createTagRow(tag) {
+			const row = document.createElement("div");
+			row.className = `tag-row${state.selectedTagText === tag.text ? " active" : ""}`;
+			row.dataset.tagText = tag.text;
+			row.setAttribute("role", "option");
+			row.setAttribute("aria-selected", state.selectedTagText === tag.text ? "true" : "false");
+			row.tabIndex = 0;
+			const aliases = Array.isArray(tag.aliases) ? tag.aliases : [];
+			const aliasesPreview = aliases.length ? aliases.slice(0, 6).join(", ") : "No aliases";
+			const isFavorite = state.favoriteTags.has(tag.text);
+			row.innerHTML = `
+				<div class="tag-row-main">
+					<div class="tag-name">${escapeHtml(tag.text)}</div>
+					<div class="tag-row-controls">
+						<button
+							type="button"
+							class="tag-favorite-toggle${isFavorite ? " is-favorite" : ""}"
+							aria-label="${isFavorite ? "Unfavorite tag" : "Favorite tag"}"
+							aria-pressed="${isFavorite ? "true" : "false"}"
+							title="${isFavorite ? "Unfavorite" : "Favorite"}"
+						>${isFavorite ? "★" : "☆"}</button>
+						<div class="tag-meta">
+							<span>${escapeHtml(getTagCategoryLabel(tag.category))}</span>
+							<span>${escapeHtml(numberFmt.format(typeof tag.count === "number" ? tag.count : 0))}</span>
+						</div>
+					</div>
+				</div>
+				<div class="tag-alias">${escapeHtml(aliasesPreview)}</div>
+			`;
+
+			const favoriteToggle = row.querySelector(".tag-favorite-toggle");
+			if (favoriteToggle) {
+				favoriteToggle.addEventListener("click", (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					toggleFavoriteTag(tag.text);
+					applyTagFilters();
+				});
+			}
+
+			row.addEventListener("click", (event) => {
+				if (event.target && event.target.closest(".tag-favorite-toggle")) {
+					return;
+				}
+				setSelectedTag(tag.text, { userInitiated: true });
+			});
+
+			row.addEventListener("keydown", (event) => {
+				if (event.key !== "Enter" && event.key !== " ") {
+					return;
+				}
+				event.preventDefault();
+				setSelectedTag(tag.text, { userInitiated: true });
+			});
+			return row;
+		}
+
+		function renderTagList(matches, totalMatches) {
+			tagList.innerHTML = "";
+			if (!matches.length) {
+				tagList.innerHTML = `<div class="empty">No tags matched this filter.</div>`;
+				tagCountText.textContent = "0";
+				renderTagDetails(null);
+				return;
+			}
+
+			for (const tag of matches) {
+				tagList.appendChild(createTagRow(tag));
+			}
+
+			const suffix = totalMatches > matches.length ? ` (showing ${numberFmt.format(matches.length)})` : "";
+			tagCountText.textContent = `${numberFmt.format(totalMatches)} match(es)${suffix}`;
+
+			if (!state.selectedTagText || !matches.some((entry) => entry.text === state.selectedTagText)) {
+				setSelectedTag(matches[0].text, { userInitiated: false });
+			} else {
+				setSelectedTag(state.selectedTagText, { userInitiated: false });
+			}
+		}
+
+		function applyTagFilters() {
+			const query = String(tagSearchInput.value || "").trim().toLowerCase();
+			const categoryFilter = tagCategorySelect.value;
+			const terms = query ? query.split(/\s+/g).filter(Boolean) : [];
+			const recentSet = new Set(state.recentTags);
+
+			const filtered = state.tags.filter((tag) => {
+				if (state.tagViewMode === "favorites" && !state.favoriteTags.has(tag.text)) {
+					return false;
+				}
+
+				if (state.tagViewMode === "recent" && !recentSet.has(tag.text)) {
+					return false;
+				}
+
+				if (categoryFilter !== "") {
+					if (getTagCategoryFilterKey(tag.category) !== categoryFilter) {
+						return false;
+					}
+				}
+
+				if (!terms.length) {
+					return true;
+				}
+
+				const haystack = `${tag.text} ${(tag.aliases || []).join(" ")}`.toLowerCase();
+				return terms.every((term) => haystack.includes(term));
+			});
+
+			if (state.tagViewMode === "recent") {
+				const recentOrder = new Map(state.recentTags.map((tagText, index) => [tagText, index]));
+				filtered.sort((a, b) => {
+					const aIndex = recentOrder.has(a.text) ? recentOrder.get(a.text) : Number.MAX_SAFE_INTEGER;
+					const bIndex = recentOrder.has(b.text) ? recentOrder.get(b.text) : Number.MAX_SAFE_INTEGER;
+					if (aIndex !== bIndex) {
+						return aIndex - bIndex;
+					}
+					return a.text.localeCompare(b.text);
+				});
+			}
+
+			const limited = filtered.slice(0, TAG_RESULT_LIMIT);
+			renderTagList(limited, filtered.length);
+			tagStatusText.textContent = `Loaded ${numberFmt.format(state.tags.length)} tags from local CSV.`;
+		}
+
+		function updateTagCategoryOptions(tags) {
+			const previous = tagCategorySelect.value;
+			const categoriesByKey = new Map();
+			for (const tag of tags) {
+				const key = getTagCategoryFilterKey(tag.category);
+				if (categoriesByKey.has(key)) {
+					continue;
+				}
+				categoriesByKey.set(key, {
+					value: key,
+					label: getTagCategoryLabel(tag.category),
+				});
+			}
+
+			const sorted = [...categoriesByKey.values()].sort((a, b) => a.label.localeCompare(b.label));
+			tagCategorySelect.innerHTML = '<option value="">All categories</option>';
+			for (const category of sorted) {
+				const option = document.createElement("option");
+				option.value = category.value;
+				option.textContent = category.label;
+				tagCategorySelect.appendChild(option);
+			}
+
+			if (previous !== "" && sorted.some((entry) => entry.value === previous)) {
+				tagCategorySelect.value = previous;
+			}
+		}
+
+		function parseTagCsvText(csvText) {
+			const tags = [];
+			const lines = String(csvText || "")
+				.split(/\r?\n/g)
+				.map((line) => line.trim())
+				.filter(Boolean);
+
+			let columnMap = null;
+			for (const line of lines) {
+				if (line.startsWith("#")) {
+					continue;
+				}
+
+				const lower = line.toLowerCase();
+				if (lower.startsWith("tag,") || lower.startsWith("name,")) {
+					const cols = parseCsvRow(line).map((part) => String(part || "").trim().toLowerCase());
+					columnMap = {
+						nameIdx: cols.indexOf("tag") >= 0 ? cols.indexOf("tag") : cols.indexOf("name"),
+						countIdx: cols.indexOf("post_count") >= 0 ? cols.indexOf("post_count") : cols.indexOf("count"),
+						categoryIdx: cols.indexOf("category") >= 0 ? cols.indexOf("category") : cols.indexOf("type"),
+						aliasesIdx: cols.indexOf("aliases") >= 0 ? cols.indexOf("aliases") : cols.indexOf("alias"),
+					};
+					continue;
+				}
+
+				const parts = parseCsvRow(line);
+				if (parts.length < 2) {
+					continue;
+				}
+
+				const nameIdx = Number.isInteger(columnMap?.nameIdx) && columnMap.nameIdx >= 0 ? columnMap.nameIdx : 0;
+				const categoryIdx = Number.isInteger(columnMap?.categoryIdx) && columnMap.categoryIdx >= 0 ? columnMap.categoryIdx : 1;
+				const countIdx = Number.isInteger(columnMap?.countIdx) && columnMap.countIdx >= 0 ? columnMap.countIdx : 2;
+				const aliasesIdx = Number.isInteger(columnMap?.aliasesIdx) && columnMap.aliasesIdx >= 0 ? columnMap.aliasesIdx : 3;
+
+				const text = String(parts[nameIdx] || "").trim();
+				if (!text) {
+					continue;
+				}
+
+				const count = Number.parseInt(String(parts[countIdx] || "0").trim(), 10);
+				const aliasesRaw = String(parts[aliasesIdx] || "").trim();
+				const aliases = aliasesRaw
+					.split(/[,|]/g)
+					.map((alias) => alias.trim().toLowerCase())
+					.filter(Boolean);
+
+				tags.push({
+					text,
+					count: Number.isFinite(count) ? Math.max(0, count) : 0,
+					category: normalizeTagCategory(parts[categoryIdx]),
+					aliases: [...new Set(aliases.values())],
+				});
+			}
+
+			tags.sort((a, b) => {
+				if (b.count !== a.count) {
+					return b.count - a.count;
+				}
+				return a.text.localeCompare(b.text);
+			});
+
+			return tags;
+		}
+
+		async function ensureTagsLoaded(forceReload = false) {
+			if (!forceReload && state.tagsLoaded) {
+				applyTagFilters();
+				return;
+			}
+
+			if (state.tagLoadPromise && !forceReload) {
+				await state.tagLoadPromise;
+				return;
+			}
+
+			const loadPromise = (async () => {
+				tagStatusText.textContent = "Loading local tag CSV...";
+				const response = await fetch(TAG_CSV_URL, {
+					cache: "no-store",
+					headers: {
+						"Accept": "text/csv, text/plain;q=0.9, */*;q=0.8",
+					},
+				});
+				if (!response.ok) {
+					throw new Error(`Unable to load local tag CSV (${response.status}).`);
+				}
+				const csvText = await response.text();
+				state.tags = parseTagCsvText(csvText);
+				state.tagsLoaded = true;
+				updateTagCategoryOptions(state.tags);
+				applyTagFilters();
+			})();
+
+			state.tagLoadPromise = loadPromise;
+			try {
+				await loadPromise;
+			} finally {
+				state.tagLoadPromise = null;
+			}
+		}
+
+		function showTagError(error) {
+			console.error(error);
+			tagStatusText.textContent = `Error: ${error?.message || "request failed"}`;
+			tagCountText.textContent = "";
+			tagList.innerHTML = `<div class="empty">${escapeHtml(error?.message || "Unexpected error")}</div>`;
+			renderTagDetails(null);
 		}
 
 		function currentRootLabel() {
@@ -584,6 +1614,8 @@
 			} else if (outputKey) {
 				rootSelect.value = outputKey;
 			}
+
+			persistAssetViewState();
 		}
 
 		function renderDetails(asset) {
@@ -638,7 +1670,27 @@
 							<div class="kv-key">${escapeHtml(key)}</div>
 							${(() => {
 								const rawValue = String(value ?? "");
+								const isPromptField = key === "positive_prompt" || key === "negative_prompt";
 								const shouldClamp = (key === "positive_prompt" || key === "negative_prompt") && rawValue.length > 180;
+								if (isPromptField) {
+									const promptTags = parsePromptTagsFromText(rawValue);
+									if (promptTags.length) {
+										const targetId = `kv-${Math.random().toString(36).slice(2, 10)}`;
+										return `
+											<div class="kv-value-wrap">
+												<div id="${targetId}" class="prompt-tag-list ${shouldClamp ? "prompt-tag-list-clamped" : ""}">
+													${promptTags
+														.map(
+															(tag) =>
+																`<button class="prompt-tag-chip" type="button" data-prompt-tag="${encodeURIComponent(tag)}">${escapeHtml(tag)}</button>`
+														)
+														.join("")}
+												</div>
+												${shouldClamp ? `<button class="kv-toggle" type="button" data-target="${targetId}" data-clamp-class="prompt-tag-list-clamped">Expand</button>` : ""}
+											</div>
+										`;
+									}
+								}
 								if (!shouldClamp) {
 									return `<div class="kv-value">${escapeHtml(rawValue)}</div>`;
 								}
@@ -776,16 +1828,16 @@
 				${header}
 				<div class="preview">
 					<div class="preview-frame">
-						<a class="preview-link" href="${previewHref}" target="_blank" rel="noopener noreferrer" title="Open full image in new tab">
-							<img src="${previewHref}" alt="${escapeHtml(asset.name)}" loading="lazy" />
+						<a class="preview-link" href="${escapeAttr(previewHref)}" target="_blank" rel="noopener noreferrer" title="Open full image in new tab">
+							<img src="${escapeAttr(previewHref)}" alt="${escapeAttr(asset.name)}" loading="lazy" />
 						</a>
 					</div>
 					<div class="preview-actions">
-						<button type="button" class="preview-action" data-action="open-full" data-href="${previewHref}">Open Full</button>
-						<button type="button" class="preview-action" data-action="copy-path" data-value="${escapeHtml(asset.path)}">Copy Path</button>
-						<button type="button" class="preview-action" data-action="copy-prompt" data-value="${escapeHtml(copyPromptValue)}" ${copyPromptValue ? "" : "disabled"}>Copy Prompt</button>
-						<button type="button" class="preview-action" data-action="copy-seed" data-value="${escapeHtml(copySeedValue)}" ${copySeedValue ? "" : "disabled"}>Copy Seed</button>
-						<button type="button" class="preview-action preview-action-danger" data-action="delete-asset" data-value="${escapeHtml(asset.path)}">Delete</button>
+						<button type="button" class="preview-action" data-action="open-full" data-href="${escapeAttr(previewHref)}">Open Full</button>
+						<button type="button" class="preview-action" data-action="copy-path" data-value="${escapeAttr(asset.path)}">Copy Path</button>
+						<button type="button" class="preview-action" data-action="copy-prompt" data-value="${escapeAttr(copyPromptValue)}" ${copyPromptValue ? "" : "disabled"}>Copy Prompt</button>
+						<button type="button" class="preview-action" data-action="copy-seed" data-value="${escapeAttr(copySeedValue)}" ${copySeedValue ? "" : "disabled"}>Copy Seed</button>
+						<button type="button" class="preview-action preview-action-danger" data-action="delete-asset" data-value="${escapeAttr(asset.path)}">Delete</button>
 					</div>
 				</div>
 				<div class="preview-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize preview height" title="Drag to resize preview height"></div>
@@ -800,6 +1852,7 @@
 			for (const toggle of detailsPanel.querySelectorAll(".kv-toggle")) {
 				toggle.addEventListener("click", () => {
 					const targetId = toggle.dataset.target;
+					const clampClass = toggle.dataset.clampClass || "kv-value-clamped";
 					if (!targetId) {
 						return;
 					}
@@ -807,8 +1860,16 @@
 					if (!target) {
 						return;
 					}
-					target.classList.toggle("kv-value-clamped");
-					toggle.textContent = target.classList.contains("kv-value-clamped") ? "Expand" : "Collapse";
+					target.classList.toggle(clampClass);
+					toggle.textContent = target.classList.contains(clampClass) ? "Expand" : "Collapse";
+				});
+			}
+
+			for (const promptTagButton of detailsPanel.querySelectorAll(".prompt-tag-chip")) {
+				promptTagButton.addEventListener("click", () => {
+					const encodedTag = promptTagButton.dataset.promptTag || "";
+					const nextTag = encodedTag ? decodeURIComponent(encodedTag) : "";
+					navigateToTagBrowserFromPrompt(nextTag);
 				});
 			}
 
@@ -918,10 +1979,13 @@
 		function createAssetCard(asset, index) {
 			const card = document.createElement("button");
 			card.type = "button";
-			card.className = `asset-card${state.selectedPath === asset.path ? " active" : ""}`;
+			const isActive = state.selectedPath === asset.path;
+			const isSelected = state.selectedPaths.has(asset.path);
+			card.className = `asset-card${isActive ? " active" : ""}${isSelected ? " is-selected" : ""}`;
 			card.dataset.path = asset.path;
+			card.dataset.index = index;
 			card.setAttribute("role", "option");
-			card.setAttribute("aria-selected", state.selectedPath === asset.path ? "true" : "false");
+			card.setAttribute("aria-selected", isActive ? "true" : "false");
 			const thumbId = `thumb-${Math.random().toString(36).slice(2, 10)}`;
 			card.innerHTML = `
 				<div class="asset-thumb">
@@ -944,13 +2008,65 @@
 					handleCardImageError(event.currentTarget);
 				});
 			}
-			card.addEventListener("click", () => {
-				setSelectedAsset(asset.path);
+		card.addEventListener("click", (event) => {
+				if (event.ctrlKey || event.metaKey) {
+					handleCardCheckbox(asset.path, index);
+				} else if (event.shiftKey) {
+					handleCardShiftClick(asset.path, index);
+				} else {
+					setSelectedAsset(asset.path);
+				}
 			});
 			card.addEventListener("keydown", (event) => {
 				handleCardKeydown(event, index);
 			});
 			return card;
+		}
+
+		function handleCardCheckbox(path, index) {
+			if (state.selectedPaths.has(path)) {
+				state.selectedPaths.delete(path);
+			} else {
+				state.selectedPaths.add(path);
+			}
+			state.lastSelectedIndex = index;
+			updateSelectionUI();
+		}
+
+		function handleCardShiftClick(path, index) {
+			if (state.lastSelectedIndex < 0) {
+				state.selectedPaths.add(path);
+				state.lastSelectedIndex = index;
+			} else {
+				const start = Math.min(state.lastSelectedIndex, index);
+				const end = Math.max(state.lastSelectedIndex, index);
+				for (let i = start; i <= end; i++) {
+					if (state.assets[i]) {
+						state.selectedPaths.add(state.assets[i].path);
+					}
+				}
+			}
+			updateSelectionUI();
+		}
+
+		function updateSelectionUI() {
+			for (const card of assetList.querySelectorAll(".asset-card")) {
+				const path = card.dataset.path;
+				if (state.selectedPaths.has(path)) {
+					card.classList.add("is-selected");
+				} else {
+					card.classList.remove("is-selected");
+				}
+			}
+			updateStatusWithSelection();
+		}
+
+		function updateStatusWithSelection() {
+			if (state.selectedPaths.size > 0) {
+				statusText.textContent = `${state.selectedPaths.size} selected`;
+			} else {
+				statusText.textContent = `Root: ${rootSelect.value}`;
+			}
 		}
 
 		function getVirtualMetrics() {
@@ -1105,6 +2221,7 @@
 			ensureAssetDetails(path).catch((error) => {
 				console.warn("Failed to load asset details", error);
 			});
+			persistAssetViewState();
 		}
 
 		function renderAssets() {
@@ -1150,6 +2267,12 @@
 
 			const selected = state.assets.find((item) => item.path === state.selectedPath) || state.assets[0];
 			setSelectedAsset(selected.path, { ensureVisible: false, focusCard: false });
+
+			if (Number.isFinite(state.restoreScrollTop) && state.restoreScrollTop > 0) {
+				assetList.scrollTop = Math.max(0, Math.floor(state.restoreScrollTop));
+				scheduleVirtualRender();
+				state.restoreScrollTop = null;
+			}
 		}
 
 		async function loadRoots() {
@@ -1160,6 +2283,190 @@
 				throw new Error("No asset roots were detected.");
 			}
 			renderRoots();
+		}
+
+		function parseNonNegativeNumber(value) {
+			const str = String(value ?? "").trim();
+			if (!str) {
+				return null;
+			}
+			const numeric = Number(str);
+			if (!Number.isFinite(numeric) || numeric < 0) {
+				return null;
+			}
+			return numeric;
+		}
+
+		function markCollectionCustom() {
+			state.collectionPreset = "custom";
+			collectionSelect.value = "custom";
+		}
+
+		function syncAdvancedFilterInputsFromState() {
+			collectionSelect.value = state.collectionPreset;
+			minSizeInput.value = state.minSizeMb;
+			maxSizeInput.value = state.maxSizeMb;
+			modifiedDaysInput.value = state.modifiedDays;
+			metadataModeSelect.value = state.metadataMode;
+		}
+
+		function getCollectionLabel(value) {
+			switch (value) {
+				case "recent_1d":
+					return "Recent 24 hours";
+				case "recent_7d":
+					return "Recent 7 days";
+				case "large_files":
+					return "Large files (5MB+)";
+				case "has_generation":
+					return "Has generation metadata";
+				case "missing_generation":
+					return "Missing generation metadata";
+				default:
+					return "None";
+			}
+		}
+
+		function applyCollectionPreset(nextPreset) {
+			const preset = String(nextPreset || "custom").trim().toLowerCase();
+			state.collectionPreset = preset;
+
+			if (preset === "recent_1d") {
+				state.modifiedDays = "1";
+				state.minSizeMb = "";
+				state.maxSizeMb = "";
+				state.metadataMode = "all";
+				state.sortBy = "modified";
+				state.sortDir = "desc";
+			} else if (preset === "recent_7d") {
+				state.modifiedDays = "7";
+				state.minSizeMb = "";
+				state.maxSizeMb = "";
+				state.metadataMode = "all";
+				state.sortBy = "modified";
+				state.sortDir = "desc";
+			} else if (preset === "large_files") {
+				state.minSizeMb = "5";
+				state.maxSizeMb = "";
+				state.modifiedDays = "";
+				state.metadataMode = "all";
+				state.sortBy = "size";
+				state.sortDir = "desc";
+			} else if (preset === "has_generation") {
+				state.metadataMode = "has_generation";
+				state.minSizeMb = "";
+				state.maxSizeMb = "";
+				state.modifiedDays = "";
+				state.sortBy = "modified";
+				state.sortDir = "desc";
+			} else if (preset === "missing_generation") {
+				state.metadataMode = "missing_generation";
+				state.minSizeMb = "";
+				state.maxSizeMb = "";
+				state.modifiedDays = "";
+				state.sortBy = "modified";
+				state.sortDir = "desc";
+			} else {
+				state.collectionPreset = "custom";
+			}
+
+			sortBySelect.value = state.sortBy;
+			sortDirSelect.value = state.sortDir;
+			syncAdvancedFilterInputsFromState();
+		}
+
+		function buildActiveFilterChipItems() {
+			const chips = [];
+			if (state.collectionPreset !== "custom") {
+				chips.push({ key: "collection", label: getCollectionLabel(state.collectionPreset) });
+			}
+
+			if (searchInput.value.trim()) {
+				chips.push({ key: "search", label: `Search: ${searchInput.value.trim()}` });
+			}
+
+			if (extSelect.value) {
+				chips.push({ key: "ext", label: `Ext: ${extSelect.value}` });
+			}
+
+			if (state.minSizeMb) {
+				chips.push({ key: "minSize", label: `Min: ${state.minSizeMb} MB` });
+			}
+
+			if (state.maxSizeMb) {
+				chips.push({ key: "maxSize", label: `Max: ${state.maxSizeMb} MB` });
+			}
+
+			if (state.modifiedDays) {
+				chips.push({ key: "days", label: `Modified: ${state.modifiedDays}d` });
+			}
+
+			if (state.metadataMode !== "all") {
+				const _metadataChipLabels = {
+					has_generation: "Has generation data",
+					missing_generation: "Missing generation data",
+					has_bubba_metadata: "Has Bubba metadata",
+					missing_bubba_metadata: "Missing Bubba metadata",
+					has_workflow: "Has workflow",
+					missing_workflow: "Missing workflow",
+				};
+				chips.push({ key: "metadata", label: _metadataChipLabels[state.metadataMode] || state.metadataMode });
+			}
+
+			return chips;
+		}
+
+		function renderActiveFilterChips() {
+			if (!activeFilterChips) {
+				return;
+			}
+			const chips = buildActiveFilterChipItems();
+			if (!chips.length) {
+				activeFilterChips.hidden = true;
+				activeFilterChips.innerHTML = "";
+				return;
+			}
+
+			activeFilterChips.hidden = false;
+			const chipButtons = chips
+				.map((chip) => `<button class="filter-chip" type="button" data-chip-key="${escapeAttr(chip.key)}">${escapeHtml(chip.label)} <span aria-hidden="true">×</span></button>`)
+				.join("");
+			activeFilterChips.innerHTML = `${chipButtons}<button class="filter-chip filter-chip-clear" type="button" data-chip-key="clear_all">Clear all</button>`;
+
+			for (const chipButton of activeFilterChips.querySelectorAll(".filter-chip")) {
+				chipButton.addEventListener("click", () => {
+					const chipKey = chipButton.getAttribute("data-chip-key") || "";
+					if (chipKey === "clear_all") {
+						state.collectionPreset = "custom";
+						state.minSizeMb = "";
+						state.maxSizeMb = "";
+						state.modifiedDays = "";
+						state.metadataMode = "all";
+						searchInput.value = "";
+						extSelect.value = "";
+					} else if (chipKey === "collection") {
+						state.collectionPreset = "custom";
+					} else if (chipKey === "search") {
+						searchInput.value = "";
+					} else if (chipKey === "ext") {
+						extSelect.value = "";
+					} else if (chipKey === "minSize") {
+						state.minSizeMb = "";
+					} else if (chipKey === "maxSize") {
+						state.maxSizeMb = "";
+					} else if (chipKey === "days") {
+						state.modifiedDays = "";
+					} else if (chipKey === "metadata") {
+						state.metadataMode = "all";
+					}
+
+					markCollectionCustom();
+					syncAdvancedFilterInputsFromState();
+					state.selectedPath = "";
+					persistAssetViewState();
+					refreshAssets({ append: false }).catch(showError);
+				});
+			}
 		}
 
 		async function refreshAssets({ append = false } = {}) {
@@ -1182,6 +2489,29 @@
 			params.set("limit", "300");
 			params.set("offset", String(state.currentOffset));
 			params.set("include_metadata", "false");
+			params.set("sort_by", state.sortBy);
+			params.set("sort_dir", state.sortDir);
+
+			const minSize = parseNonNegativeNumber(state.minSizeMb);
+			if (minSize !== null) {
+				params.set("min_size_bytes", String(Math.floor(minSize * 1024 * 1024)));
+			}
+
+			const maxSize = parseNonNegativeNumber(state.maxSizeMb);
+			if (maxSize !== null) {
+				params.set("max_size_bytes", String(Math.floor(maxSize * 1024 * 1024)));
+			}
+
+			const days = parseNonNegativeNumber(state.modifiedDays);
+			if (days !== null) {
+				const cutoff = (Date.now() / 1000) - (days * 86400);
+				params.set("modified_after_ts", String(cutoff));
+			}
+
+			if (state.metadataMode !== "all") {
+				params.set("metadata_mode", state.metadataMode);
+			}
+
 			if (extSelect.value) {
 				params.set("ext", extSelect.value);
 			}
@@ -1197,25 +2527,256 @@
 			state.hasMore = Boolean(data.has_more);
 			statusText.textContent = `Root: ${data.root_key || data.root || rootSelect.value}`;
 			renderAssets();
+			renderActiveFilterChips();
+			persistAssetViewState();
 		}
 
-		let searchDebounce = null;
+		function isTypingTarget(target) {
+			if (!target || !(target instanceof Element)) {
+				return false;
+			}
+			return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+		}
+
+		function stepSelectedAsset(delta) {
+			if (!state.assets.length) {
+				return;
+			}
+			const currentIndex = Math.max(0, state.assets.findIndex((item) => item.path === state.selectedPath));
+			const nextIndex = Math.max(0, Math.min(state.assets.length - 1, currentIndex + delta));
+			const next = state.assets[nextIndex];
+			if (!next) {
+				return;
+			}
+			setSelectedAsset(next.path, { ensureVisible: true, focusCard: true });
+		}
+
+		function openSelectedAssetFull() {
+			const selected = state.assets.find((item) => item.path === state.selectedPath);
+			if (!selected) {
+				return;
+			}
+			window.open(assetUrl(selected), "_blank", "noopener,noreferrer");
+		}
+
+		async function copySelectedAssetPath() {
+			const selected = state.assets.find((item) => item.path === state.selectedPath);
+			const pathToCopy = selected?.path || "";
+			if (!pathToCopy) {
+				return;
+			}
+
+			try {
+				if (navigator.clipboard && navigator.clipboard.writeText) {
+					await navigator.clipboard.writeText(pathToCopy);
+				} else {
+					const area = document.createElement("textarea");
+					area.value = pathToCopy;
+					document.body.appendChild(area);
+					area.select();
+					document.execCommand("copy");
+					document.body.removeChild(area);
+				}
+				statusText.textContent = "Copied path";
+			} catch (error) {
+				console.warn("Clipboard copy failed", error);
+			}
+		}
+
+		function setupKeyboardShortcuts() {
+			document.addEventListener("keydown", (event) => {
+				if (event.defaultPrevented) {
+					return;
+				}
+				if (event.ctrlKey || event.metaKey || event.altKey) {
+					return;
+				}
+				if (isTypingTarget(event.target)) {
+					return;
+				}
+
+				const key = String(event.key || "").toLowerCase();
+
+				if (key === "f" || key === "/") {
+					event.preventDefault();
+					searchInput.focus();
+					searchInput.select();
+					return;
+				}
+
+				if (event.key === "F5" || key === "r") {
+					event.preventDefault();
+					refreshAssets({ append: false }).catch(showError);
+					return;
+				}
+
+				if (state.activeTab !== "assets") {
+					return;
+				}
+
+				if (key === "j") {
+					event.preventDefault();
+					stepSelectedAsset(1);
+					return;
+				}
+
+				if (key === "k") {
+					event.preventDefault();
+					stepSelectedAsset(-1);
+					return;
+				}
+
+				if (key === "o") {
+					event.preventDefault();
+					openSelectedAssetFull();
+					return;
+				}
+
+				if (key === "y") {
+					event.preventDefault();
+					copySelectedAssetPath();
+				}
+			});
+
+		document.addEventListener("keydown", (event) => {
+			if (event.key === "Escape" && state.selectedPaths.size > 0) {
+				state.selectedPaths.clear();
+				state.lastSelectedIndex = -1;
+				updateSelectionUI();
+				return;
+			}
+			if ((event.ctrlKey || event.metaKey) && event.key === "a" && state.activeTab === "assets") {
+				event.preventDefault();
+				for (const asset of state.assets) {
+					state.selectedPaths.add(asset.path);
+				}
+				updateSelectionUI();
+				return;
+			}
+			if (event.key === "Delete" && state.selectedPaths.size > 0) {
+				event.preventDefault();
+				showDeleteConfirmModal();
+				return;
+			}
+			if ((event.ctrlKey || event.metaKey) && event.key === "c" && state.selectedPaths.size > 0) {
+				event.preventDefault();
+				const paths = Array.from(state.selectedPaths).join("\n");
+				navigator.clipboard.writeText(paths).catch(() => {
+					/* silently ignore clipboard errors */
+				});
+			}
+		});
+}
+
+let assetScrollPersistDebounce = null;
+		tagsTabButton.addEventListener("click", () => {
+			setActiveTab("tags");
+			localStorage.setItem("bubba.assetViewerActiveTab", "tags");
+		});
+		assetsTabButton.addEventListener("click", () => {
+			setActiveTab("assets");
+			localStorage.setItem("bubba.assetViewerActiveTab", "assets");
+		});
+
+
+		tagSearchInput.addEventListener("input", () => {
+			if (tagSearchDebounce) {
+				clearTimeout(tagSearchDebounce);
+			}
+			tagSearchDebounce = setTimeout(() => {
+				applyTagFilters();
+			}, 120);
+		});
+
+		tagCategorySelect.addEventListener("change", () => {
+			applyTagFilters();
+		});
+
+		tagViewSelect.addEventListener("change", () => {
+			setTagViewMode(tagViewSelect.value);
+			applyTagFilters();
+		});
+
+		tagReloadButton.addEventListener("click", () => {
+			state.tagsLoaded = false;
+			state.selectedTagText = "";
+			ensureTagsLoaded(true).catch(showTagError);
+		});
+
 		searchInput.addEventListener("input", () => {
 			if (searchDebounce) {
 				clearTimeout(searchDebounce);
 			}
 			searchDebounce = setTimeout(() => {
+				markCollectionCustom();
+				persistAssetViewState();
 				refreshAssets({ append: false }).catch(showError);
 			}, 220);
 		});
 
 		rootSelect.addEventListener("change", () => {
 			state.selectedPath = "";
+			persistAssetViewState();
 			refreshAssets({ append: false }).catch(showError);
 		});
 
 		extSelect.addEventListener("change", () => {
 			state.selectedPath = "";
+			markCollectionCustom();
+			persistAssetViewState();
+			refreshAssets({ append: false }).catch(showError);
+		});
+
+		sortBySelect.addEventListener("change", () => {
+			state.sortBy = sortBySelect.value === "modified" || sortBySelect.value === "size" || sortBySelect.value === "metadata" ? sortBySelect.value : "name";
+			state.selectedPath = "";
+			markCollectionCustom();
+			persistAssetViewState();
+			refreshAssets({ append: false }).catch(showError);
+		});
+
+		sortDirSelect.addEventListener("change", () => {
+			state.sortDir = sortDirSelect.value === "desc" ? "desc" : "asc";
+			state.selectedPath = "";
+			markCollectionCustom();
+			persistAssetViewState();
+			refreshAssets({ append: false }).catch(showError);
+		});
+
+		collectionSelect.addEventListener("change", () => {
+			applyCollectionPreset(collectionSelect.value);
+			state.selectedPath = "";
+			persistAssetViewState();
+			refreshAssets({ append: false }).catch(showError);
+		});
+
+		const onAdvancedFilterInput = () => {
+			if (advancedFilterDebounce) {
+				clearTimeout(advancedFilterDebounce);
+			}
+			advancedFilterDebounce = setTimeout(() => {
+				state.minSizeMb = String(minSizeInput.value || "").trim();
+				state.maxSizeMb = String(maxSizeInput.value || "").trim();
+				state.modifiedDays = String(modifiedDaysInput.value || "").trim();
+				markCollectionCustom();
+				state.selectedPath = "";
+				persistAssetViewState();
+				refreshAssets({ append: false }).catch(showError);
+			}, 180);
+		};
+
+		minSizeInput.addEventListener("input", onAdvancedFilterInput);
+		maxSizeInput.addEventListener("input", onAdvancedFilterInput);
+		modifiedDaysInput.addEventListener("input", onAdvancedFilterInput);
+
+		const _VALID_METADATA_MODES = new Set(["all", "has_generation", "missing_generation", "has_bubba_metadata", "missing_bubba_metadata", "has_workflow", "missing_workflow"]);
+
+		metadataModeSelect.addEventListener("change", () => {
+			const val = metadataModeSelect.value;
+			state.metadataMode = _VALID_METADATA_MODES.has(val) ? val : "all";
+			markCollectionCustom();
+			state.selectedPath = "";
+			persistAssetViewState();
 			refreshAssets({ append: false }).catch(showError);
 		});
 
@@ -1229,12 +2790,28 @@
 			refreshAssets({ append: false }).catch(showError);
 		});
 
+		advancedFiltersToggle.addEventListener("click", () => {
+			const isOpen = !advancedFiltersPanel.hidden;
+			advancedFiltersPanel.hidden = isOpen;
+			advancedFiltersToggle.setAttribute("aria-expanded", String(!isOpen));
+			advancedFiltersToggle.classList.toggle("is-active", !isOpen);
+			try {
+				localStorage.setItem("bubba_asset_advanced_open", isOpen ? "0" : "1");
+			} catch (_) {}
+		});
+
 		loadMoreButton.addEventListener("click", () => {
 			refreshAssets({ append: true }).catch(showError);
 		});
 
 		assetList.addEventListener("scroll", () => {
 			scheduleVirtualRender();
+			if (assetScrollPersistDebounce) {
+				clearTimeout(assetScrollPersistDebounce);
+			}
+			assetScrollPersistDebounce = setTimeout(() => {
+				persistAssetViewState();
+			}, 120);
 		});
 
 		window.addEventListener("resize", () => {
@@ -1254,8 +2831,88 @@
 			renderDetails(null);
 		}
 
+		function showDeleteConfirmModal() {
+			const deleteModal = document.getElementById("delete-confirm-modal");
+			if (!deleteModal) return;
+			deleteModal.hidden = false;
+			const countSpan = deleteModal.querySelector(".delete-count");
+			if (countSpan) {
+				countSpan.textContent = state.selectedPaths.size;
+			}
+		}
+
+		function hideDeleteConfirmModal() {
+			const deleteModal = document.getElementById("delete-confirm-modal");
+			if (deleteModal) deleteModal.hidden = true;
+		}
+
+		async function confirmDelete() {
+			if (state.selectedPaths.size === 0) return;
+			const root = rootSelect.value;
+			const paths = Array.from(state.selectedPaths);
+			hideDeleteConfirmModal();
+			try {
+				const response = await fetch(`/bubba/assets/delete`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ root, paths }),
+				});
+				if (!response.ok) {
+					throw new Error(`Delete failed: ${response.statusText}`);
+				}
+				state.selectedPaths.clear();
+				state.lastSelectedIndex = -1;
+				updateSelectionUI();
+				await refreshAssets({ append: false });
+			} catch (error) {
+				showError(error);
+			}
+		}
+
 		(async () => {
 			try {
+				loadTagUiState();
+				setupKeyboardShortcuts();
+				const savedAssetViewState = loadAssetViewState();
+				const savedActiveTab = localStorage.getItem("bubba.assetViewerActiveTab");
+				if (savedActiveTab === "tags") {
+					setActiveTab("tags");
+				}
+
+				const savedSortBy = String(savedAssetViewState.sortBy || "").trim().toLowerCase();
+				const savedSortDir = String(savedAssetViewState.sortDir || "").trim().toLowerCase();
+				state.sortBy = savedSortBy === "modified" || savedSortBy === "size" || savedSortBy === "metadata" ? savedSortBy : "name";
+				state.sortDir = savedSortDir === "desc" ? "desc" : "asc";
+				state.collectionPreset = String(savedAssetViewState.collectionPreset || "custom").trim().toLowerCase();
+				if (!["custom", "recent_1d", "recent_7d", "large_files", "has_generation", "missing_generation"].includes(state.collectionPreset)) {
+					state.collectionPreset = "custom";
+				}
+				state.minSizeMb = String(savedAssetViewState.minSizeMb || "").trim();
+				state.maxSizeMb = String(savedAssetViewState.maxSizeMb || "").trim();
+				state.modifiedDays = String(savedAssetViewState.modifiedDays || "").trim();
+				state.metadataMode = String(savedAssetViewState.metadataMode || "all").trim().toLowerCase();
+				if (!_VALID_METADATA_MODES.has(state.metadataMode)) {
+					state.metadataMode = "all";
+				}
+				sortBySelect.value = state.sortBy;
+				sortDirSelect.value = state.sortDir;
+				syncAdvancedFilterInputsFromState();
+
+				try {
+					const advancedOpen = localStorage.getItem("bubba_asset_advanced_open") === "1";
+					advancedFiltersPanel.hidden = !advancedOpen;
+					advancedFiltersToggle.setAttribute("aria-expanded", String(advancedOpen));
+					advancedFiltersToggle.classList.toggle("is-active", advancedOpen);
+				} catch (_) {}
+
+				const savedSearch = typeof savedAssetViewState.search === "string" ? savedAssetViewState.search : "";
+				searchInput.value = savedSearch;
+				const savedExt = typeof savedAssetViewState.ext === "string" ? savedAssetViewState.ext : "";
+				extSelect.value = [...extSelect.options].some((option) => option.value === savedExt) ? savedExt : "";
+				state.selectedPath = typeof savedAssetViewState.selectedPath === "string" ? savedAssetViewState.selectedPath : "";
+				const savedScrollTop = Number(savedAssetViewState.scrollTop);
+				state.restoreScrollTop = Number.isFinite(savedScrollTop) ? Math.max(0, savedScrollTop) : null;
+
 				const savedDensity = localStorage.getItem("bubba.assetViewerDensity");
 				if (savedDensity && savedDensity in DENSITY_CONFIG) {
 					state.cardDensity = savedDensity;
@@ -1274,6 +2931,12 @@
 				applyDetailsWidth(false);
 				applyPreviewHeight(false);
 				await loadRoots();
+
+				const savedRoot = typeof savedAssetViewState.root === "string" ? savedAssetViewState.root : "";
+				if (savedRoot && state.roots.some((root) => (root.key || root.path) === savedRoot)) {
+					rootSelect.value = savedRoot;
+				}
+
 				await refreshAssets({ append: false });
 			} catch (error) {
 				showError(error);
