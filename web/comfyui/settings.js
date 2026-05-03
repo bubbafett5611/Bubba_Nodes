@@ -144,25 +144,6 @@ app.registerExtension({
 					return container;
 				},
 			});
-
-			// Asset Viewer
-			app.ui.settings.addSetting({
-				id: "bubba.AssetViewer",
-				name: "Bubba: Asset Viewer",
-				defaultValue: "",
-				type() {
-					const btn = document.createElement("button");
-					btn.textContent = "Open Standalone Page";
-					btn.onclick = () => {
-						const url = `${window.location.origin}/extensions/bubba_nodes/comfyui/asset_viewer.html`;
-						window.open(url, "_blank", "noopener,noreferrer");
-					};
-					const container = document.createElement("div");
-					container.appendChild(btn);
-					return container;
-				},
-			});
-
 			console.log("[Bubba] Setup complete");
 		} catch (error) {
 			console.error("[Bubba] Setup error:", error);
