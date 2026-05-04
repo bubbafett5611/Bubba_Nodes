@@ -11,7 +11,7 @@ from ..models import BubbaMetadata
 
 class BubbaKSampler:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "model": (
@@ -94,19 +94,27 @@ class BubbaKSampler:
                         "tooltip": "Optional metadata object to update with sampler info and seed.",
                     },
                 ),
+                "vae": (
+                    "VAE",
+                    {
+                        "tooltip": "Optional VAE used to decode the latent into an image output.",
+                    },
+                ),
             },
         }
 
-    RETURN_TYPES = ("LATENT", "STRING", "BUBBA_METADATA")
-    RETURN_NAMES = ("LATENT", "INFO", "metadata")
+    RETURN_TYPES = ("LATENT", "STRING", "BUBBA_METADATA", "IMAGE")
+    RETURN_NAMES = ("LATENT", "INFO", "metadata", "image")
     FUNCTION = "sample"
     CATEGORY = "Bubba Nodes/Generation"
-    DESCRIPTION = "Runs KSampler, outputs formatted info text, and updates metadata when provided."
+    DESCRIPTION = "Runs KSampler, outputs latent+info, and updates metadata when provided."
 
     @staticmethod
     def _format_info(elapsed_seconds, seed, steps, cfg, sampler_name, scheduler, denoise):
-        return (f"Time: {elapsed_seconds:.3f}s  Seed: {seed}  Steps: {steps}  CFG: {cfg}"
-                f"  Sampler: {sampler_name}  Scheduler: {scheduler}  Denoise: {denoise}")
+        return (
+            f"Time: {elapsed_seconds:.3f}s  Seed: {seed}  Steps: {steps}  CFG: {cfg}"
+            f"  Sampler: {sampler_name}  Scheduler: {scheduler}  Denoise: {denoise}"
+        )
 
     def sample(
         self,
@@ -121,6 +129,7 @@ class BubbaKSampler:
         latent_image,
         denoise=1.0,
         metadata=None,
+        vae=None,
     ):
         start_time = time.perf_counter()
         latent = common_ksampler(
@@ -146,7 +155,6 @@ class BubbaKSampler:
             denoise,
         )
         updated_metadata = BubbaMetadata.coerce(metadata).updated(
-            sampler_info=info,
             sampler_time_seconds=elapsed_seconds,
             seed=seed,
             steps=steps,
@@ -155,4 +163,12 @@ class BubbaKSampler:
             scheduler=scheduler,
             denoise=denoise,
         )
-        return (latent, info, updated_metadata)
+        image = None
+        if vae is not None:
+            latent_samples = latent["samples"]
+            if getattr(latent_samples, "is_nested", False):
+                latent_samples = latent_samples.unbind()[0]
+            image = vae.decode(latent_samples)
+            if len(image.shape) == 5:
+                image = image.reshape(-1, image.shape[-3], image.shape[-2], image.shape[-1])
+        return (latent, info, updated_metadata, image)

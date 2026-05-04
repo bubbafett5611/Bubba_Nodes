@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 
 import torch
 
@@ -19,82 +20,113 @@ class DimensionGroup:
     presets: tuple[DimensionPreset, ...]
 
 
-_DIMENSION_GROUPS = (
+_RAW_DIMENSION_GROUPS = (
     DimensionGroup(
-        heading="Square",
+        heading="1:1",
         presets=(
-            DimensionPreset("Tiny", 512, 512),
-            DimensionPreset("Small", 768, 768),
-            DimensionPreset("Medium", 1024, 1024),
-            DimensionPreset("Large", 1536, 1536),
+            DimensionPreset("SD 1.5", 512, 512),
+            DimensionPreset("SD 2.x", 768, 768),
+            DimensionPreset("SDXL", 1024, 1024),
+            DimensionPreset("SDXL Large", 1536, 1536),
         ),
     ),
     DimensionGroup(
         heading="16:9",
         presets=(
-            DimensionPreset("Tiny", 896, 512),
-            DimensionPreset("Small", 1024, 576),
-            DimensionPreset("Medium", 1344, 768),
-            DimensionPreset("Large", 1536, 864),
+            DimensionPreset("SD 1.5", 896, 512),
+            DimensionPreset("SD 2.x", 1024, 576),
+            DimensionPreset("SDXL", 1344, 768),
+            DimensionPreset("SDXL Large", 1536, 864),
         ),
     ),
     DimensionGroup(
         heading="4:3",
         presets=(
-            DimensionPreset("Tiny", 704, 512),
-            DimensionPreset("Small", 1024, 768),
-            DimensionPreset("Medium", 1280, 960),
-            DimensionPreset("Large", 1536, 1152),
+            DimensionPreset("SD 1.5", 704, 512),
+            DimensionPreset("SD 2.x", 1024, 768),
+            DimensionPreset("SDXL", 1280, 960),
+            DimensionPreset("SDXL Large", 1536, 1152),
         ),
     ),
     DimensionGroup(
         heading="3:2",
         presets=(
-            DimensionPreset("Tiny", 768, 512),
-            DimensionPreset("Small", 960, 640),
-            DimensionPreset("Medium", 1152, 768),
-            DimensionPreset("Large", 1536, 1024),
+            DimensionPreset("SD 1.5", 768, 512),
+            DimensionPreset("SD 2.x", 960, 640),
+            DimensionPreset("SDXL", 1152, 768),
+            DimensionPreset("SDXL Native", 1216, 832),
+            DimensionPreset("SDXL Large", 1536, 1024),
         ),
     ),
     DimensionGroup(
         heading="21:9",
         presets=(
-            DimensionPreset("Tiny", 1152, 512),
-            DimensionPreset("Small", 1024, 448),
-            DimensionPreset("Medium", 1344, 576),
-            DimensionPreset("Large", 1536, 640),
+            DimensionPreset("SD 1.5", 1024, 448),
+            DimensionPreset("SD 2.x", 1152, 512),
+            DimensionPreset("SDXL", 1344, 576),
+            DimensionPreset("SDXL Large", 1536, 640),
+        ),
+    ),
+    DimensionGroup(
+        heading="Other",
+        presets=(
+            DimensionPreset("SDXL", 1040, 800),
+            DimensionPreset("SDXL", 1056, 832),
+            DimensionPreset("SDXL", 1088, 832),
+            DimensionPreset("SDXL", 1040, 896),
+            DimensionPreset("SDXL", 1152, 896),
+            DimensionPreset("SDXL", 1472, 704),
+            DimensionPreset("SDXL", 1120, 928),
         ),
     ),
 )
 
 
-def _preset_option_label(preset: DimensionPreset) -> str:
-    return f"{preset.label} ({preset.width}x{preset.height})"
+def _dedupe_dimension_groups(groups: tuple[DimensionGroup, ...]) -> tuple[DimensionGroup, ...]:
+    seen_dimensions: set[tuple[int, int]] = set()
+    deduped_groups: list[DimensionGroup] = []
+
+    for group in groups:
+        unique_presets: list[DimensionPreset] = []
+        for preset in group.presets:
+            key = (preset.width, preset.height)
+            if key in seen_dimensions:
+                continue
+            seen_dimensions.add(key)
+            unique_presets.append(preset)
+
+        if unique_presets:
+            deduped_groups.append(DimensionGroup(group.heading, tuple(unique_presets)))
+
+    return tuple(deduped_groups)
 
 
-_DIMENSION_OPTIONS = [
-    option
-    for group in _DIMENSION_GROUPS
-    for option in ([f"--- {group.heading} ---"] + [_preset_option_label(preset) for preset in group.presets])
-]
+_DIMENSION_GROUPS = _dedupe_dimension_groups(_RAW_DIMENSION_GROUPS)
+
+
+def _preset_option_label(preset: DimensionPreset, group_heading: str) -> str:
+    return f"{group_heading} | {preset.width}x{preset.height} - {preset.label}"
+
+
+_DIMENSION_OPTIONS = [_preset_option_label(preset, group.heading) for group in _DIMENSION_GROUPS for preset in group.presets]
 
 
 _DIMENSIONS_BY_OPTION = {
-    _preset_option_label(preset): (preset.width, preset.height)
-    for group in _DIMENSION_GROUPS
-    for preset in group.presets
+    _preset_option_label(preset, group.heading): (preset.width, preset.height) for group in _DIMENSION_GROUPS for preset in group.presets
 }
+
+_LEGACY_DIMENSION_RE = re.compile(r"\((\d+)x(\d+)\)")
 
 
 class BubbaEmptyLatentBySize:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "size": (
                     _DIMENSION_OPTIONS,
                     {
-                        "default": "Medium (1024x1024)",
+                        "default": "1:1 | 1024x1024 - SDXL",
                         "tooltip": "Preset output dimensions from baked-in size list.",
                     },
                 ),
@@ -126,10 +158,15 @@ class BubbaEmptyLatentBySize:
 
     @staticmethod
     def _resolve_dimensions(size: str, invert_aspect_ratio: bool) -> tuple[int, int]:
-        if size not in _DIMENSIONS_BY_OPTION:
-            raise ValueError(f"Invalid size preset selection: {size}")
+        if size in _DIMENSIONS_BY_OPTION:
+            width, height = _DIMENSIONS_BY_OPTION[size]
+        else:
+            # Backward compatibility for older workflow values like "Medium (1344x768)".
+            match = _LEGACY_DIMENSION_RE.search(str(size or ""))
+            if not match:
+                raise ValueError(f"Invalid size preset selection: {size}")
+            width, height = int(match.group(1)), int(match.group(2))
 
-        width, height = _DIMENSIONS_BY_OPTION[size]
         if invert_aspect_ratio:
             width, height = height, width
         return (width, height)

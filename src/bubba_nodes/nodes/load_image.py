@@ -27,7 +27,7 @@ from ..models import BubbaMetadata
 
 class BubbaLoadImageWithMetadata:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         if folder_paths is not None and hasattr(folder_paths, "get_input_directory"):
             input_dir = folder_paths.get_input_directory()
             files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
@@ -61,7 +61,9 @@ class BubbaLoadImageWithMetadata:
     RETURN_NAMES = ("image", "mask", "metadata", "metadata_text")
     FUNCTION = "load_image"
     CATEGORY = "Bubba Nodes/Image/Load"
-    DESCRIPTION = "Loads an image using ComfyUI LoadImage behavior and returns mask plus embedded Bubba metadata (PNG text key 'bubba_metadata')."
+    DESCRIPTION = (
+        "Loads an image using ComfyUI LoadImage behavior and returns mask plus embedded Bubba metadata (PNG text key 'bubba_metadata')."
+    )
 
     @staticmethod
     def _call_pillow(func, *args):
@@ -74,6 +76,12 @@ class BubbaLoadImageWithMetadata:
         if comfy is not None and hasattr(comfy, "model_management") and hasattr(comfy.model_management, "intermediate_dtype"):
             return comfy.model_management.intermediate_dtype()
         return torch.float32
+
+    @staticmethod
+    def _intermediate_device():
+        if comfy is not None and hasattr(comfy, "model_management") and hasattr(comfy.model_management, "intermediate_device"):
+            return comfy.model_management.intermediate_device()
+        return "cpu"
 
     @classmethod
     def _resolve_image_path(cls, image: str) -> str:
@@ -102,6 +110,7 @@ class BubbaLoadImageWithMetadata:
         width = None
         height = None
         dtype = self._intermediate_dtype()
+        device = self._intermediate_device()
 
         # TODO(optimize): Add optional max_frames input and early termination for very large animated inputs.
         for frame in ImageSequence.Iterator(img):
@@ -118,7 +127,7 @@ class BubbaLoadImageWithMetadata:
                 continue
 
             image_np = np.asarray(rgb).astype(np.float32) / 255.0
-            image_tensor = torch.from_numpy(image_np)[None,].to(dtype=dtype)
+            image_tensor = torch.from_numpy(image_np)[None,].to(device=device, dtype=dtype)
 
             if "A" in frame.getbands():
                 mask = np.asarray(frame.getchannel("A")).astype(np.float32) / 255.0
@@ -130,7 +139,7 @@ class BubbaLoadImageWithMetadata:
                 mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
 
             output_images.append(image_tensor)
-            output_masks.append(mask.unsqueeze(0).to(dtype=dtype))
+            output_masks.append(mask.unsqueeze(0).to(device=device, dtype=dtype))
 
             if img.format == "MPO":
                 break

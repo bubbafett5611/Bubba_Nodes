@@ -11,7 +11,30 @@ __all__ = [
 
 __author__ = """BubbaNodes"""
 __email__ = "metalgfx@gmail.com"
-__version__ = "0.0.1"
+__version__ = "1.0.0"
+
+try:
+    from .src.bubba_nodes.server import (
+        register_checkpoint_preview_route,
+        register_autocomplete_routes,
+    )
+except Exception:
+    register_checkpoint_preview_route = None
+    register_autocomplete_routes = None
+
+if register_checkpoint_preview_route is not None:
+    try:
+        register_checkpoint_preview_route()
+    except Exception:
+        # Keep package import resilient when runtime web server is unavailable.
+        pass
+
+if register_autocomplete_routes is not None:
+    try:
+        register_autocomplete_routes()
+    except Exception:
+        # Keep package import resilient when runtime web server is unavailable.
+        pass
 
 # Import with graceful handling for test environments where ComfyUI's nodes module may not be available
 try:

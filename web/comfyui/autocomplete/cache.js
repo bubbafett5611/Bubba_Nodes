@@ -233,7 +233,7 @@ export function getWordList() {
 		key: cacheKey,
 		words: deduped,
 	};
-	invalidateAutocompleteCaches();
+	invalidateSearchIndexCache();
 	return deduped;
 }
 

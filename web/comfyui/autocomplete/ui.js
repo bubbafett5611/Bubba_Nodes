@@ -4,6 +4,8 @@ import { getDanbooruCategoryLabel, formatNumber, getSearchQueryVariations } from
 import { getSearchIndex, findMatchesFromIndex, findMatchMetadata } from './search.js';
 import { getWordList, ensureEmbeddingCacheSeeded } from './cache.js';
 
+const WORKER_RESPONSE_TIMEOUT_MS = 10000;
+
 // Styles
 {
 	const style = document.createElement("style");
@@ -56,7 +58,7 @@ export class BubbaTextAutoComplete {
 		this.menuEl.style.display = "none";
 		this.items = [];
 		this.selectedIndex = -1;
-		this.searchDebounceMs = 16;
+		this.searchDebounceMs = 0;
 		this.searchTimer = null;
 		this.latestQuery = "";
 		this.previousQuery = "";
@@ -65,6 +67,11 @@ export class BubbaTextAutoComplete {
 		this.searchInFlight = false;
 		this.currentSearchRevision = 0;
 		this.pendingSearchRevision = 0;
+		this.searchWorker = null;
+		this.searchWorkerEnabled = false;
+		this.workerWordsRef = null;
+		this.workerRequestSeq = 0;
+		this.workerPending = new Map();
 
 		this.onInput = this.onInput.bind(this);
 		this.onInputImmediate = this.onInputImmediate.bind(this);
@@ -77,6 +84,110 @@ export class BubbaTextAutoComplete {
 		this.inputEl.addEventListener("keydown", this.onKeyDown);
 		this.inputEl.addEventListener("blur", this.onBlur);
 		this.inputEl.addEventListener("focus", this.onFocus);
+		this.initializeSearchWorker();
+	}
+
+	initializeSearchWorker() {
+		if (typeof Worker === "undefined") {
+			return;
+		}
+		try {
+			this.searchWorker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+			this.searchWorkerEnabled = true;
+			this.searchWorker.onmessage = (event) => {
+				const message = event?.data || {};
+				const pending = this.workerPending.get(message.requestId);
+				if (!pending) {
+					return;
+				}
+				this.workerPending.delete(message.requestId);
+				if (message.type === "error") {
+					pending.reject(new Error(String(message.error || "worker_error")));
+					return;
+				}
+				pending.resolve(message);
+			};
+			this.searchWorker.onerror = (event) => {
+				console.warn("Bubba Autocomplete: worker crashed, falling back to main-thread search.", event?.message || event);
+				this.disableSearchWorker();
+			};
+			// Pre-warm: build the search index in the worker during idle time so it's ready before first keystroke
+			const prewarm = () => this.syncWorkerWords(getWordList()).catch(() => {});
+			if (typeof requestIdleCallback !== "undefined") {
+				requestIdleCallback(prewarm, { timeout: 3000 });
+			} else {
+				setTimeout(prewarm, 500);
+			}
+		} catch (error) {
+			console.warn("Bubba Autocomplete: failed to initialize worker, falling back to main-thread search.", error);
+			this.disableSearchWorker();
+		}
+	}
+
+	disableSearchWorker() {
+		this.searchWorkerEnabled = false;
+		this.workerWordsRef = null;
+		if (this.searchWorker) {
+			try {
+				this.searchWorker.terminate();
+			} catch {
+				// ignore worker termination errors
+			}
+		}
+		this.searchWorker = null;
+		for (const pending of this.workerPending.values()) {
+			pending.reject(new Error("worker_disabled"));
+		}
+		this.workerPending.clear();
+	}
+
+	postWorkerMessage(payload, timeoutMs = WORKER_RESPONSE_TIMEOUT_MS) {
+		if (!this.searchWorkerEnabled || !this.searchWorker) {
+			return Promise.reject(new Error("worker_unavailable"));
+		}
+		const requestId = ++this.workerRequestSeq;
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.workerPending.delete(requestId);
+				reject(new Error("worker_timeout"));
+			}, timeoutMs);
+			this.workerPending.set(requestId, {
+				resolve: (message) => {
+					clearTimeout(timer);
+					resolve(message);
+				},
+				reject: (error) => {
+					clearTimeout(timer);
+					reject(error);
+				},
+			});
+			this.searchWorker.postMessage({ ...payload, requestId });
+		});
+	}
+
+	async syncWorkerWords(words) {
+		if (!this.searchWorkerEnabled || !this.searchWorker) {
+			return false;
+		}
+		if (this.workerWordsRef === words) {
+			return true;
+		}
+		await this.postWorkerMessage({ type: "syncWords", words });
+		this.workerWordsRef = words;
+		return true;
+	}
+
+	async queryWorker(words, queryVariations, limit) {
+		await this.syncWorkerWords(words);
+		const message = await this.postWorkerMessage({
+			type: "query",
+			queryVariations,
+			limit,
+		});
+		return {
+			results: Array.isArray(message.results) ? message.results : [],
+			matchedCount: Number.isFinite(message.matchedCount) ? message.matchedCount : 0,
+		};
 	}
 
 	getTokenStart(value, caret) {
@@ -165,7 +276,7 @@ export class BubbaTextAutoComplete {
 		if (!item?.text) {
 			return;
 		}
-		const text = item.text;
+		const text = BubbaTextAutoComplete.replaceUnderscores ? item.text.replaceAll("_", " ") : item.text;
 		const value = this.inputEl.value;
 		const caret = this.inputEl.selectionStart ?? value.length;
 		const { tokenStart, raw } = this.getQuery();
@@ -195,6 +306,52 @@ export class BubbaTextAutoComplete {
 			return 1;
 		}
 		return 0;
+	}
+
+	compareMatches(a, b) {
+		const aBucket = this.getMatchBucket(a.matchScore);
+		const bBucket = this.getMatchBucket(b.matchScore);
+		if (aBucket !== bBucket) {
+			return bBucket - aBucket;
+		}
+		const aCount = typeof a.count === "number" ? a.count : -1;
+		const bCount = typeof b.count === "number" ? b.count : -1;
+		if (aCount !== bCount) {
+			return bCount - aCount;
+		}
+		const aScore = Number.isFinite(a.matchScore) ? a.matchScore : 0;
+		const bScore = Number.isFinite(b.matchScore) ? b.matchScore : 0;
+		if (aScore !== bScore) {
+			return bScore - aScore;
+		}
+		return a.text.localeCompare(b.text);
+	}
+
+	selectTopMatches(matched, limit) {
+		if (limit <= 0 || !Array.isArray(matched) || matched.length === 0) {
+			return [];
+		}
+
+		const top = [];
+		for (const item of matched) {
+			let inserted = false;
+			for (let i = 0; i < top.length; i += 1) {
+				if (this.compareMatches(item, top[i]) < 0) {
+					top.splice(i, 0, item);
+					inserted = true;
+					break;
+				}
+			}
+			if (!inserted && top.length < limit) {
+				top.push(item);
+				inserted = true;
+			}
+			if (inserted && top.length > limit) {
+				top.pop();
+			}
+		}
+
+		return top;
 	}
 
 	onInput() {
@@ -244,21 +401,12 @@ export class BubbaTextAutoComplete {
 
 		this.latestQuery = query;
 
-		// Schedule search asynchronously to keep UI responsive
 		this.pendingSearchRevision += 1;
 		const searchRevision = this.pendingSearchRevision;
-		this.scheduleAsyncSearch(query, searchRevision);
+		this.performSearchAsync(query, searchRevision);
 	}
 
-	scheduleAsyncSearch(query, searchRevision) {
-		if (typeof requestAnimationFrame !== "undefined") {
-			requestAnimationFrame(() => this.performSearchAsync(query, searchRevision));
-		} else {
-			setTimeout(() => this.performSearchAsync(query, searchRevision), 0);
-		}
-	}
-
-	performSearchAsync(query, searchRevision) {
+	async performSearchAsync(query, searchRevision) {
 		// Skip if a newer search has already been scheduled
 		if (searchRevision < this.pendingSearchRevision) {
 			return;
@@ -274,57 +422,63 @@ export class BubbaTextAutoComplete {
 		try {
 			const queryVariations = getSearchQueryVariations(query);
 			const words = getWordList();
-			const index = getSearchIndex(words);
+			let results = [];
+			let matchedCount = 0;
 
-			let candidatePool = null;
-			if (
-				this.previousQuery &&
-				query.startsWith(this.previousQuery) &&
-				Array.isArray(this.previousMatchedPool) &&
-				this.previousMatchedPool.length > 0
-			) {
-				candidatePool = this.previousMatchedPool;
+			if (this.searchWorkerEnabled) {
+				try {
+					const workerResult = await this.queryWorker(words, queryVariations, BubbaTextAutoComplete.suggestionLimit);
+					results = workerResult.results;
+					matchedCount = workerResult.matchedCount;
+				} catch (error) {
+					console.warn("Bubba Autocomplete: worker query failed, falling back to main-thread search.", error);
+					this.disableSearchWorker();
+				}
 			}
 
-			const matched = (candidatePool
-				? candidatePool
-						.map((item) => {
-							const match = findMatchMetadata(item, queryVariations);
-							if (!match) {
-								return null;
-							}
-							return {
-								...item,
-								matchScore: match.score,
-								matchedAlias: match.matchedAlias,
-							};
-						})
-						.filter(Boolean)
-				: findMatchesFromIndex(index, queryVariations)
-			)
-				.sort((a, b) => {
-					const aBucket = this.getMatchBucket(a.matchScore);
-					const bBucket = this.getMatchBucket(b.matchScore);
-					if (bBucket !== aBucket) {
-						return bBucket - aBucket;
-					}
-					const aCount = typeof a.count === "number" ? a.count : -1;
-					const bCount = typeof b.count === "number" ? b.count : -1;
-					if (bCount !== aCount) {
-						return bCount - aCount;
-					}
-					const aScore = Number.isFinite(a.matchScore) ? a.matchScore : 0;
-					const bScore = Number.isFinite(b.matchScore) ? b.matchScore : 0;
-					if (bScore !== aScore) {
-						return bScore - aScore;
-					}
-					return a.text.localeCompare(b.text);
-				});
+			if (!this.searchWorkerEnabled) {
+				const index = getSearchIndex(words);
 
-			this.previousQuery = query;
-			this.previousMatchedPool = matched;
+				let candidatePool = null;
+				if (
+					this.previousQuery &&
+					query.startsWith(this.previousQuery) &&
+					Array.isArray(this.previousMatchedPool) &&
+					this.previousMatchedPool.length > 0
+				) {
+					candidatePool = this.previousMatchedPool;
+				}
 
-			const results = matched.slice(0, BubbaTextAutoComplete.suggestionLimit);
+				const matched = (candidatePool
+					? candidatePool
+							.map((item) => {
+								const match = findMatchMetadata(item, queryVariations);
+								if (!match) {
+									return null;
+								}
+								return {
+									...item,
+									matchScore: match.score,
+									matchedAlias: match.matchedAlias,
+								};
+							})
+							.filter(Boolean)
+					: findMatchesFromIndex(index, queryVariations)
+				);
+				matchedCount = matched.length;
+				results = this.selectTopMatches(matched, BubbaTextAutoComplete.suggestionLimit);
+
+				if (matched.length <= 3000) {
+					this.previousQuery = query;
+					this.previousMatchedPool = matched;
+				} else {
+					this.previousQuery = "";
+					this.previousMatchedPool = null;
+				}
+			} else {
+				this.previousQuery = "";
+				this.previousMatchedPool = null;
+			}
 
 			// Only show results if this is still the latest search
 			if (searchRevision === this.pendingSearchRevision && document.activeElement === this.inputEl) {
@@ -337,7 +491,7 @@ export class BubbaTextAutoComplete {
 			// Ensure we process the latest query if keystrokes happened while searching.
 			if (this.currentSearchRevision < this.pendingSearchRevision && this.latestQuery) {
 				const latestRevision = this.pendingSearchRevision;
-				this.scheduleAsyncSearch(this.latestQuery, latestRevision);
+				queueMicrotask(() => this.performSearchAsync(this.latestQuery, latestRevision));
 			}
 		}
 	}
@@ -385,6 +539,7 @@ export class BubbaTextAutoComplete {
 
 BubbaTextAutoComplete.enabled = true;
 BubbaTextAutoComplete.suggestionLimit = 20;
+BubbaTextAutoComplete.replaceUnderscores = false;
 
 function resolveGroup(node, inputName, inputData) {
 	const config = inputData?.[1]?.["bubba.autocomplete"];

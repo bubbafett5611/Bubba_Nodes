@@ -74,10 +74,10 @@ Builds prompts from sections and writes results back into metadata.
 
 | Output | Type | Description |
 |--------|------|-------------|
-| metadata | BUBBA_METADATA | Updated metadata with positive_prompt, negative_prompt, prompt_sections. |
+| metadata | BUBBA_METADATA | Updated metadata with positive_prompt and negative_prompt. |
 | positive_prompt | STRING | Final positive prompt text. |
 | negative_prompt | STRING | Final negative prompt text. |
-| sections | STRING | Section block text saved into metadata.prompt_sections. |
+| sections | STRING | Section block text output for display/debug use. |
 | positive_conditioning | CONDITIONING | Encoded from positive_prompt. |
 | negative_conditioning | CONDITIONING | Encoded from negative_prompt. |
 
@@ -212,7 +212,6 @@ Collects metadata fields into one typed object.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | model_name | STRING | Model/checkpoint name. |
-| sampler_info | STRING | Sampler/settings summary string. |
 | positive_prompt | STRING | Positive prompt text. |
 | negative_prompt | STRING | Negative prompt text. |
 | seed | INT | Generation seed. |

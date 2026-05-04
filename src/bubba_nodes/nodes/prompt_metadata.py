@@ -15,7 +15,7 @@ class BubbaMetadataPromptBuilder:
     """Builds prompts from sections and adds them to metadata."""
 
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "metadata": (
@@ -133,6 +133,17 @@ class BubbaMetadataPromptBuilder:
                     },
                 ),
             },
+            "optional": {
+                "clip_skip": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 128,
+                        "tooltip": "Number of CLIP encoder layers to skip (0 = no skip).",
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = ("BUBBA_METADATA", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
@@ -157,6 +168,7 @@ class BubbaMetadataPromptBuilder:
         format_mode,
         cleanup,
         dedupe,
+        clip_skip=0,
     ):
         # TODO(optimize): Short-circuit CLIP encoding when prompts are unchanged from incoming metadata.
         # Coerce metadata to ensure it's the right type
@@ -186,7 +198,7 @@ class BubbaMetadataPromptBuilder:
         updated_metadata = current_metadata.updated(
             positive_prompt=positive_prompt,
             negative_prompt=negative_prompt,
-            prompt_sections=sections_text,
+            clip_skip=clip_skip,
         )
 
         positive_conditioning = encode_conditioning(clip, positive_prompt)

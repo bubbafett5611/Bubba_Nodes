@@ -14,19 +14,25 @@ class BubbaFilename:
     """
 
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
-                "character_name": ("STRING", {
-                    "multiline": False,
-                    "default": "Character",
-                    "tooltip": "Used as the folder name in the output path.",
-                }),
-                "scene_name": ("STRING", {
-                    "multiline": False,
-                    "default": "Scene",
-                    "tooltip": "Used as the image/file name in the output path.",
-                }),
+                "character_name": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "Character",
+                        "tooltip": "Used as the folder name in the output path.",
+                    },
+                ),
+                "scene_name": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "Scene",
+                        "tooltip": "Used as the image/file name in the output path.",
+                    },
+                ),
             },
         }
 
@@ -40,7 +46,7 @@ class BubbaFilename:
         def sanitize(name, fallback):
             name = name.strip()
             name = name.replace(" ", "_")
-            name = INVALID_PATH_CHARS.sub('', name)
+            name = INVALID_PATH_CHARS.sub("", name)
             return name or fallback
 
         folder = sanitize(character_name, "Character")

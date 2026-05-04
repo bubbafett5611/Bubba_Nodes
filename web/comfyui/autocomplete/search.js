@@ -2,6 +2,9 @@
 
 import { normalizeSearchText, normalizeAliases } from './utils.js';
 
+const MAX_PREFIX_BUCKET_LENGTH = 6;
+const MAX_CANDIDATES = 12000;
+
 export function scoreTextMatch(rawText, queryVariations) {
 	const text = String(rawText || "").toLowerCase();
 	if (!text || !queryVariations.length) {
@@ -88,9 +91,32 @@ function addPrefixBuckets(map, key, index) {
 	if (!key) {
 		return;
 	}
-	addIndexBucket(map, key.slice(0, 1), index);
-	addIndexBucket(map, key.slice(0, 2), index);
-	addIndexBucket(map, key.slice(0, 3), index);
+	const limit = Math.min(MAX_PREFIX_BUCKET_LENGTH, key.length);
+	for (let len = 1; len <= limit; len += 1) {
+		addIndexBucket(map, key.slice(0, len), index);
+	}
+}
+
+function findBestBucket(index, query) {
+	let bestBucket = null;
+	const sources = [query.norm, query.compact];
+	for (const source of sources) {
+		if (!source) {
+			continue;
+		}
+		const maxLen = Math.min(MAX_PREFIX_BUCKET_LENGTH, source.length);
+		for (let len = maxLen; len >= 1; len -= 1) {
+			const bucket = index.prefixBuckets.get(source.slice(0, len));
+			if (!bucket || !bucket.length) {
+				continue;
+			}
+			if (!bestBucket || bucket.length < bestBucket.length) {
+				bestBucket = bucket;
+			}
+			break;
+		}
+	}
+	return bestBucket;
 }
 
 function collectTokenKeys(values) {
@@ -164,23 +190,18 @@ export function findMatchesFromIndex(index, queryVariations) {
 
 	const candidateIndices = new Set();
 	for (const query of preparedQueries) {
-		const keys = [
-			query.norm.slice(0, 3),
-			query.norm.slice(0, 2),
-			query.norm.slice(0, 1),
-			query.compact.slice(0, 3),
-			query.compact.slice(0, 2),
-			query.compact.slice(0, 1),
-		].filter(Boolean);
-
-		for (const key of keys) {
-			const bucket = index.prefixBuckets.get(key);
-			if (!bucket) {
-				continue;
+		const bucket = findBestBucket(index, query);
+		if (!bucket) {
+			continue;
+		}
+		for (let i = 0; i < bucket.length; i += 1) {
+			candidateIndices.add(bucket[i]);
+			if (candidateIndices.size >= MAX_CANDIDATES) {
+				break;
 			}
-			for (let i = 0; i < bucket.length; i += 1) {
-				candidateIndices.add(bucket[i]);
-			}
+		}
+		if (candidateIndices.size >= MAX_CANDIDATES) {
+			break;
 		}
 	}
 

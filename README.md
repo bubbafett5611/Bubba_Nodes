@@ -4,16 +4,18 @@ Custom ComfyUI nodes for prompt authoring, prompt inspection, metadata-first wor
 
 ## What Is Included
 
-This extension currently registers 15 nodes:
+This extension currently registers 17 nodes:
 
 - Bubba Filename Builder
 - Bubba Empty Latent (Preset Sizes)
 - Bubba Load Image (With Metadata)
 - Bubba Checkpoint Loader
+- Bubba Combo Loader
 - Bubba KSampler
 - Bubba Save Image
 - Bubba Add Text Overlay
 - Bubba Add Text Overlay (Metadata)
+- Bubba Watermark Overlay
 - Bubba Metadata Bundle
 - Bubba Metadata Debug
 - Bubba Metadata Update
@@ -84,7 +86,7 @@ If you use a dedicated ComfyUI venv/conda env, run that command from inside the 
 ## Metadata Notes
 
 - Metadata is represented by the typed BUBBA_METADATA object.
-- Metadata includes model_name, sampler_info, positive_prompt, negative_prompt, seed, filepath, and prompt_sections.
+- Metadata includes model_name, clip_skip, sampler_time_seconds, steps, cfg, sampler_name, scheduler, denoise, positive_prompt, negative_prompt, seed, and filepath.
 - Bubba Save Image embeds metadata into PNG text under bubba_metadata.
 - Bubba Load Image (With Metadata) reads bubba_metadata from PNG text and reconstructs BUBBA_METADATA.
 

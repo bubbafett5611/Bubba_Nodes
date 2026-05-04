@@ -12,6 +12,7 @@ from .prompting import (
     split_prompt_tokens,
 )
 from .image_ops import pil_to_tensor_like, tensor_sample_to_pil
+from .checkpointing import checkpoint_display_name
 from .prompt_analysis import (
     CONFLICT_PAIRS,
     find_duplicate_prompt_tokens,
@@ -33,6 +34,7 @@ __all__ = [
     "split_prompt_tokens",
     "pil_to_tensor_like",
     "tensor_sample_to_pil",
+    "checkpoint_display_name",
     "CONFLICT_PAIRS",
     "find_duplicate_prompt_tokens",
     "find_pair_conflicts",

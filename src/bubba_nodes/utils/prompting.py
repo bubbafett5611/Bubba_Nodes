@@ -179,12 +179,41 @@ def build_prompts_from_sections(
 
 
 def encode_conditioning(clip, text: str):
-    tokens = clip.tokenize(text or "")
-    if hasattr(clip, "encode_from_tokens_scheduled"):
-        return clip.encode_from_tokens_scheduled(tokens)
+    if clip is None:
+        print(
+            "[Bubba] WARNING: CLIP is None — the loaded model may not include a CLIP encoder "
+            "(e.g. unet-only or distilled model). Returning empty conditioning."
+        )
+        return empty_conditioning()
 
-    cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
-    return [[cond, {"pooled_output": pooled}]]
+    def _encode_with_tokens(raw_text: str):
+        tokens = clip.tokenize(raw_text)
+        if hasattr(clip, "encode_from_tokens_scheduled"):
+            return clip.encode_from_tokens_scheduled(tokens)
+        cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+        return [[cond, {"pooled_output": pooled}]]
+
+    # Some text encoders (notably Anima/Qwen integrations) can throw a token
+    # conversion TypeError for weighted prompt syntax. Retry once with a
+    # de-weighted/plain-text variant before falling back to empty conditioning.
+    source_text = text or ""
+    try:
+        return _encode_with_tokens(source_text)
+    except TypeError as exc:
+        simplified = re.sub(r"\(([^()]+?):\s*[-+]?\d*\.?\d+\)", r"\1", source_text)
+        simplified = simplified.replace("(", "").replace(")", "")
+        simplified = simplified.replace("[", "").replace("]", "")
+        simplified = _MULTI_SPACE_RE.sub(" ", simplified).strip()
+        if simplified and simplified != source_text:
+            try:
+                print("[Bubba] WARNING: CLIP encoding failed with weighted prompt syntax; " "retrying with simplified prompt text.")
+                return _encode_with_tokens(simplified)
+            except TypeError as retry_exc:
+                print("[Bubba] WARNING: CLIP encoding failed after simplified retry; " f"returning empty conditioning. Error: {retry_exc}")
+                return empty_conditioning()
+
+        print("[Bubba] WARNING: CLIP encoding failed; returning empty conditioning. " f"Error: {exc}")
+        return empty_conditioning()
 
 
 def empty_conditioning():

@@ -6,12 +6,18 @@
 # TODO(new-feature): Add integration tests that validate metadata persistence across save -> load for multi-image batches.
 
 import json
+import sys
+import types
+import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image
 from comfy_api.latest import UI
 
 import src.bubba_nodes.nodes.save_image as save_image_module
+import src.bubba_nodes.nodes.checkpoint as checkpoint_module
+import src.bubba_nodes.server.autocomplete as autocomplete_server
 
 from src.bubba_nodes.nodes import (
     BubbaFilename,
@@ -47,27 +53,27 @@ class _DummyClip:
 class TestBubbaFilename:
     def test_basic_path(self):
         node = BubbaFilename()
-        result, = node.build_path("My Character", "Battle Scene")
+        (result,) = node.build_path("My Character", "Battle Scene")
         assert result == "My_Character/Battle_Scene"
 
     def test_invalid_chars_stripped(self):
         node = BubbaFilename()
-        result, = node.build_path("Hero<>:", "Scene?*")
+        (result,) = node.build_path("Hero<>:", "Scene?*")
         assert result == "Hero/Scene"
 
     def test_empty_character_falls_back(self):
         node = BubbaFilename()
-        result, = node.build_path("", "Scene")
+        (result,) = node.build_path("", "Scene")
         assert result == "Character/Scene"
 
     def test_empty_scene_falls_back(self):
         node = BubbaFilename()
-        result, = node.build_path("Hero", "")
+        (result,) = node.build_path("Hero", "")
         assert result == "Hero/Scene"
 
     def test_only_invalid_chars_falls_back(self):
         node = BubbaFilename()
-        result, = node.build_path("<>:/\\", "?*|")
+        (result,) = node.build_path("<>:/\\", "?*|")
         assert result == "Character/Scene"
 
     def test_metadata(self):
@@ -133,8 +139,19 @@ class TestBubbaLoadImageWithMetadata:
 
 
 class TestBubbaCheckpointLoader:
+    def test_model_name_in_metadata_is_basename_without_extension(self, monkeypatch):
+        fake_loader = MagicMock()
+        fake_loader.load_checkpoint.return_value = ("MODEL_OBJ", "CLIP_OBJ", "VAE_OBJ")
+        monkeypatch.setattr(checkpoint_module, "CheckpointLoaderSimple", MagicMock(return_value=fake_loader))
+
+        node = BubbaCheckpointLoader()
+        _, _, _, checkpoint_name, metadata = node.load_checkpoint_with_name("Illustrious\\anime\\novaAnimeXL_ilV180.safetensors")
+
+        assert checkpoint_name == "Illustrious\\anime\\novaAnimeXL_ilV180.safetensors"
+        assert metadata.model_name == "novaAnimeXL_ilV180"
+
     def test_metadata(self):
-        assert BubbaCheckpointLoader.RETURN_TYPES == ("MODEL", "CLIP", "VAE", "STRING")
+        assert BubbaCheckpointLoader.RETURN_TYPES == ("MODEL", "CLIP", "VAE", "STRING", "BUBBA_METADATA")
         assert BubbaCheckpointLoader.FUNCTION == "load_checkpoint_with_name"
         assert BubbaCheckpointLoader.CATEGORY == "Bubba Nodes/Generation"
 
@@ -172,14 +189,16 @@ class TestBubbaOverlayFromMetadata:
     def test_extract_fields_valid_metadata_object(self):
         payload = BubbaMetadata(
             model_name="myModel",
-            sampler_info="Time: 1.0s Seed: 123",
+            seed=123,
+            sampler_time_seconds=1.0,
             positive_prompt="hero, dramatic lighting",
             negative_prompt="blurry",
         )
         model_text, info_text, positive_text, negative_text = BubbaOverlayFromMetadata._extract_fields(payload)
 
         assert model_text == "myModel"
-        assert info_text == "Time: 1.0s Seed: 123"
+        assert "123" in info_text  # Contains seed
+        assert "1.000" in info_text  # Contains time
         assert positive_text == "hero, dramatic lighting"
         assert negative_text == "blurry"
 
@@ -226,6 +245,8 @@ class TestBubbaSaveImage:
     def test_input_types_expose_workflow_toggle_and_hidden_metadata(self):
         input_types = BubbaSaveImage.INPUT_TYPES()
 
+        assert BubbaSaveImage.RETURN_TYPES == ("BUBBA_METADATA",)
+        assert BubbaSaveImage.RETURN_NAMES == ("metadata",)
         assert "save_workflow_metadata" in input_types["required"]
         assert input_types["required"]["save_workflow_metadata"][1]["default"] is True
         assert input_types["hidden"] == {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"}
@@ -263,6 +284,7 @@ class TestBubbaSaveImage:
             assert json.loads(saved.info["prompt"]) == prompt
             assert json.loads(saved.info["workflow"]) == extra_pnginfo["workflow"]
 
+        assert isinstance(result["result"][0], BubbaMetadata)
         assert result["ui"]["images"][0]["filename"] == image_path.name
 
     def test_save_images_skips_workflow_metadata_when_disabled(self, tmp_path, monkeypatch):
@@ -323,7 +345,6 @@ class TestBubbaSaveImage:
         node = BubbaSaveImage()
         metadata = BubbaMetadata(
             model_name="nova_batch",
-            sampler_info="Time: 0.9s Seed: 77",
             positive_prompt="hero portrait",
             negative_prompt="blurry",
             seed=77,
@@ -352,9 +373,8 @@ class TestBubbaSaveImage:
 class TestBubbaMetadataBundle:
     def test_build_metadata_object(self):
         node = BubbaMetadataBundle()
-        metadata, = node.build_metadata(
+        (metadata,) = node.build_metadata(
             "novaFurryXL_ilV160",
-            "Time: 1.23s Seed: 42",
             "1girl, hoodie",
             "blurry",
             42,
@@ -362,7 +382,6 @@ class TestBubbaMetadataBundle:
         )
         assert isinstance(metadata, BubbaMetadata)
         assert metadata.model_name == "novaFurryXL_ilV160"
-        assert metadata.sampler_info == "Time: 1.23s Seed: 42"
         assert metadata.positive_prompt == "1girl, hoodie"
         assert metadata.negative_prompt == "blurry"
         assert metadata.seed == 42
@@ -379,13 +398,12 @@ class TestBubbaMetadataDebug:
         node = BubbaMetadataDebug()
         metadata = BubbaMetadata(
             model_name="myModel",
-            sampler_info="Time: 0.2s",
             positive_prompt="hero",
             negative_prompt="blurry",
             seed=9,
             filepath="Character/Scene",
         )
-        metadata_text, = node.debug_metadata(metadata)
+        (metadata_text,) = node.debug_metadata(metadata)
         payload = json.loads(metadata_text)
 
         assert payload["model_name"] == "myModel"
@@ -404,14 +422,12 @@ class TestBubbaMetadataUpdate:
         updated, seed_value, positive_cond, negative_cond = node.update_metadata(
             original,
             model_name="new",
-            sampler_info="Time: 1.2s",
             set_seed=True,
             seed=42,
             filepath="new/path",
         )
 
         assert updated.model_name == "new"
-        assert updated.sampler_info == "Time: 1.2s"
         assert updated.seed == 42
         assert updated.filepath == "new/path"
         assert seed_value == 42
@@ -441,11 +457,13 @@ class TestBubbaMetadataUpdate:
 class TestBubbaMetadataModel:
     def test_from_json_normalizes_types_and_whitespace(self):
         metadata = BubbaMetadata.from_json(
-            '{"model_name":" modelA ","sampler_info":" info ","sampler_time_seconds":"0.57","steps":"25","cfg":"7.5","sampler_name":" dpmpp_2m ","scheduler":" karras ","denoise":"1.0","positive_prompt":" pos ","negative_prompt":" neg ","seed":"123","filepath":" folder/file ","prompt_sections":" appearance: silver hair "}'
+            '{"model_name":" modelA ","sampler_time_seconds":"0.57","steps":"25","cfg":"7.5","sampler_name":" dpmpp_2m ","scheduler":" karras ","denoise":"1.0","positive_prompt":" pos ","negative_prompt":" neg ","seed":"123","filepath":" folder/file "}'
         )
 
         assert metadata.model_name == "modelA"
-        assert metadata.sampler_info == "info"
+        assert "0.57" in metadata.formatted_sampler_info()  # Contains time
+        assert "123" in metadata.formatted_sampler_info()  # Contains seed
+        assert "25" in metadata.formatted_sampler_info()  # Contains steps
         assert metadata.sampler_time_seconds == 0.57
         assert metadata.steps == 25
         assert metadata.cfg == 7.5
@@ -456,13 +474,12 @@ class TestBubbaMetadataModel:
         assert metadata.negative_prompt == "neg"
         assert metadata.seed == 123
         assert metadata.filepath == "folder/file"
-        assert metadata.prompt_sections == "appearance: silver hair"
 
     def test_from_json_invalid_payload_falls_back(self):
         metadata = BubbaMetadata.from_json("not-json")
 
         assert metadata.model_name == ""
-        assert metadata.sampler_info == ""
+        assert metadata.formatted_sampler_info() == ""
         assert metadata.positive_prompt == ""
         assert metadata.negative_prompt == ""
         assert metadata.seed == 0
@@ -481,12 +498,10 @@ class TestBubbaMetadataModel:
             negative_prompt="blurry",
             seed=7,
             filepath="Character/Scene",
-            prompt_sections="appearance: silver hair",
         )
         payload = json.loads(metadata.to_json())
 
         assert payload["model_name"] == "myModel"
-        assert payload["sampler_info"] == "Time: 0.100s  Seed: 7  Steps: 20  CFG: 8.0  Sampler: dpmpp_2m  Scheduler: karras  Denoise: 1.0"
         assert payload["sampler_time_seconds"] == 0.1
         assert payload["steps"] == 20
         assert payload["cfg"] == 8.0
@@ -497,7 +512,8 @@ class TestBubbaMetadataModel:
         assert payload["negative_prompt"] == "blurry"
         assert payload["seed"] == 7
         assert payload["filepath"] == "Character/Scene"
-        assert payload["prompt_sections"] == "appearance: silver hair"
+        assert "sampler_info" not in payload
+        assert "prompt_sections" not in payload
 
     def test_updated_returns_normalized_copy(self):
         metadata = BubbaMetadata(model_name="old", seed=1)
@@ -511,7 +527,7 @@ class TestBubbaMetadataModel:
 class TestBubbaCharacterPromptBuilder:
     def test_hybrid_prompt_build(self):
         node = BubbaCharacterPromptBuilder()
-        positive, negative, sections, positive_cond, negative_cond = node.build_prompt(
+        positive, negative, sections, positive_cond, negative_cond, metadata = node.build_prompt(
             _DummyClip(),
             "silver hair, green eyes",
             "athletic",
@@ -536,7 +552,7 @@ class TestBubbaCharacterPromptBuilder:
 
     def test_dedupe_case_insensitive(self):
         node = BubbaCharacterPromptBuilder()
-        positive, negative, _, _, _ = node.build_prompt(
+        positive, negative, _, _, _, _ = node.build_prompt(
             _DummyClip(),
             "smile, Smile",
             "",
@@ -556,7 +572,7 @@ class TestBubbaCharacterPromptBuilder:
 
     def test_prose_mode(self):
         node = BubbaCharacterPromptBuilder()
-        positive, _, _, _, _ = node.build_prompt(
+        positive, _, _, _, _, _ = node.build_prompt(
             _DummyClip(),
             "red scarf",
             "",
@@ -574,7 +590,7 @@ class TestBubbaCharacterPromptBuilder:
         assert " and " in positive
 
     def test_metadata(self):
-        assert BubbaCharacterPromptBuilder.RETURN_TYPES == ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
+        assert BubbaCharacterPromptBuilder.RETURN_TYPES == ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
         assert BubbaCharacterPromptBuilder.FUNCTION == "build_prompt"
         assert BubbaCharacterPromptBuilder.CATEGORY == "Bubba Nodes/Prompt"
 
@@ -607,7 +623,6 @@ class TestBubbaMetadataPromptBuilder:
         assert "appearance: silver hair" in sections
         assert metadata_out.positive_prompt == positive
         assert metadata_out.negative_prompt == negative
-        assert metadata_out.prompt_sections == sections
         assert positive_cond[0][0].startswith("COND:")
         assert negative_cond[0][0].startswith("COND:")
 
@@ -707,3 +722,68 @@ class TestMappings:
         assert NODE_CLASS_MAPPINGS["BubbaMetadataPromptBuilder"] is BubbaMetadataPromptBuilder
         assert NODE_CLASS_MAPPINGS["BubbaPromptCleaner"] is BubbaPromptCleaner
         assert NODE_CLASS_MAPPINGS["BubbaPromptInspector"] is BubbaPromptInspector
+
+
+class TestAutocompleteServerRoutes:
+    def test_upstream_url_uses_env_override(self, monkeypatch):
+        monkeypatch.setenv("BUBBA_UPSTREAM_CSV_URL", "https://example.invalid/cache.csv")
+        assert autocomplete_server._upstream_csv_url() == "https://example.invalid/cache.csv"
+
+    def test_save_bytes_atomic_writes_file(self, tmp_path):
+        target = tmp_path / "nested" / "cache.csv"
+        autocomplete_server._save_bytes_atomic(target, b"tag,count\nfoo,1\n")
+        assert target.read_bytes() == b"tag,count\nfoo,1\n"
+
+    def test_register_routes_and_handlers_work(self, monkeypatch, tmp_path):
+        class _FakeRoutes:
+            def __init__(self):
+                self.get_handlers = {}
+                self.post_handlers = {}
+
+            def get(self, path):
+                def _decorator(func):
+                    self.get_handlers[path] = func
+                    return func
+
+                return _decorator
+
+            def post(self, path):
+                def _decorator(func):
+                    self.post_handlers[path] = func
+                    return func
+
+                return _decorator
+
+        class _FakeWeb:
+            @staticmethod
+            def json_response(payload, status=200):
+                return {"payload": payload, "status": status}
+
+        fake_routes = _FakeRoutes()
+        fake_prompt_server = types.SimpleNamespace(instance=types.SimpleNamespace(routes=fake_routes))
+
+        monkeypatch.setitem(sys.modules, "aiohttp", types.SimpleNamespace(web=_FakeWeb))
+        monkeypatch.setitem(sys.modules, "server", types.SimpleNamespace(PromptServer=fake_prompt_server))
+        monkeypatch.setitem(
+            sys.modules,
+            "folder_paths",
+            types.SimpleNamespace(get_filename_list=lambda kind: ["foo.pt", "bar.safetensors"]),
+        )
+
+        monkeypatch.setattr(autocomplete_server, "_route_registered", False)
+        monkeypatch.setattr(autocomplete_server, "_local_csv_path", lambda: tmp_path / "danbooru_e621_merged.csv")
+        monkeypatch.setattr(autocomplete_server, "_download_upstream_csv", lambda url: b"tag,count\nfoo,1\n")
+
+        autocomplete_server.register_autocomplete_routes()
+
+        assert "/bubba/autocomplete/embeddings" in fake_routes.get_handlers
+        assert "/bubba/sync_upstream_cache" in fake_routes.post_handlers
+
+        embeddings_result = asyncio.run(fake_routes.get_handlers["/bubba/autocomplete/embeddings"](None))
+        assert embeddings_result["status"] == 200
+        assert embeddings_result["payload"]["count"] == 2
+
+        sync_result = asyncio.run(fake_routes.post_handlers["/bubba/sync_upstream_cache"](None))
+        assert sync_result["status"] == 200
+        assert sync_result["payload"]["status"] == "ok"
+        assert sync_result["payload"]["bytes"] == len(b"tag,count\nfoo,1\n")

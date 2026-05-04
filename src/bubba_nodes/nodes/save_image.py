@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from comfy_api.latest import UI
 from PIL import Image
@@ -22,7 +22,7 @@ _DEFAULT_METADATA_DICT = BubbaMetadata().to_dict()
 
 class BubbaSaveImage:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "images": ("IMAGE",),
@@ -62,7 +62,8 @@ class BubbaSaveImage:
             },
         }
 
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("BUBBA_METADATA",)
+    RETURN_NAMES = ("metadata",)
     FUNCTION = "save_images"
     OUTPUT_NODE = True
     CATEGORY = "Bubba Nodes/Image/Save"
@@ -128,7 +129,7 @@ class BubbaSaveImage:
             return
 
         with Image.open(image_path) as source:
-            existing_text = {key: value for key, value in source.info.items() if isinstance(value, str)}
+            existing_text = {str(key): value for key, value in source.info.items() if isinstance(value, str)}
             if all(existing_text.get(str(key)) == value for key, value in text_entries.items()):
                 return
 
@@ -159,27 +160,30 @@ class BubbaSaveImage:
     def save_images(self, images, filepath, preview_only, save_workflow_metadata, metadata=None, prompt=None, extra_pnginfo=None):
         normalized_metadata = BubbaMetadata.coerce(metadata)
         resolved_filepath = (filepath or "").strip() or normalized_metadata.filepath or "Character/Scene"
+        normalized_metadata = normalized_metadata.updated(filepath=resolved_filepath)
         has_metadata = not self._is_default_metadata(normalized_metadata)
+        metadata_json_compact = normalized_metadata.to_json(pretty=False) if has_metadata else None
+        metadata_json_pretty = normalized_metadata.to_json(pretty=True) if has_metadata else None
 
         if preview_only:
-            result = UI.PreviewImage(images, cls=None).as_dict()
-            if has_metadata:
-                result["metadata_text"] = normalized_metadata.to_json(pretty=True)
-            return {"ui": result}
+            result = UI.PreviewImage(images, cls=cast(Any, None)).as_dict()
+            if metadata_json_pretty is not None:
+                result["metadata_text"] = metadata_json_pretty
+            return {"ui": result, "result": (normalized_metadata,)}
 
         result = UI.ImageSaveHelper.get_save_images_ui(
-                images=images,
-                filename_prefix=resolved_filepath,
-                cls=None,
-            ).as_dict()
+            images=images,
+            filename_prefix=resolved_filepath,
+            cls=cast(Any, None),
+        ).as_dict()
         png_text_entries = self._build_png_text_entries(
-            normalized_metadata.to_json(pretty=False) if has_metadata else None,
+            metadata_json_compact,
             save_workflow_metadata,
             prompt,
             extra_pnginfo,
         )
         if png_text_entries:
             self._embed_metadata_in_saved_images(result, png_text_entries)
-        if has_metadata:
-            result["metadata_text"] = normalized_metadata.to_json(pretty=True)
-        return {"ui": result}
+        if metadata_json_pretty is not None:
+            result["metadata_text"] = metadata_json_pretty
+        return {"ui": result, "result": (normalized_metadata,)}
