@@ -48,6 +48,35 @@ def _resolve_checkpoint_path(model: str, folder_paths_module) -> Path | None:
     return None
 
 
+def _resolve_lora_path(model: str, folder_paths_module) -> Path | None:
+    if folder_paths_module is None:
+        return None
+
+    normalized = str(model or "").strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return None
+    if ".." in normalized.split("/"):
+        return None
+
+    if hasattr(folder_paths_module, "get_full_path"):
+        resolved = folder_paths_module.get_full_path("loras", normalized)
+        if resolved:
+            path = Path(resolved)
+            if path.exists():
+                return path
+
+    if hasattr(folder_paths_module, "get_folder_paths"):
+        for base in folder_paths_module.get_folder_paths("loras"):
+            base_path = Path(base).resolve()
+            candidate = (base_path / normalized).resolve()
+            if not str(candidate).startswith(str(base_path)):
+                continue
+            if candidate.exists():
+                return candidate
+
+    return None
+
+
 def _normalize_civitai_url(url: str) -> str:
     candidate = str(url or "").strip()
     if not candidate:
@@ -199,6 +228,32 @@ def register_checkpoint_preview_route() -> None:
             return web.json_response({"url": None, "error": "checkpoint not found"}, status=404)
 
         url = _resolve_civitai_url(checkpoint_path)
+        if not url:
+            return web.json_response({"url": None})
+
+        return web.json_response({"url": url})
+
+    @routes.get("/bubba/lora_preview")
+    async def bubba_lora_preview(request):
+        model = request.rel_url.query.get("model", "")
+        lora_path = _resolve_lora_path(model, folder_paths)
+        if lora_path is None:
+            return web.Response(status=404, text="lora not found")
+
+        for candidate in _build_preview_candidates(lora_path):
+            if candidate.exists() and candidate.is_file():
+                return web.FileResponse(path=candidate)
+
+        return web.Response(status=404, text="preview not found")
+
+    @routes.get("/bubba/lora_civitai_link")
+    async def bubba_lora_civitai_link(request):
+        model = request.rel_url.query.get("model", "")
+        lora_path = _resolve_lora_path(model, folder_paths)
+        if lora_path is None:
+            return web.json_response({"url": None, "error": "lora not found"}, status=404)
+
+        url = _resolve_civitai_url(lora_path)
         if not url:
             return web.json_response({"url": None})
 

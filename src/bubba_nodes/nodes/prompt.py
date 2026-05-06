@@ -131,20 +131,11 @@ class BubbaCharacterPromptBuilder:
                         "tooltip": "Optional metadata object to update with prompt sections and prompts.",
                     },
                 ),
-                "clip_skip": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": 0,
-                        "max": 128,
-                        "tooltip": "Number of CLIP encoder layers to skip (0 = no skip).",
-                    },
-                ),
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning", "metadata")
+    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
+    RETURN_NAMES = ("positive_prompt", "negative_prompt", "positive_conditioning", "negative_conditioning", "metadata")
     FUNCTION = "build_prompt"
     CATEGORY = "Bubba Nodes/Prompt"
     DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP. Returns metadata with prompts and sections."
@@ -165,7 +156,6 @@ class BubbaCharacterPromptBuilder:
         cleanup,
         dedupe,
         metadata=None,
-        clip_skip=0,
     ):
         sections = assemble_prompt_sections(
             appearance=appearance,
@@ -179,7 +169,7 @@ class BubbaCharacterPromptBuilder:
             negative_tags=negative_tags,
             format_mode=format_mode,
         )
-        positive_prompt, negative_prompt, sections_text = build_prompts_from_sections(
+        positive_prompt, negative_prompt, _ = build_prompts_from_sections(
             sections,
             cleanup=cleanup,
             dedupe=dedupe,
@@ -192,7 +182,6 @@ class BubbaCharacterPromptBuilder:
         updated_metadata = BubbaMetadata.coerce(metadata).updated(
             positive_prompt=positive_prompt,
             negative_prompt=negative_prompt,
-            clip_skip=clip_skip,
         )
 
-        return (positive_prompt, negative_prompt, sections_text, positive_conditioning, negative_conditioning, updated_metadata)
+        return (positive_prompt, negative_prompt, positive_conditioning, negative_conditioning, updated_metadata)

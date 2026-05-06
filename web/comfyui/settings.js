@@ -46,8 +46,10 @@ app.registerExtension({
 		try {
 			const { BubbaTextAutoComplete, ensureLocalCsvCacheSeeded, ensureEmbeddingCacheSeeded } = await import("./autocomplete.js");
 			const { installCheckpointTieredMenus } = await import("./checkpoint_menu.js");
+			const { installLoraTieredMenus } = await import("./lora_menu.js");
 			const { installEmptyLatentSizeMenu } = await import("./latent_size_menu.js");
 			const { installSamplerSeedButton } = await import("./sampler_seed_button.js");
+			const { installImageCompareNode } = await import("./image_compare_node.js");
 
 			// installStringWidgetHook() is deferred to setup() where ComfyWidgets.STRING is ready
 			BubbaTextAutoComplete.enabled = localStorage.getItem(AUTOCOMPLETE_ENABLED_KEY) !== "false";
@@ -56,8 +58,10 @@ app.registerExtension({
 			);
 			BubbaTextAutoComplete.replaceUnderscores = localStorage.getItem(AUTOCOMPLETE_REPLACE_UNDERSCORES_KEY) === "true";
 			installCheckpointTieredMenus();
+			installLoraTieredMenus();
 			installEmptyLatentSizeMenu();
 			installSamplerSeedButton();
+			installImageCompareNode();
 
 			// Seed caches in background without blocking init
 			try {

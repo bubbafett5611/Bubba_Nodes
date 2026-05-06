@@ -4,7 +4,7 @@ Custom ComfyUI nodes for prompt authoring, prompt inspection, metadata-first wor
 
 ## What Is Included
 
-This extension currently registers 17 nodes:
+This extension currently registers 16 nodes:
 
 - Bubba Filename Builder
 - Bubba Empty Latent (Preset Sizes)
@@ -13,7 +13,6 @@ This extension currently registers 17 nodes:
 - Bubba Combo Loader
 - Bubba KSampler
 - Bubba Save Image
-- Bubba Add Text Overlay
 - Bubba Add Text Overlay (Metadata)
 - Bubba Watermark Overlay
 - Bubba Metadata Bundle
@@ -32,7 +31,6 @@ This extension currently registers 17 nodes:
 - Load checkpoint model/clip/vae while also outputting the selected checkpoint name for metadata/overlay nodes.
 - Run KSampler and output a formatted INFO string (time, seed, steps, CFG, sampler, scheduler, denoise).
 - Run KSampler and update a metadata object with sampler info and seed.
-- Add top/bottom metadata bars to generated images in overlay mode or underlay mode.
 - Add overlays directly from a bundled metadata object (without wiring prompt/model/info fields separately).
 - Bundle core generation metadata into a typed metadata object for downstream nodes.
 - Convert metadata objects to pretty JSON text for preview/debug nodes.

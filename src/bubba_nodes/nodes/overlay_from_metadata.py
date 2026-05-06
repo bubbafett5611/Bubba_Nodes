@@ -1,5 +1,185 @@
+from functools import lru_cache
+
+from PIL import Image, ImageDraw, ImageFont
+import torch
+
 from ..models import BubbaMetadata
-from .overlay import _render_overlay_image_batch
+from ..utils.image_ops import pil_to_tensor_like, tensor_sample_to_pil
+
+
+def _compose_overlay_text(
+    model_text,
+    info_text,
+    positive_text,
+    negative_text,
+    show_model,
+    show_info,
+    show_positive,
+    show_negative,
+    model_position,
+    info_position,
+    positive_position,
+    negative_position,
+):
+    top_parts, bottom_parts = [], []
+    if show_model and model_text.strip():
+        (top_parts if model_position == "top" else bottom_parts).append(f"Model: {model_text.strip()}")
+    if show_info and info_text.strip():
+        (top_parts if info_position == "top" else bottom_parts).append(f"{info_text.strip()}")
+    if show_positive and positive_text.strip():
+        (top_parts if positive_position == "top" else bottom_parts).append(f"Positive:\n{positive_text.strip()}")
+    if show_negative and negative_text.strip():
+        (top_parts if negative_position == "top" else bottom_parts).append(f"Negative:\n{negative_text.strip()}")
+    return "\n".join(top_parts), "\n".join(bottom_parts)
+
+
+def _parse_overlay_rgba(color: str) -> tuple[int, int, int, int]:
+    value = color.strip().lstrip("#")
+    try:
+        if len(value) == 6:
+            r = int(value[0:2], 16)
+            g = int(value[2:4], 16)
+            b = int(value[4:6], 16)
+            return (r, g, b, 255)
+        if len(value) == 8:
+            r = int(value[0:2], 16)
+            g = int(value[2:4], 16)
+            b = int(value[4:6], 16)
+            a = int(value[6:8], 16)
+            return (r, g, b, a)
+    except ValueError:
+        pass
+    return (0, 0, 0, 170)
+
+
+def _wrap_overlay_text_to_width(text: str, font, max_width: int) -> str:
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    result_lines = []
+    for paragraph in text.split("\n"):
+        if not paragraph:
+            result_lines.append("")
+            continue
+        words = paragraph.split(" ")
+        current = ""
+        for word in words:
+            test = (current + " " + word).strip()
+            w = probe_draw.textlength(test, font=font)
+            if w <= max_width or not current:
+                current = test
+            else:
+                result_lines.append(current)
+                current = word
+        if current:
+            result_lines.append(current)
+    return "\n".join(result_lines)
+
+
+@lru_cache(maxsize=16)
+def _get_overlay_font(font_size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype("arial.ttf", font_size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _prepare_overlay_bar(text: str, font, max_text_w: int, pad_y: int):
+    if not text.strip():
+        return None, 0, 0
+    wrapped = _wrap_overlay_text_to_width(text, font, max_text_w)
+    probe_img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    probe_draw = ImageDraw.Draw(probe_img)
+    _, t, _, b = probe_draw.multiline_textbbox((0, 0), wrapped, font=font)
+    text_h = max(1, b - t)
+    bar_h = text_h + pad_y * 2
+    text_y = max(0, (bar_h - text_h) // 2)
+    return wrapped, bar_h, text_y
+
+
+def _render_overlay_image_batch(
+    image,
+    model_text,
+    info_text,
+    positive_text,
+    negative_text,
+    show_model,
+    show_info,
+    show_positive,
+    show_negative,
+    model_position,
+    info_position,
+    positive_position,
+    negative_position,
+    background_color,
+    font_size,
+    overlay_mode,
+):
+    top_text, bottom_text = _compose_overlay_text(
+        model_text,
+        info_text,
+        positive_text,
+        negative_text,
+        show_model,
+        show_info,
+        show_positive,
+        show_negative,
+        model_position,
+        info_position,
+        positive_position,
+        negative_position,
+    )
+    if not top_text.strip() and not bottom_text.strip():
+        return (image,)
+
+    rgba = _parse_overlay_rgba(background_color)
+    font = _get_overlay_font(font_size)
+    pad_x = max(8, int(font_size * 0.30))
+    pad_y = max(6, int(font_size * 0.25))
+    img_w = image[0].shape[1]
+    max_text_w = max(1, img_w - 2 * pad_x)
+
+    top_wrapped, top_bar_h, top_text_y = _prepare_overlay_bar(top_text, font, max_text_w, pad_y)
+    bottom_wrapped, bottom_bar_h, bottom_text_y = _prepare_overlay_bar(bottom_text, font, max_text_w, pad_y)
+    output = []
+
+    for sample in image:
+        src_pil = tensor_sample_to_pil(sample)
+        src_rgba = src_pil.convert("RGBA")
+        width, height = src_rgba.size
+
+        if overlay_mode:
+            overlay = Image.new("RGBA", src_rgba.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
+            if top_wrapped:
+                draw.rectangle((0, 0, width, top_bar_h), fill=rgba)
+                draw.multiline_text((pad_x, top_text_y), top_wrapped, font=font, fill=(255, 255, 255, 255))
+            if bottom_wrapped:
+                y0 = max(0, height - bottom_bar_h)
+                draw.rectangle((0, y0, width, height), fill=rgba)
+                draw.multiline_text((pad_x, y0 + bottom_text_y), bottom_wrapped, font=font, fill=(255, 255, 255, 255))
+            composed = Image.alpha_composite(src_rgba, overlay)
+        else:
+            new_h = int(height + top_bar_h + bottom_bar_h)
+            composed = Image.new("RGBA", (width, new_h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(composed)
+            if top_wrapped:
+                draw.rectangle((0, 0, width, top_bar_h), fill=rgba)
+                draw.multiline_text((pad_x, top_text_y), top_wrapped, font=font, fill=(255, 255, 255, 255))
+            composed.paste(src_rgba, (0, int(top_bar_h)))
+            if bottom_wrapped:
+                y0 = int(top_bar_h + height)
+                draw.rectangle((0, y0, width, new_h), fill=rgba)
+                draw.multiline_text((pad_x, y0 + bottom_text_y), bottom_wrapped, font=font, fill=(255, 255, 255, 255))
+
+        output.append(
+            pil_to_tensor_like(
+                composed,
+                sample,
+                device=image.device,
+                dtype=image.dtype,
+            )
+        )
+
+    return (torch.stack(output, dim=0),)
 
 
 class BubbaOverlayFromMetadata:

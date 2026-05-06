@@ -16,7 +16,7 @@ from PIL import Image
 from comfy_api.latest import UI
 
 import src.bubba_nodes.nodes.save_image as save_image_module
-import src.bubba_nodes.nodes.checkpoint as checkpoint_module
+import src.bubba_nodes.nodes.checkpoint_loader as checkpoint_module
 import src.bubba_nodes.server.autocomplete as autocomplete_server
 
 from src.bubba_nodes.nodes import (
@@ -24,16 +24,17 @@ from src.bubba_nodes.nodes import (
     BubbaEmptyLatentBySize,
     BubbaLoadImageWithMetadata,
     BubbaCheckpointLoader,
+    BubbaComboLoader,
+    BubbaLoraLoader,
+    BubbaUpscaler,
+    BubbaImageCompare,
     BubbaKSampler,
     BubbaSaveImage,
-    BubbaOverlay,
     BubbaOverlayFromMetadata,
     BubbaWatermark,
-    BubbaMetadataBundle,
     BubbaMetadataDebug,
-    BubbaMetadataUpdate,
     BubbaCharacterPromptBuilder,
-    BubbaMetadataPromptBuilder,
+    BubbaSimplePromptBuilder,
     BubbaPromptCleaner,
     BubbaPromptInspector,
     NODE_CLASS_MAPPINGS,
@@ -158,31 +159,9 @@ class TestBubbaCheckpointLoader:
 
 class TestBubbaKSampler:
     def test_metadata(self):
-        assert BubbaKSampler.RETURN_TYPES == ("LATENT", "STRING", "BUBBA_METADATA")
+        assert BubbaKSampler.RETURN_TYPES == ("LATENT", "STRING", "BUBBA_METADATA", "IMAGE")
         assert BubbaKSampler.FUNCTION == "sample"
         assert BubbaKSampler.CATEGORY == "Bubba Nodes/Generation"
-
-
-class TestBubbaOverlay:
-    def test_parse_rgba_six_chars(self):
-        assert BubbaOverlay._parse_rgba("#FF8800") == (255, 136, 0, 255)
-
-    def test_parse_rgba_eight_chars(self):
-        assert BubbaOverlay._parse_rgba("#000000AA") == (0, 0, 0, 170)
-
-    def test_parse_rgba_invalid_falls_back(self):
-        assert BubbaOverlay._parse_rgba("#ZZZZZZ") == (0, 0, 0, 170)
-
-    def test_parse_rgba_empty_falls_back(self):
-        assert BubbaOverlay._parse_rgba("") == (0, 0, 0, 170)
-
-    def test_parse_rgba_garbage_falls_back(self):
-        assert BubbaOverlay._parse_rgba("not-a-color") == (0, 0, 0, 170)
-
-    def test_metadata(self):
-        assert BubbaOverlay.RETURN_TYPES == ("IMAGE",)
-        assert BubbaOverlay.FUNCTION == "add_text_overlay"
-        assert BubbaOverlay.CATEGORY == "Bubba Nodes/Image/Overlay"
 
 
 class TestBubbaOverlayFromMetadata:
@@ -370,29 +349,6 @@ class TestBubbaSaveImage:
             assert "nova_batch" in text
 
 
-class TestBubbaMetadataBundle:
-    def test_build_metadata_object(self):
-        node = BubbaMetadataBundle()
-        (metadata,) = node.build_metadata(
-            "novaFurryXL_ilV160",
-            "1girl, hoodie",
-            "blurry",
-            42,
-            "Character/Scene",
-        )
-        assert isinstance(metadata, BubbaMetadata)
-        assert metadata.model_name == "novaFurryXL_ilV160"
-        assert metadata.positive_prompt == "1girl, hoodie"
-        assert metadata.negative_prompt == "blurry"
-        assert metadata.seed == 42
-        assert metadata.filepath == "Character/Scene"
-
-    def test_metadata(self):
-        assert BubbaMetadataBundle.RETURN_TYPES == ("BUBBA_METADATA",)
-        assert BubbaMetadataBundle.FUNCTION == "build_metadata"
-        assert BubbaMetadataBundle.CATEGORY == "Bubba Nodes/Metadata"
-
-
 class TestBubbaMetadataDebug:
     def test_debug_metadata_returns_pretty_json(self):
         node = BubbaMetadataDebug()
@@ -413,45 +369,6 @@ class TestBubbaMetadataDebug:
         assert BubbaMetadataDebug.RETURN_TYPES == ("STRING",)
         assert BubbaMetadataDebug.FUNCTION == "debug_metadata"
         assert BubbaMetadataDebug.CATEGORY == "Bubba Nodes/Metadata"
-
-
-class TestBubbaMetadataUpdate:
-    def test_update_selected_fields(self):
-        node = BubbaMetadataUpdate()
-        original = BubbaMetadata(model_name="old", seed=1, filepath="old/path")
-        updated, seed_value, positive_cond, negative_cond = node.update_metadata(
-            original,
-            model_name="new",
-            set_seed=True,
-            seed=42,
-            filepath="new/path",
-        )
-
-        assert updated.model_name == "new"
-        assert updated.seed == 42
-        assert updated.filepath == "new/path"
-        assert seed_value == 42
-        assert positive_cond == [[None, {}]]
-        assert negative_cond == [[None, {}]]
-
-    def test_update_outputs_conditioning_with_clip(self):
-        node = BubbaMetadataUpdate()
-        original = BubbaMetadata(positive_prompt="hero", negative_prompt="blurry", seed=9)
-
-        updated, seed_value, positive_cond, negative_cond = node.update_metadata(
-            original,
-            clip=_DummyClip(),
-        )
-
-        assert updated.seed == 9
-        assert seed_value == 9
-        assert positive_cond[0][0].startswith("COND:")
-        assert negative_cond[0][0].startswith("COND:")
-
-    def test_metadata(self):
-        assert BubbaMetadataUpdate.RETURN_TYPES == ("BUBBA_METADATA", "INT", "CONDITIONING", "CONDITIONING")
-        assert BubbaMetadataUpdate.FUNCTION == "update_metadata"
-        assert BubbaMetadataUpdate.CATEGORY == "Bubba Nodes/Metadata"
 
 
 class TestBubbaMetadataModel:
@@ -523,11 +440,335 @@ class TestBubbaMetadataModel:
         assert updated.seed == 9
         assert metadata.model_name == "old"
 
+    def test_loras_default_empty(self):
+        metadata = BubbaMetadata()
+        assert metadata.loras == []
+
+    def test_loras_coerced_from_list(self):
+        metadata = BubbaMetadata(loras=["loraA", "loraB"])
+        assert metadata.loras == ["loraA", "loraB"]
+
+    def test_loras_coerced_from_comma_string(self):
+        metadata = BubbaMetadata.from_mapping({"loras": "loraA, loraB"})
+        assert metadata.loras == ["loraA", "loraB"]
+
+    def test_loras_roundtrip_json(self):
+        metadata = BubbaMetadata(loras=["style_v1", "detail_v2"])
+        restored = BubbaMetadata.from_json(metadata.to_json())
+        assert restored.loras == ["style_v1", "detail_v2"]
+
+    def test_formatted_sampler_info_includes_loras(self):
+        metadata = BubbaMetadata(
+            steps=20,
+            seed=1,
+            cfg=7.0,
+            sampler_name="euler",
+            scheduler="karras",
+            denoise=1.0,
+            loras=["style_v1", "detail_v2"],
+        )
+        info = metadata.formatted_sampler_info()
+        assert "style_v1" in info
+        assert "detail_v2" in info
+
+    def test_formatted_sampler_info_no_loras_suffix_when_empty(self):
+        metadata = BubbaMetadata(
+            steps=20,
+            seed=1,
+            cfg=7.0,
+            sampler_name="euler",
+            scheduler="karras",
+            denoise=1.0,
+        )
+        assert "LoRA" not in metadata.formatted_sampler_info()
+
+    def test_updated_appends_loras(self):
+        metadata = BubbaMetadata(loras=["base_lora"])
+        updated = metadata.updated(loras=list(metadata.loras) + ["new_lora"])
+        assert updated.loras == ["base_lora", "new_lora"]
+        assert metadata.loras == ["base_lora"]  # original unchanged
+
+
+class TestBubbaLoraLoader:
+    def _make_mock_loader(self, model_out="MODEL_OUT", clip_out="CLIP_OUT"):
+        """Patch LoraLoader.load_lora to avoid actual file I/O."""
+        mock = MagicMock()
+        mock.load_lora.return_value = (model_out, clip_out)
+        return mock
+
+    def test_load_lora_no_metadata(self):
+        node = BubbaLoraLoader()
+        node._loader = self._make_mock_loader()
+
+        model_out, clip_out, lora_name, metadata = node.load_lora("MODEL", "CLIP", "styles/my_style_v1.safetensors", 0.8, 0.6)
+
+        assert model_out == "MODEL_OUT"
+        assert clip_out == "CLIP_OUT"
+        assert lora_name == "my_style_v1"
+        assert isinstance(metadata, BubbaMetadata)
+        assert metadata.loras == ["my_style_v1"]
+
+    def test_load_lora_appends_to_existing_metadata(self):
+        node = BubbaLoraLoader()
+        node._loader = self._make_mock_loader()
+        existing = BubbaMetadata(model_name="model", loras=["first_lora"])
+
+        _, _, lora_name, metadata = node.load_lora(
+            "MODEL",
+            "CLIP",
+            "second_lora.safetensors",
+            1.0,
+            1.0,
+            metadata=existing,
+        )
+
+        assert lora_name == "second_lora"
+        assert metadata.loras == ["first_lora", "second_lora"]
+        assert existing.loras == ["first_lora"]  # original unchanged
+
+    def test_load_lora_preserves_other_metadata_fields(self):
+        node = BubbaLoraLoader()
+        node._loader = self._make_mock_loader()
+        existing = BubbaMetadata(model_name="myModel", seed=42, filepath="hero/shot")
+
+        _, _, _, metadata = node.load_lora(
+            "MODEL",
+            "CLIP",
+            "detail.safetensors",
+            1.0,
+            1.0,
+            metadata=existing,
+        )
+
+        assert metadata.model_name == "myModel"
+        assert metadata.seed == 42
+        assert metadata.filepath == "hero/shot"
+        assert metadata.loras == ["detail"]
+
+    def test_class_attributes(self):
+        assert BubbaLoraLoader.RETURN_TYPES == ("MODEL", "CLIP", "STRING", "BUBBA_METADATA")
+        assert BubbaLoraLoader.RETURN_NAMES == ("model", "clip", "lora_name", "metadata")
+        assert BubbaLoraLoader.FUNCTION == "load_lora"
+        assert BubbaLoraLoader.CATEGORY == "Bubba Nodes/Generation"
+
+    def test_registered_in_node_mappings(self):
+        assert "BubbaLoraLoader" in NODE_CLASS_MAPPINGS
+        assert NODE_CLASS_MAPPINGS["BubbaLoraLoader"] is BubbaLoraLoader
+        assert "BubbaLoraLoader" in NODE_DISPLAY_NAME_MAPPINGS
+
+
+class TestBubbaComboLoader:
+    def test_applies_clip_skip_and_updates_metadata(self):
+        import src.bubba_nodes.nodes.combo_loader as combo_module
+
+        node = BubbaComboLoader()
+
+        clip_clone = MagicMock()
+        clip_original = MagicMock()
+        clip_original.clone.return_value = clip_clone
+
+        mock_ckpt = MagicMock()
+        mock_ckpt.load_checkpoint.return_value = ("MODEL", clip_original, "VAE")
+        combo_module.CheckpointLoaderSimple = MagicMock(return_value=mock_ckpt)
+
+        model, clip, vae, ckpt_name, metadata = node.load(
+            "models/example.safetensors",
+            combo_module._NONE_SENTINEL,
+            combo_module._NONE_SENTINEL,
+            combo_module._CLIP_TYPES[0],
+            2,
+            None,
+        )
+
+        assert model == "MODEL"
+        assert vae == "VAE"
+        assert ckpt_name == "models/example.safetensors"
+        assert clip is clip_clone
+        clip_clone.clip_layer.assert_called_once_with(-2)
+        assert metadata.clip_skip == 2
+
+    def test_clip_skip_zero_leaves_clip_unmodified(self):
+        import src.bubba_nodes.nodes.combo_loader as combo_module
+
+        node = BubbaComboLoader()
+
+        clip_original = MagicMock()
+        mock_ckpt = MagicMock()
+        mock_ckpt.load_checkpoint.return_value = ("MODEL", clip_original, "VAE")
+        combo_module.CheckpointLoaderSimple = MagicMock(return_value=mock_ckpt)
+
+        _, clip, _, _, metadata = node.load(
+            "models/example.safetensors",
+            combo_module._NONE_SENTINEL,
+            combo_module._NONE_SENTINEL,
+            combo_module._CLIP_TYPES[0],
+            0,
+            None,
+        )
+
+        assert clip is clip_original
+        clip_original.clone.assert_not_called()
+        assert metadata.clip_skip == 0
+
+    def test_prompt_builders_no_longer_expose_clip_skip_option(self):
+        assert "clip_skip" not in BubbaCharacterPromptBuilder.INPUT_TYPES().get("optional", {})
+
+
+class TestBubbaUpscaler:
+    """Tests for BubbaUpscaler (pixel-space ESRGAN upscaling)."""
+
+    def _make_fake_image(self, h=64, w=64):
+        """Create a minimal (B, H, W, C) float32 tensor-like mock."""
+        import torch
+
+        return torch.zeros(1, h, w, 3)
+
+    def _patch_upscale_nodes(self, mocker, scale_factor=4):
+        """Patch UpscaleModelLoader and ImageUpscaleWithModel to avoid I/O."""
+        import src.bubba_nodes.nodes.upscaler as upscaler_module
+        import torch
+
+        fake_model = MagicMock()
+        mock_loader = MagicMock()
+        mock_loader.execute.return_value = MagicMock(__getitem__=lambda self, i: fake_model)
+
+        def fake_upscale_execute(upscale_model, image):
+            # Simulate ESRGAN 4× output
+            b, h, w, c = image.shape
+            upscaled = torch.zeros(b, h * scale_factor, w * scale_factor, c)
+            result = MagicMock()
+            result.__getitem__ = lambda self, i: upscaled
+            return result
+
+        upscaler_module.UpscaleModelLoader = mock_loader
+        upscaler_module.ImageUpscaleWithModel = MagicMock()
+        upscaler_module.ImageUpscaleWithModel.execute = fake_upscale_execute
+        return mock_loader
+
+    def test_upscale_no_resize_returns_esrgan_output(self):
+        image = self._make_fake_image(64, 64)
+        self._patch_upscale_nodes(None, scale_factor=4)
+
+        node = BubbaUpscaler()
+        result_image, result_metadata = node.upscale(image, "4x_model.pth", scale_by=1.0, resize_method="lanczos")
+
+        # With scale_by=1.0, should be unchanged from ESRGAN output (256×256)
+        assert result_image.shape[1] == 256  # H
+        assert result_image.shape[2] == 256  # W
+        assert isinstance(result_metadata, BubbaMetadata)
+
+    def test_upscale_with_scale_by_resizes(self):
+        image = self._make_fake_image(64, 64)
+        self._patch_upscale_nodes(None, scale_factor=4)
+
+        # common_upscale is mocked in conftest to return its input unchanged;
+        # just verify it is called when scale_by != 1.0
+        node = BubbaUpscaler()
+        result_image, result_metadata = node.upscale(image, "4x_model.pth", scale_by=0.5, resize_method="lanczos")
+        # comfy.utils.common_upscale mock returns tensor unchanged, so result still exists
+        assert result_image is not None
+        assert isinstance(result_metadata, BubbaMetadata)
+
+    def test_upscale_passes_through_metadata(self):
+        image = self._make_fake_image()
+        self._patch_upscale_nodes(None)
+        existing = BubbaMetadata(model_name="myModel", seed=42, loras=["style"])
+
+        node = BubbaUpscaler()
+        _, metadata = node.upscale(
+            image,
+            "4x_model.pth",
+            scale_by=1.0,
+            resize_method="lanczos",
+            metadata=existing,
+        )
+
+        assert metadata.model_name == "myModel"
+        assert metadata.seed == 42
+        assert metadata.loras == ["style"]
+
+    def test_upscale_no_metadata_returns_empty(self):
+        image = self._make_fake_image()
+        self._patch_upscale_nodes(None)
+
+        node = BubbaUpscaler()
+        _, metadata = node.upscale(image, "4x_model.pth", scale_by=1.0, resize_method="lanczos")
+
+        assert isinstance(metadata, BubbaMetadata)
+        assert metadata.model_name == ""
+
+    def test_class_attributes(self):
+        assert BubbaUpscaler.RETURN_TYPES == ("IMAGE", "BUBBA_METADATA")
+        assert BubbaUpscaler.RETURN_NAMES == ("image", "metadata")
+        assert BubbaUpscaler.FUNCTION == "upscale"
+        assert BubbaUpscaler.CATEGORY == "Bubba Nodes/Image"
+
+    def test_registered_in_node_mappings(self):
+        assert "BubbaUpscaler" in NODE_CLASS_MAPPINGS
+        assert NODE_CLASS_MAPPINGS["BubbaUpscaler"] is BubbaUpscaler
+        assert "BubbaUpscaler" in NODE_DISPLAY_NAME_MAPPINGS
+
+
+class TestBubbaImageCompare:
+    """Tests for BubbaImageCompare UI payload node (draggable A/B splitter in frontend)."""
+
+    def _img(self, h=32, w=32, fill=0.0):
+        import torch
+
+        return torch.full((1, h, w, 3), fill)
+
+    def test_compare_returns_ui_payload(self):
+        node = BubbaImageCompare()
+        a = self._img(32, 40, fill=1.0)
+        b = self._img(32, 40, fill=0.0)
+        result = node.compare(a, b)
+
+        assert isinstance(result, dict)
+        assert "ui" in result
+        assert "b64_a" in result["ui"]
+        assert "b64_b" in result["ui"]
+
+    def test_compare_returns_non_empty_base64_chunks(self):
+        node = BubbaImageCompare()
+        a = self._img(16, 16, fill=1.0)
+        b = self._img(16, 16, fill=0.0)
+        result = node.compare(a, b)
+
+        chunks_a = result["ui"]["b64_a"]
+        chunks_b = result["ui"]["b64_b"]
+        assert isinstance(chunks_a, list)
+        assert isinstance(chunks_b, list)
+        assert len(chunks_a) > 0
+        assert len(chunks_b) > 0
+        assert all(isinstance(x, str) for x in chunks_a)
+        assert all(isinstance(x, str) for x in chunks_b)
+
+    def test_empty_input_returns_empty_ui_payload(self):
+        import torch
+
+        node = BubbaImageCompare()
+        empty = torch.zeros((0, 16, 16, 3))
+        result = node.compare(empty, empty)
+        assert result["ui"]["b64_a"] == []
+        assert result["ui"]["b64_b"] == []
+
+    def test_class_attributes(self):
+        assert BubbaImageCompare.RETURN_TYPES == ()
+        assert BubbaImageCompare.RETURN_NAMES == ()
+        assert BubbaImageCompare.FUNCTION == "compare"
+        assert BubbaImageCompare.CATEGORY == "Bubba Nodes/Image"
+        assert BubbaImageCompare.OUTPUT_NODE is True
+
+    def test_registered_in_node_mappings(self):
+        assert "BubbaImageCompare" in NODE_CLASS_MAPPINGS
+        assert NODE_CLASS_MAPPINGS["BubbaImageCompare"] is BubbaImageCompare
+        assert "BubbaImageCompare" in NODE_DISPLAY_NAME_MAPPINGS
+
 
 class TestBubbaCharacterPromptBuilder:
     def test_hybrid_prompt_build(self):
         node = BubbaCharacterPromptBuilder()
-        positive, negative, sections, positive_cond, negative_cond, metadata = node.build_prompt(
+        positive, negative, positive_cond, negative_cond, metadata = node.build_prompt(
             _DummyClip(),
             "silver hair, green eyes",
             "athletic",
@@ -544,15 +785,12 @@ class TestBubbaCharacterPromptBuilder:
         )
         assert "|" in positive
         assert negative == "blurry, lowres"
-        assert "character: " in sections
-        assert "negative: blurry, lowres" in sections
-        assert "format_mode: hybrid" in sections
         assert positive_cond[0][0].startswith("COND:")
         assert negative_cond[0][0].startswith("COND:")
 
     def test_dedupe_case_insensitive(self):
         node = BubbaCharacterPromptBuilder()
-        positive, negative, _, _, _, _ = node.build_prompt(
+        positive, negative, _, _, _ = node.build_prompt(
             _DummyClip(),
             "smile, Smile",
             "",
@@ -572,7 +810,7 @@ class TestBubbaCharacterPromptBuilder:
 
     def test_prose_mode(self):
         node = BubbaCharacterPromptBuilder()
-        positive, _, _, _, _, _ = node.build_prompt(
+        positive, _, _, _, _ = node.build_prompt(
             _DummyClip(),
             "red scarf",
             "",
@@ -590,46 +828,44 @@ class TestBubbaCharacterPromptBuilder:
         assert " and " in positive
 
     def test_metadata(self):
-        assert BubbaCharacterPromptBuilder.RETURN_TYPES == ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
+        assert BubbaCharacterPromptBuilder.RETURN_TYPES == ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
         assert BubbaCharacterPromptBuilder.FUNCTION == "build_prompt"
         assert BubbaCharacterPromptBuilder.CATEGORY == "Bubba Nodes/Prompt"
 
 
-class TestBubbaMetadataPromptBuilder:
-    def test_build_prompt_updates_metadata(self):
-        node = BubbaMetadataPromptBuilder()
-        metadata_in = BubbaMetadata(model_name="modelA", filepath="Character/Scene")
-
-        metadata_out, positive, negative, sections, positive_cond, negative_cond = node.build_prompt(
-            metadata_in,
+class TestBubbaSimplePromptBuilder:
+    def test_basic_build(self):
+        node = BubbaSimplePromptBuilder()
+        positive, negative, positive_cond, negative_cond, metadata = node.build_prompt(
             _DummyClip(),
-            "silver hair",
-            "athletic",
-            "jacket",
-            "standing",
-            "smile",
-            "city rooftop",
-            "anime",
-            "best quality",
-            "blurry",
-            "hybrid",
+            "1girl, silver hair",
+            "blurry, lowres",
             True,
             True,
         )
-
-        assert isinstance(metadata_out, BubbaMetadata)
-        assert "silver hair" in positive
-        assert negative == "blurry"
-        assert "appearance: silver hair" in sections
-        assert metadata_out.positive_prompt == positive
-        assert metadata_out.negative_prompt == negative
+        assert positive == "1girl, silver hair"
+        assert negative == "blurry, lowres"
         assert positive_cond[0][0].startswith("COND:")
         assert negative_cond[0][0].startswith("COND:")
+        assert isinstance(metadata, BubbaMetadata)
+        assert metadata.positive_prompt == positive
+        assert metadata.negative_prompt == negative
 
-    def test_metadata(self):
-        assert BubbaMetadataPromptBuilder.RETURN_TYPES == ("BUBBA_METADATA", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
-        assert BubbaMetadataPromptBuilder.FUNCTION == "build_prompt"
-        assert BubbaMetadataPromptBuilder.CATEGORY == "Bubba Nodes/Prompt"
+    def test_dedupe(self):
+        node = BubbaSimplePromptBuilder()
+        positive, negative, _, _, _ = node.build_prompt(_DummyClip(), "smile, Smile, hero", "blurry, Blurry", True, True)
+        assert positive == "smile, hero"
+        assert negative == "blurry"
+
+    def test_metadata_node_attrs(self):
+        assert BubbaSimplePromptBuilder.RETURN_TYPES == ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
+        assert BubbaSimplePromptBuilder.FUNCTION == "build_prompt"
+        assert BubbaSimplePromptBuilder.CATEGORY == "Bubba Nodes/Prompt"
+
+    def test_registered_in_node_mappings(self):
+        assert "BubbaSimplePromptBuilder" in NODE_CLASS_MAPPINGS
+        assert NODE_CLASS_MAPPINGS["BubbaSimplePromptBuilder"] is BubbaSimplePromptBuilder
+        assert "BubbaSimplePromptBuilder" in NODE_DISPLAY_NAME_MAPPINGS
 
 
 class TestBubbaPromptCleaner:
@@ -694,14 +930,10 @@ class TestMappings:
         assert "BubbaCheckpointLoader" in NODE_CLASS_MAPPINGS
         assert "BubbaKSampler" in NODE_CLASS_MAPPINGS
         assert "BubbaSaveImage" in NODE_CLASS_MAPPINGS
-        assert "BubbaOverlay" in NODE_CLASS_MAPPINGS
         assert "BubbaOverlayFromMetadata" in NODE_CLASS_MAPPINGS
         assert "BubbaWatermark" in NODE_CLASS_MAPPINGS
-        assert "BubbaMetadataBundle" in NODE_CLASS_MAPPINGS
         assert "BubbaMetadataDebug" in NODE_CLASS_MAPPINGS
-        assert "BubbaMetadataUpdate" in NODE_CLASS_MAPPINGS
         assert "BubbaCharacterPromptBuilder" in NODE_CLASS_MAPPINGS
-        assert "BubbaMetadataPromptBuilder" in NODE_CLASS_MAPPINGS
         assert "BubbaPromptCleaner" in NODE_CLASS_MAPPINGS
         assert "BubbaPromptInspector" in NODE_CLASS_MAPPINGS
 
@@ -713,13 +945,9 @@ class TestMappings:
         assert NODE_CLASS_MAPPINGS["BubbaEmptyLatentBySize"] is BubbaEmptyLatentBySize
         assert NODE_CLASS_MAPPINGS["BubbaLoadImageWithMetadata"] is BubbaLoadImageWithMetadata
         assert NODE_CLASS_MAPPINGS["BubbaCheckpointLoader"] is BubbaCheckpointLoader
-        assert NODE_CLASS_MAPPINGS["BubbaOverlay"] is BubbaOverlay
         assert NODE_CLASS_MAPPINGS["BubbaOverlayFromMetadata"] is BubbaOverlayFromMetadata
-        assert NODE_CLASS_MAPPINGS["BubbaMetadataBundle"] is BubbaMetadataBundle
         assert NODE_CLASS_MAPPINGS["BubbaMetadataDebug"] is BubbaMetadataDebug
-        assert NODE_CLASS_MAPPINGS["BubbaMetadataUpdate"] is BubbaMetadataUpdate
         assert NODE_CLASS_MAPPINGS["BubbaCharacterPromptBuilder"] is BubbaCharacterPromptBuilder
-        assert NODE_CLASS_MAPPINGS["BubbaMetadataPromptBuilder"] is BubbaMetadataPromptBuilder
         assert NODE_CLASS_MAPPINGS["BubbaPromptCleaner"] is BubbaPromptCleaner
         assert NODE_CLASS_MAPPINGS["BubbaPromptInspector"] is BubbaPromptInspector
 

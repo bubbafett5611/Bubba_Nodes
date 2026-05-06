@@ -15,7 +15,6 @@ Bubba Nodes provides ComfyUI nodes for prompt building, prompt inspection, metad
 - Bubba Metadata Bundle
 - Bubba Metadata Debug
 - Bubba Metadata Update
-- Bubba Add Text Overlay
 - Bubba Add Text Overlay (Metadata)
 - Bubba Save Image
 - Bubba Load Image (With Metadata)
@@ -74,12 +73,12 @@ Builds prompts from sections and writes results back into metadata.
 
 | Output | Type | Description |
 |--------|------|-------------|
-| metadata | BUBBA_METADATA | Updated metadata with positive_prompt and negative_prompt. |
 | positive_prompt | STRING | Final positive prompt text. |
 | negative_prompt | STRING | Final negative prompt text. |
 | sections | STRING | Section block text output for display/debug use. |
 | positive_conditioning | CONDITIONING | Encoded from positive_prompt. |
 | negative_conditioning | CONDITIONING | Encoded from negative_prompt. |
+| metadata | BUBBA_METADATA | Updated metadata with positive_prompt and negative_prompt. |
 
 ## Bubba Prompt Cleaner
 
@@ -245,16 +244,6 @@ Updates selected metadata fields and optionally emits conditioning.
 | seed | INT | Final seed value after updates. |
 | positive_conditioning | CONDITIONING | Encoded from metadata positive prompt when clip is connected. |
 | negative_conditioning | CONDITIONING | Encoded from metadata negative prompt when clip is connected. |
-
-## Bubba Add Text Overlay
-
-Renders prompt/model/info text bars directly from explicit text inputs.
-
-### Outputs
-
-| Output | Type | Description |
-|--------|------|-------------|
-| image | IMAGE | Image batch with overlay/underlay text bars. |
 
 ## Bubba Add Text Overlay (Metadata)
 

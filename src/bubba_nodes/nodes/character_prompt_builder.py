@@ -1,8 +1,3 @@
-"""Prompt builder that integrates with and updates BubbaMetadata."""
-
-# TODO(new-feature): Add optional style/character preset inputs that expand into sections before prompt assembly.
-# TODO(new-node): Add a metadata prompt diff node that compares previous and current sections for iterative tuning.
-
 from ..models import BubbaMetadata
 from ..utils.prompting import (
     assemble_prompt_sections,
@@ -11,19 +6,15 @@ from ..utils.prompting import (
 )
 
 
-class BubbaMetadataPromptBuilder:
-    """Builds prompts from sections and adds them to metadata."""
+# TODO(new-node): Add a prompt preset library node that can load/save reusable section sets by character or scene.
+# TODO(new-feature): Add token-budget guidance output (per-model limits) to warn before conditioning truncation.
 
+
+class BubbaCharacterPromptBuilder:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {
-                        "tooltip": "Metadata object to update with prompt sections.",
-                    },
-                ),
                 "clip": (
                     "CLIP",
                     {
@@ -134,27 +125,23 @@ class BubbaMetadataPromptBuilder:
                 ),
             },
             "optional": {
-                "clip_skip": (
-                    "INT",
+                "metadata": (
+                    "BUBBA_METADATA",
                     {
-                        "default": 0,
-                        "min": 0,
-                        "max": 128,
-                        "tooltip": "Number of CLIP encoder layers to skip (0 = no skip).",
+                        "tooltip": "Optional metadata object to update with prompt sections and prompts.",
                     },
                 ),
             },
         }
 
-    RETURN_TYPES = ("BUBBA_METADATA", "STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("metadata", "positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning")
+    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
+    RETURN_NAMES = ("positive_prompt", "negative_prompt", "positive_conditioning", "negative_conditioning", "metadata")
     FUNCTION = "build_prompt"
     CATEGORY = "Bubba Nodes/Prompt"
-    DESCRIPTION = "Builds positive/negative prompts from character sections, encodes conditioning, and updates metadata with sections."
+    DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP. Returns metadata with prompts and sections."
 
     def build_prompt(
         self,
-        metadata,
         clip,
         appearance,
         body,
@@ -168,12 +155,8 @@ class BubbaMetadataPromptBuilder:
         format_mode,
         cleanup,
         dedupe,
-        clip_skip=0,
+        metadata=None,
     ):
-        # TODO(optimize): Short-circuit CLIP encoding when prompts are unchanged from incoming metadata.
-        # Coerce metadata to ensure it's the right type
-        current_metadata = BubbaMetadata.coerce(metadata)
-
         sections = assemble_prompt_sections(
             appearance=appearance,
             body=body,
@@ -186,22 +169,19 @@ class BubbaMetadataPromptBuilder:
             negative_tags=negative_tags,
             format_mode=format_mode,
         )
-
-        positive_prompt, negative_prompt, sections_text = build_prompts_from_sections(
+        positive_prompt, negative_prompt, _ = build_prompts_from_sections(
             sections,
             cleanup=cleanup,
             dedupe=dedupe,
             include_character_in_positive=False,
         )
-
-        # Update metadata with prompts and sections
-        updated_metadata = current_metadata.updated(
-            positive_prompt=positive_prompt,
-            negative_prompt=negative_prompt,
-            clip_skip=clip_skip,
-        )
-
         positive_conditioning = encode_conditioning(clip, positive_prompt)
         negative_conditioning = encode_conditioning(clip, negative_prompt)
 
-        return (updated_metadata, positive_prompt, negative_prompt, sections_text, positive_conditioning, negative_conditioning)
+        # Update metadata with prompts and sections
+        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+            positive_prompt=positive_prompt,
+            negative_prompt=negative_prompt,
+        )
+
+        return (positive_prompt, negative_prompt, positive_conditioning, negative_conditioning, updated_metadata)

@@ -54,6 +54,16 @@ class BubbaComboLoader:
                 "vae_name": (_vae_choices(),),
                 "clip_name": (_clip_choices(),),
                 "clip_type": (_CLIP_TYPES,),
+                "clip_skip": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 24,
+                        "step": 1,
+                        "tooltip": "Number of CLIP layers to skip (0 = disabled).",
+                    },
+                ),
             },
             "optional": {
                 "metadata": (
@@ -70,11 +80,11 @@ class BubbaComboLoader:
     DESCRIPTION = (
         "Loads a checkpoint and optionally overrides its baked-in VAE and CLIP with "
         "external files — useful for models like Anima/WAI-Anima that ship without "
-        "an embedded text encoder or VAE. "
+        "an embedded text encoder or VAE. Applies optional CLIP skip. "
         "Set vae_name or clip_name to 'None' to use the checkpoint's built-in version."
     )
 
-    def load(self, ckpt_name, vae_name, clip_name, clip_type, metadata=None):
+    def load(self, ckpt_name, vae_name, clip_name, clip_type, clip_skip, metadata=None):
         # --- Checkpoint ---------------------------------------------------------
         model, ckpt_clip, ckpt_vae = CheckpointLoaderSimple().load_checkpoint(ckpt_name)
 
@@ -90,9 +100,20 @@ class BubbaComboLoader:
         else:
             clip = ckpt_clip
 
+        # --- Optional CLIP skip -------------------------------------------------
+        applied_clip_skip = max(0, int(clip_skip or 0))
+        if applied_clip_skip > 0:
+            try:
+                clip = clip.clone()
+                clip.clip_layer(-applied_clip_skip)
+            except Exception as exc:
+                print(f"[Bubba] WARNING: Failed to apply CLIP skip={applied_clip_skip}. Using unmodified CLIP. Error: {exc}")
+                applied_clip_skip = 0
+
         # --- Metadata -----------------------------------------------------------
         updated_metadata = BubbaMetadata.coerce(metadata).updated(
             model_name=checkpoint_display_name(ckpt_name),
+            clip_skip=applied_clip_skip,
         )
 
         return (model, clip, vae, str(ckpt_name), updated_metadata)

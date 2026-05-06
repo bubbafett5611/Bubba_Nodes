@@ -25,6 +25,9 @@ class BubbaMetadata(BaseModel):
     positive_prompt: str = Field(default="", description="Positive prompt used for generation")
     negative_prompt: str = Field(default="", description="Negative prompt used for generation")
 
+    # LoRA info - appended by each BubbaLoraLoader in the chain
+    loras: list[str] = Field(default_factory=list, description="LoRA names applied during generation, in order")
+
     # Workflow info
     filepath: str = Field(default="", description="Output filepath or path prefix")
 
@@ -62,6 +65,16 @@ class BubbaMetadata(BaseModel):
         except (ValueError, TypeError):
             return 0.0
 
+    @field_validator("loras", mode="before")
+    @classmethod
+    def coerce_loras(cls, v: Any) -> list[str]:
+        if isinstance(v, list):
+            return [str(item).strip() for item in v if item]
+        if isinstance(v, str):
+            # Handle comma-separated string fallback
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return []
+
     @field_validator("model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath", mode="before")
     @classmethod
     def coerce_text(cls, v: Any) -> str:
@@ -72,10 +85,13 @@ class BubbaMetadata(BaseModel):
         if self.steps <= 0 and not self.sampler_name and not self.scheduler and self.denoise <= 0.0 and self.seed <= 0:
             return ""
 
-        return (
+        info = (
             f"Time: {self.sampler_time_seconds:.3f}s  Seed: {self.seed}  Steps: {self.steps}  CFG: {self.cfg}"
             f"  Sampler: {self.sampler_name}  Scheduler: {self.scheduler}  Denoise: {self.denoise}"
         )
+        if self.loras:
+            info += f"  LoRAs: {', '.join(self.loras)}"
+        return info
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "BubbaMetadata":
