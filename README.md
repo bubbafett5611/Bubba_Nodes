@@ -1,46 +1,47 @@
-﻿# Bubba Nodes
+# Bubba Nodes
 
-Custom ComfyUI nodes for prompt authoring, prompt inspection, metadata-first workflows, overlays, and save/load helpers.
+Custom ComfyUI nodes for prompt authoring, checkpoint/LoRA loading, metadata-first image workflows, overlays, upscaling, and save/load helpers.
 
 ## What Is Included
 
-This extension currently registers 16 nodes:
+This extension registers 17 nodes:
 
 - Bubba Filename Builder
 - Bubba Empty Latent (Preset Sizes)
 - Bubba Load Image (With Metadata)
 - Bubba Checkpoint Loader
 - Bubba Combo Loader
+- Bubba LoRA Loader
 - Bubba KSampler
-- Bubba Save Image
-- Bubba Add Text Overlay (Metadata)
-- Bubba Watermark Overlay
-- Bubba Metadata Bundle
-- Bubba Metadata Debug
-- Bubba Metadata Update
+- Bubba Simple Prompt Builder
 - Bubba Character Prompt Builder
-- Bubba Metadata Prompt Builder
 - Bubba Prompt Cleaner
 - Bubba Prompt Inspector
+- Bubba Metadata Debug
+- Bubba Upscaler (ESRGAN)
+- Bubba Image Compare
+- Bubba Add Text Overlay (Metadata)
+- Bubba Watermark Overlay
+- Bubba Save Image
 
 ## Features
 
-- Build clean relative file paths from character + scene names.
+- Build clean relative file paths from character and scene names.
 - Generate empty latents from preset dimensions with optional orientation swap.
 - Load images and extract embedded Bubba metadata from PNG text.
-- Load checkpoint model/clip/vae while also outputting the selected checkpoint name for metadata/overlay nodes.
-- Run KSampler and output a formatted INFO string (time, seed, steps, CFG, sampler, scheduler, denoise).
-- Run KSampler and update a metadata object with sampler info and seed.
-- Add overlays directly from a bundled metadata object (without wiring prompt/model/info fields separately).
-- Bundle core generation metadata into a typed metadata object for downstream nodes.
-- Convert metadata objects to pretty JSON text for preview/debug nodes.
-- Update selected fields on an existing metadata object without rebuilding it from scratch.
-- Build structured positive/negative prompts from sections (appearance, body, clothing, pose, expression, scene, style, quality).
-- Build prompt sections directly into metadata with prompt section persistence.
-- Normalize and dedupe prompt tags.
-- Inspect prompts for token count, duplicates, and conflict warnings.
-- Use in-node prompt autocomplete for Bubba multiline prompt fields (appearance/body/style/negative/etc.) with keyboard navigation.
-- Save images normally or preview-only through ComfyUI UI helpers, with optional filepath pulled from metadata.
+- Load checkpoints while recording the selected checkpoint name in metadata.
+- Load checkpoint, optional external VAE, optional external CLIP/text encoder, and optional CLIP skip in one node.
+- Apply LoRAs while appending each LoRA name to metadata.
+- Build positive and negative prompts from simple text inputs or structured character sections.
+- Normalize and dedupe prompt tags while preserving first occurrence order.
+- Inspect prompts for token count, duplicate tags, shared positive/negative tags, and simple conflicts.
+- Run KSampler, measure sampling time, update metadata, and optionally decode an image when a VAE is connected.
+- Upscale with ESRGAN/spandrel models and optionally resize the upscaled result.
+- Compare two image batches in the frontend with an A/B splitter.
+- Add text overlays from metadata fields.
+- Add watermark overlays with anchor, scale, opacity, offsets, and optional mask support.
+- Save images normally or as previews, with optional ComfyUI workflow metadata and Bubba PNG metadata.
+- Use in-node autocomplete for Bubba multiline prompt fields, backed by local CSV tag data and embedding names.
 
 ## Installation
 
@@ -72,46 +73,69 @@ If you use a dedicated ComfyUI venv/conda env, run that command from inside the 
 
 ## Quick Workflow Example
 
-1. Use Bubba Character Prompt Builder to produce positive/negative prompts and conditioning.
-2. Optionally run Bubba Prompt Cleaner and Bubba Prompt Inspector for quality checks.
-3. Build metadata with Bubba Metadata Bundle, or use Bubba Metadata Prompt Builder to create prompts and metadata together.
-4. Load checkpoint and sample with Bubba KSampler so sampler info/seed are written back into metadata.
-5. Decode latent to image in your normal pipeline.
-6. Use Bubba Add Text Overlay (Metadata) to render model/info/prompt text from metadata.
-7. Use Bubba Filename Builder when you want an explicit path string outside metadata.
-8. Save with Bubba Save Image and optionally reload with Bubba Load Image (With Metadata).
+1. Use Bubba Combo Loader or Bubba Checkpoint Loader to load the model stack.
+2. Apply one or more Bubba LoRA Loader nodes if needed.
+3. Use Bubba Simple Prompt Builder or Bubba Character Prompt Builder to create prompts, conditioning, and metadata.
+4. Optionally run Bubba Prompt Cleaner and Bubba Prompt Inspector before sampling.
+5. Generate a latent with Bubba Empty Latent (Preset Sizes).
+6. Sample with Bubba KSampler so sampler settings, seed, and timing are written to metadata.
+7. Decode through the KSampler VAE input or your usual VAE Decode node.
+8. Optionally use Bubba Upscaler, Bubba Add Text Overlay (Metadata), or Bubba Watermark Overlay.
+9. Save with Bubba Save Image and reload later with Bubba Load Image (With Metadata).
 
 ## Metadata Notes
 
-- Metadata is represented by the typed BUBBA_METADATA object.
-- Metadata includes model_name, clip_skip, sampler_time_seconds, steps, cfg, sampler_name, scheduler, denoise, positive_prompt, negative_prompt, seed, and filepath.
-- Bubba Save Image embeds metadata into PNG text under bubba_metadata.
-- Bubba Load Image (With Metadata) reads bubba_metadata from PNG text and reconstructs BUBBA_METADATA.
+- Metadata is represented by the typed `BUBBA_METADATA` object.
+- Metadata currently includes `model_name`, `clip_skip`, `sampler_time_seconds`, `steps`, `cfg`, `sampler_name`, `scheduler`, `denoise`, `seed`, `positive_prompt`, `negative_prompt`, `loras`, and `filepath`.
+- Bubba Metadata Debug displays pretty JSON directly on the node and still outputs the same text for wiring.
+- Bubba Save Image embeds metadata into PNG text under `bubba_metadata`.
+- Bubba Save Image can also embed ComfyUI `prompt` and `workflow` metadata when `save_workflow_metadata` is enabled.
+- The Save Image node shows a frontend metadata warning when connected Bubba metadata is empty/default, or when PNG metadata embedding fails for one or more saved files.
+- Bubba Load Image (With Metadata) reads `bubba_metadata` from PNG text and reconstructs `BUBBA_METADATA`.
 
 ## Prompt Notes
 
-- Supported format_mode values are booru, prose, and hybrid.
+- Supported `format_mode` values are `booru`, `prose`, and `hybrid`.
+- `cleanup` normalizes whitespace and separators before prompt output.
+- `dedupe` removes duplicate tags case-insensitively while preserving the first spelling/order.
 - Prompt Inspector outputs:
-  - token_count (INT)
-  - duplicate_tags (STRING)
-  - conflict_warnings (STRING)
-  - formatted_preview (STRING)
+  - `token_count`
+  - `duplicate_tags`
+  - `conflict_warnings`
+  - `formatted_preview`
 - Prompt conflict warnings currently include:
   - tags that appear in both positive and negative prompts
   - simple pair checks such as solo/multiple people, male/female, day/night, indoors/outdoors, and safe/nsfw
+- Bubba multiline prompt fields show lightweight tag chips and hints while typing.
+- The prompt helper shows exact tag count plus a lightweight estimated token count, such as `8 tags · ~42 tokens`.
+- Duplicate tags are marked in amber.
+- Tags shared between positive and negative fields on the same node are marked in red.
+- Simple local conflicts such as day/night and indoors/outdoors are surfaced as red hint chips.
 
 ## Autocomplete Notes
 
 - The frontend extension is loaded from [web/comfyui/autocomplete.js](web/comfyui/autocomplete.js).
-- Autocomplete is active on Bubba multiline prompt inputs (for example: appearance, style_tags, quality_tags, negative_tags).
+- Autocomplete is active on Bubba multiline prompt inputs such as positive, negative, appearance, style tags, quality tags, and negative tags.
 - Type part of a tag to open suggestions.
 - Use arrow keys to select, then press Tab or Enter to insert.
-- Add your own words from ComfyUI settings using local storage.
+- Add custom words from ComfyUI settings using local storage.
 - Enable or disable local-tag suggestions with `Bubba: Include Local CSV Tags`.
-- Tag data is read from the local file `web/comfyui/danbooru_e621_merged.csv`.
+- Tag data is read from `web/comfyui/danbooru_e621_merged.csv`.
 - Use `Bubba: Local CSV Source` to open the current local CSV.
-- Use `Bubba: Local CSV Sync + Cache` and `Download Latest + Rebuild Cache` to download the newest DraconicDragon merged CSV and refresh browser cache from that local file.
+- Use `Bubba: Local CSV Sync + Cache` and `Download Latest + Rebuild Cache` to download the newest DraconicDragon merged CSV and rebuild browser cache from the local file.
 - Suggestions are ranked by canonical and alias prefix match, then post count.
+- `Bubba: Prompt Tag Chips + Hints` toggles the inline prompt assistant independently from autocomplete.
+
+## Preview Routes
+
+Bubba Nodes registers optional local ComfyUI routes for checkpoint and LoRA previews:
+
+- `/bubba/checkpoint_preview`
+- `/bubba/checkpoint_civitai_link`
+- `/bubba/lora_preview`
+- `/bubba/lora_civitai_link`
+
+Preview lookup checks for sidecar images next to the model file, using `.preview.jpg/.png/.webp` first, then `.jpg/.png/.webp`.
 
 ## Node Documentation
 
@@ -145,12 +169,16 @@ Run tests with:
 pytest
 ```
 
+On some Windows sandboxed environments, pytest's default temp-folder permissions can block `tmp_path`. The test suite provides a local temp fixture under `.test_tmp/`, which is ignored by git.
+
 ## Project Layout
 
 - Nodes: [src/bubba_nodes/nodes](src/bubba_nodes/nodes)
 - Models: [src/bubba_nodes/models](src/bubba_nodes/models)
 - Utilities: [src/bubba_nodes/utils](src/bubba_nodes/utils)
+- Server routes: [src/bubba_nodes/server](src/bubba_nodes/server)
 - Tests: [tests](tests)
+- Frontend extension: [web/comfyui](web/comfyui)
 - Web docs: [web/docs](web/docs)
 
 ## Publishing
@@ -159,9 +187,9 @@ Package metadata and Comfy registry fields live in [pyproject.toml](pyproject.to
 
 If publishing to the Comfy Registry:
 
-1. Verify publisher and metadata under tool.comfy.
+1. Verify publisher and metadata under `tool.comfy`.
 2. Create a registry API key.
-3. Add the token to repository secrets as REGISTRY_ACCESS_TOKEN.
+3. Add the token to repository secrets as `REGISTRY_ACCESS_TOKEN`.
 4. Trigger your release workflow.
 
 Registry docs: https://docs.comfy.org/registry/publishing

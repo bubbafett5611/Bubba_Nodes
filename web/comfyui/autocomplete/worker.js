@@ -74,7 +74,6 @@ self.onmessage = (event) => {
 					type: "queryResult",
 					requestId,
 					results: [],
-					matchedCount: 0,
 				});
 				return;
 			}
@@ -87,7 +86,6 @@ self.onmessage = (event) => {
 				type: "queryResult",
 				requestId,
 				results,
-				matchedCount: matched.length,
 			});
 		}
 	} catch (error) {

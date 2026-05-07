@@ -5,6 +5,31 @@ import { getSearchIndex, findMatchesFromIndex, findMatchMetadata } from './searc
 import { getWordList, ensureEmbeddingCacheSeeded } from './cache.js';
 
 const WORKER_RESPONSE_TIMEOUT_MS = 10000;
+const PROMPT_CHIP_LIMIT = 36;
+const PROMPT_CONFLICT_RULES = [
+	{ terms: ["solo", "multiple people"], severity: "hard" },
+	{ terms: ["solo", "group"], severity: "hard" },
+	{ terms: ["solo", "crowd"], severity: "hard" },
+	{ terms: ["day", "night"], severity: "hard" },
+	{ terms: ["indoors", "outdoors"], severity: "hard" },
+	{ terms: ["inside", "outside"], severity: "hard" },
+	{ terms: ["eyes open", "closed eyes"], severity: "hard" },
+	{ terms: ["front view", "back view"], severity: "hard" },
+	{ terms: ["safe", "nsfw"], severity: "hard" },
+	{ terms: ["sfw", "nsfw"], severity: "hard" },
+	{ terms: ["solo", "male", "female"], severity: "soft" },
+	{ terms: ["solo", "1girl", "1boy"], severity: "soft" },
+	{ terms: ["realistic", "anime"], severity: "soft" },
+	{ terms: ["photorealistic", "anime"], severity: "soft" },
+	{ terms: ["full body", "close-up"], severity: "soft" },
+	{ terms: ["full body", "portrait"], severity: "soft" },
+	{ terms: ["standing", "sitting"], severity: "soft" },
+	{ terms: ["standing", "lying"], severity: "soft" },
+	{ terms: ["smile", "crying"], severity: "soft" },
+	{ terms: ["young", "old"], severity: "soft" },
+];
+
+const promptAssistantInstancesByNode = new WeakMap();
 
 // Styles
 {
@@ -42,19 +67,257 @@ const WORKER_RESPONSE_TIMEOUT_MS = 10000;
 			margin-left: 8px;
 			font-style: italic;
 		}
+		.bubba-prompt-assistant {
+			position: fixed;
+			z-index: 99998;
+			display: flex;
+			flex-wrap: wrap;
+			gap: 4px;
+			align-items: center;
+			box-sizing: border-box;
+			width: max-content;
+			max-width: min(460px, calc(100vw - 16px));
+			padding: 3px 6px;
+			border: 1px solid rgba(128, 128, 128, 0.28);
+			border-radius: 6px;
+			background: var(--comfy-menu-bg);
+			background: color-mix(in srgb, var(--comfy-menu-bg) 92%, transparent);
+			pointer-events: none;
+			font-size: 11px;
+			line-height: 1.2;
+			overflow: hidden;
+		}
+		.bubba-prompt-assistant[hidden] {
+			display: none;
+		}
+		.bubba-prompt-chip {
+			max-width: 180px;
+			padding: 2px 6px;
+			border: 1px solid rgba(128, 128, 128, 0.35);
+			border-radius: 4px;
+			background: rgba(128, 128, 128, 0.12);
+			color: var(--input-text);
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.bubba-prompt-chip.issue {
+			border-color: rgba(255, 176, 64, 0.75);
+			background: rgba(255, 176, 64, 0.16);
+		}
+		.bubba-prompt-chip.warning {
+			border-color: rgba(255, 205, 80, 0.82);
+			background: rgba(255, 205, 80, 0.18);
+		}
+		.bubba-prompt-chip.conflict {
+			border-color: rgba(255, 90, 90, 0.75);
+			background: rgba(255, 90, 90, 0.16);
+		}
+		.bubba-prompt-chip.shared {
+			border-color: rgba(120, 170, 255, 0.65);
+			background: rgba(120, 170, 255, 0.14);
+		}
+		.bubba-prompt-summary {
+			opacity: 0.78;
+			padding: 2px 4px;
+		}
 	`;
 	if (typeof document !== "undefined") {
 		document.body.appendChild(style);
 	}
 }
 
+function normalizePromptToken(value) {
+	return String(value || "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.toLowerCase();
+}
+
+function splitPromptTokens(value) {
+	return String(value || "")
+		.replace(/\n/g, ",")
+		.split(",")
+		.map((part) => part.trim())
+		.filter(Boolean);
+}
+
+function estimatePromptTokenCount(value) {
+	const words = String(value || "").match(/[A-Za-z0-9]+(?:[_'-][A-Za-z0-9]+)*/g);
+	return Array.isArray(words) ? words.length : 0;
+}
+
+function analyzePromptText(value) {
+	const tokens = splitPromptTokens(value);
+	const counts = new Map();
+	for (const token of tokens) {
+		const key = normalizePromptToken(token);
+		if (!key) {
+			continue;
+		}
+		counts.set(key, (counts.get(key) || 0) + 1);
+	}
+
+	const duplicates = new Set([...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key));
+	const localConflicts = [];
+	for (const rule of PROMPT_CONFLICT_RULES) {
+		if (rule.terms.every((term) => counts.has(term))) {
+			localConflicts.push({
+				text: rule.terms.join(" + "),
+				severity: rule.severity,
+			});
+		}
+	}
+
+	return {
+		tokens,
+		counts,
+		duplicates,
+		localConflicts,
+		estimatedTokenCount: estimatePromptTokenCount(value),
+	};
+}
+
+function resolvePromptRole(group, inputName) {
+	const key = `${group || ""} ${inputName || ""}`.toLowerCase();
+	if (key.includes("negative")) {
+		return "negative";
+	}
+	return "positive";
+}
+
+function getNodeAssistantInstances(node) {
+	if (!node || typeof node !== "object") {
+		return [];
+	}
+	return promptAssistantInstancesByNode.get(node) || [];
+}
+
+function registerPromptAssistantInstance(node, instance) {
+	if (!node || typeof node !== "object") {
+		return;
+	}
+	const instances = getNodeAssistantInstances(node);
+	if (!instances.includes(instance)) {
+		instances.push(instance);
+		promptAssistantInstancesByNode.set(node, instances);
+	}
+}
+
+function unregisterPromptAssistantInstance(node, instance) {
+	if (!node || typeof node !== "object") {
+		return;
+	}
+	const instances = getNodeAssistantInstances(node);
+	const nextInstances = instances.filter((item) => item !== instance);
+	if (nextInstances.length) {
+		promptAssistantInstancesByNode.set(node, nextInstances);
+		return;
+	}
+	promptAssistantInstancesByNode.delete(node);
+}
+
+function collectNodeRoleTokens(node) {
+	const roles = {
+		positive: new Set(),
+		negative: new Set(),
+	};
+	for (const instance of getNodeAssistantInstances(node)) {
+		const analysis = instance.getPromptAnalysis();
+		for (const key of analysis.counts.keys()) {
+			roles[instance.promptRole].add(key);
+		}
+	}
+	return roles;
+}
+
+function findCrossPromptConflicts(node, role, analysis) {
+	if (!node || !analysis.tokens.length) {
+		return new Set();
+	}
+	const roles = collectNodeRoleTokens(node);
+	const oppositeRole = role === "negative" ? "positive" : "negative";
+	const opposite = roles[oppositeRole] || new Set();
+	const conflicts = new Set();
+	for (const key of analysis.counts.keys()) {
+		if (opposite.has(key)) {
+			conflicts.add(key);
+		}
+	}
+	return conflicts;
+}
+
+function promptAssistantSummaryParts(role, analysis, crossConflicts) {
+	const parts = [];
+	const hardConflictCount = analysis.localConflicts.filter((conflict) => conflict.severity === "hard").length;
+	const softWarningCount = analysis.localConflicts.filter((conflict) => conflict.severity !== "hard").length;
+	if (analysis.duplicates.size) {
+		parts.push(`${analysis.duplicates.size} duplicate${analysis.duplicates.size === 1 ? "" : "s"}`);
+	}
+	if (crossConflicts.size) {
+		parts.push(`${crossConflicts.size} shared with ${role === "negative" ? "positive" : "negative"}`);
+	}
+	if (hardConflictCount) {
+		parts.push(`${hardConflictCount} conflict${hardConflictCount === 1 ? "" : "s"}`);
+	}
+	if (softWarningCount) {
+		parts.push(`${softWarningCount} warning${softWarningCount === 1 ? "" : "s"}`);
+	}
+	return parts;
+}
+
+function buildPromptIssueChips(role, analysis, crossConflicts) {
+	const chips = [];
+	const oppositeRole = role === "negative" ? "positive" : "negative";
+	const seen = new Set();
+
+	for (const token of analysis.tokens) {
+		const key = normalizePromptToken(token);
+		if (!key || seen.has(key)) {
+			continue;
+		}
+		if (analysis.duplicates.has(key)) {
+			seen.add(key);
+			chips.push({
+				text: token,
+				kind: "duplicate",
+			});
+			continue;
+		}
+		if (crossConflicts.has(key)) {
+			seen.add(key);
+			chips.push({
+				text: token,
+				kind: "shared",
+				title: `Also in ${oppositeRole}`,
+			});
+		}
+	}
+
+	for (const conflict of analysis.localConflicts) {
+		chips.push({
+			text: conflict.text,
+			kind: conflict.severity === "hard" ? "conflict" : "warning",
+		});
+	}
+
+	return chips;
+}
+
 export class BubbaTextAutoComplete {
-	constructor(inputEl, group) {
+	constructor(inputEl, group, node = null, inputName = "") {
 		this.inputEl = inputEl;
 		this.group = group || "common";
+		this.node = node;
+		this.inputName = inputName || "";
+		this.promptRole = resolvePromptRole(this.group, this.inputName);
 		this.menuEl = document.createElement("div");
 		this.menuEl.classList.add("bubba-autocomplete");
 		document.body.appendChild(this.menuEl);
+		this.assistantEl = document.createElement("div");
+		this.assistantEl.classList.add("bubba-prompt-assistant");
+		this.assistantEl.hidden = true;
+		document.body.appendChild(this.assistantEl);
 		this.menuEl.style.display = "none";
 		this.items = [];
 		this.selectedIndex = -1;
@@ -72,6 +335,8 @@ export class BubbaTextAutoComplete {
 		this.workerWordsRef = null;
 		this.workerRequestSeq = 0;
 		this.workerPending = new Map();
+		this.inputWasConnected = this.inputEl.isConnected;
+		this.promptAssistantBlurTimer = null;
 
 		this.onInput = this.onInput.bind(this);
 		this.onInputImmediate = this.onInputImmediate.bind(this);
@@ -79,12 +344,21 @@ export class BubbaTextAutoComplete {
 		this.onKeyDown = this.onKeyDown.bind(this);
 		this.onBlur = this.onBlur.bind(this);
 		this.onFocus = this.onFocus.bind(this);
+		this.updatePromptAssistant = this.updatePromptAssistant.bind(this);
+		this.requestPromptAssistantPosition = this.requestPromptAssistantPosition.bind(this);
+		this.positionPromptAssistant = this.positionPromptAssistant.bind(this);
 
 		this.inputEl.addEventListener("input", this.onInput);
 		this.inputEl.addEventListener("keydown", this.onKeyDown);
 		this.inputEl.addEventListener("blur", this.onBlur);
 		this.inputEl.addEventListener("focus", this.onFocus);
+		window.addEventListener("resize", this.requestPromptAssistantPosition);
+		document.addEventListener("scroll", this.requestPromptAssistantPosition, true);
+		document.addEventListener("pointermove", this.requestPromptAssistantPosition, { passive: true });
+		document.addEventListener("wheel", this.requestPromptAssistantPosition, { passive: true });
+		registerPromptAssistantInstance(this.node, this);
 		this.initializeSearchWorker();
+		this.updatePromptAssistant();
 	}
 
 	initializeSearchWorker() {
@@ -141,6 +415,33 @@ export class BubbaTextAutoComplete {
 		this.workerPending.clear();
 	}
 
+	destroy() {
+		if (this.destroyed) {
+			return;
+		}
+		this.destroyed = true;
+		this.inputEl.removeEventListener("input", this.onInput);
+		this.inputEl.removeEventListener("keydown", this.onKeyDown);
+		this.inputEl.removeEventListener("blur", this.onBlur);
+		this.inputEl.removeEventListener("focus", this.onFocus);
+		window.removeEventListener("resize", this.requestPromptAssistantPosition);
+		document.removeEventListener("scroll", this.requestPromptAssistantPosition, true);
+		document.removeEventListener("pointermove", this.requestPromptAssistantPosition);
+		document.removeEventListener("wheel", this.requestPromptAssistantPosition);
+		if (this.promptAssistantPositionFrame) {
+			cancelAnimationFrame(this.promptAssistantPositionFrame);
+			this.promptAssistantPositionFrame = null;
+		}
+		if (this.promptAssistantBlurTimer) {
+			clearTimeout(this.promptAssistantBlurTimer);
+			this.promptAssistantBlurTimer = null;
+		}
+		unregisterPromptAssistantInstance(this.node, this);
+		this.disableSearchWorker();
+		this.menuEl.remove();
+		this.assistantEl.remove();
+	}
+
 	postWorkerMessage(payload, timeoutMs = WORKER_RESPONSE_TIMEOUT_MS) {
 		if (!this.searchWorkerEnabled || !this.searchWorker) {
 			return Promise.reject(new Error("worker_unavailable"));
@@ -186,7 +487,6 @@ export class BubbaTextAutoComplete {
 		});
 		return {
 			results: Array.isArray(message.results) ? message.results : [],
-			matchedCount: Number.isFinite(message.matchedCount) ? message.matchedCount : 0,
 		};
 	}
 
@@ -291,6 +591,7 @@ export class BubbaTextAutoComplete {
 		this.inputEl.value = nextValue;
 		this.inputEl.setSelectionRange(nextCaret, nextCaret);
 		this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+		this.updatePromptAssistant();
 		this.hide();
 	}
 
@@ -355,6 +656,12 @@ export class BubbaTextAutoComplete {
 	}
 
 	onInput() {
+		this.updatePromptAssistant();
+		for (const instance of getNodeAssistantInstances(this.node)) {
+			if (instance !== this) {
+				instance.updatePromptAssistant();
+			}
+		}
 		if (this.searchTimer) {
 			clearTimeout(this.searchTimer);
 			this.searchTimer = null;
@@ -423,13 +730,11 @@ export class BubbaTextAutoComplete {
 			const queryVariations = getSearchQueryVariations(query);
 			const words = getWordList();
 			let results = [];
-			let matchedCount = 0;
 
 			if (this.searchWorkerEnabled) {
 				try {
 					const workerResult = await this.queryWorker(words, queryVariations, BubbaTextAutoComplete.suggestionLimit);
 					results = workerResult.results;
-					matchedCount = workerResult.matchedCount;
 				} catch (error) {
 					console.warn("Bubba Autocomplete: worker query failed, falling back to main-thread search.", error);
 					this.disableSearchWorker();
@@ -465,7 +770,6 @@ export class BubbaTextAutoComplete {
 							.filter(Boolean)
 					: findMatchesFromIndex(index, queryVariations)
 				);
-				matchedCount = matched.length;
 				results = this.selectTopMatches(matched, BubbaTextAutoComplete.suggestionLimit);
 
 				if (matched.length <= 3000) {
@@ -498,6 +802,11 @@ export class BubbaTextAutoComplete {
 
 	onFocus() {
 		if (!BubbaTextAutoComplete.enabled) return;
+		if (this.promptAssistantBlurTimer) {
+			clearTimeout(this.promptAssistantBlurTimer);
+			this.promptAssistantBlurTimer = null;
+		}
+		this.updatePromptAssistant();
 		this.onInputImmediate();
 	}
 
@@ -507,6 +816,10 @@ export class BubbaTextAutoComplete {
 			this.searchTimer = null;
 		}
 		setTimeout(() => this.hide(), 100);
+		this.promptAssistantBlurTimer = setTimeout(() => {
+			this.promptAssistantBlurTimer = null;
+			this.hidePromptAssistant();
+		}, 120);
 	}
 
 	onKeyDown(event) {
@@ -535,11 +848,149 @@ export class BubbaTextAutoComplete {
 			this.hide();
 		}
 	}
+
+	getPromptAnalysis() {
+		return analyzePromptText(this.inputEl.value);
+	}
+
+	inputWasDetached() {
+		if (this.inputEl.isConnected) {
+			this.inputWasConnected = true;
+			return false;
+		}
+		return this.inputWasConnected;
+	}
+
+	hidePromptAssistant() {
+		this.assistantEl.hidden = true;
+		this.assistantEl.style.visibility = "hidden";
+	}
+
+	requestPromptAssistantPosition() {
+		if (this.inputWasDetached()) {
+			this.destroy();
+			return;
+		}
+		if (!this.inputEl.isConnected || this.promptAssistantPositionFrame || this.assistantEl.hidden) {
+			return;
+		}
+		this.promptAssistantPositionFrame = requestAnimationFrame(() => {
+			this.promptAssistantPositionFrame = null;
+			this.positionPromptAssistant();
+		});
+	}
+
+	positionPromptAssistant() {
+		if (this.inputWasDetached()) {
+			this.destroy();
+			return;
+		}
+		if (!this.inputEl.isConnected || this.assistantEl.hidden) {
+			return;
+		}
+
+		const rect = this.inputEl.getBoundingClientRect();
+		const isVisible = rect.width > 0
+			&& rect.height > 0
+			&& rect.bottom > 0
+			&& rect.top < window.innerHeight
+			&& rect.right > 0
+			&& rect.left < window.innerWidth;
+
+		if (!isVisible) {
+			this.assistantEl.style.visibility = "hidden";
+			return;
+		}
+
+		this.assistantEl.style.width = "max-content";
+		const measuredWidth = Math.min(this.assistantEl.offsetWidth || 120, window.innerWidth - 16);
+		const left = Math.max(8, Math.min(rect.left, window.innerWidth - measuredWidth - 8));
+		const measuredHeight = this.assistantEl.offsetHeight || 28;
+		const top = rect.top - measuredHeight - 4 >= 8
+			? rect.top - measuredHeight - 4
+			: Math.min(rect.bottom + 4, window.innerHeight - measuredHeight - 8);
+
+		this.assistantEl.style.left = `${Math.round(left)}px`;
+		this.assistantEl.style.top = `${Math.round(top)}px`;
+		this.assistantEl.style.visibility = "visible";
+	}
+
+	updatePromptAssistant() {
+		if (this.inputWasDetached()) {
+			this.destroy();
+			return;
+		}
+		if (!this.inputEl.isConnected) {
+			this.hidePromptAssistant();
+			return;
+		}
+		if (document.activeElement !== this.inputEl) {
+			this.hidePromptAssistant();
+			return;
+		}
+		if (!BubbaTextAutoComplete.promptAssistantEnabled) {
+			this.hidePromptAssistant();
+			return;
+		}
+
+		const analysis = this.getPromptAnalysis();
+		const crossConflicts = findCrossPromptConflicts(this.node, this.promptRole, analysis);
+		const issueChips = buildPromptIssueChips(this.promptRole, analysis, crossConflicts);
+		const hasIssues = analysis.duplicates.size > 0 || analysis.localConflicts.length > 0 || crossConflicts.size > 0;
+		const visibleIssues = issueChips.slice(0, PROMPT_CHIP_LIMIT);
+
+		this.assistantEl.replaceChildren();
+		if (!analysis.tokens.length) {
+			this.hidePromptAssistant();
+			return;
+		}
+
+		for (const issue of visibleIssues) {
+			const chip = document.createElement("span");
+			chip.classList.add("bubba-prompt-chip");
+			if (issue.kind === "duplicate") {
+				chip.classList.add("issue");
+				chip.title = "Duplicate tag";
+			}
+			if (issue.kind === "shared") {
+				chip.classList.add("shared");
+				chip.title = issue.title || "Shared with the opposite prompt";
+			}
+			if (issue.kind === "warning") {
+				chip.classList.add("warning");
+				chip.title = "Prompt warning";
+			}
+			if (issue.kind === "conflict") {
+				chip.classList.add("conflict");
+				chip.title = issue.title || "Prompt conflict";
+			}
+			chip.textContent = issue.text;
+			this.assistantEl.appendChild(chip);
+		}
+
+		if (issueChips.length > visibleIssues.length) {
+			const summary = document.createElement("span");
+			summary.classList.add("bubba-prompt-summary");
+			summary.textContent = `+${issueChips.length - visibleIssues.length} more issues`;
+			this.assistantEl.appendChild(summary);
+		}
+
+		const summary = document.createElement("span");
+		summary.classList.add("bubba-prompt-summary");
+		const parts = promptAssistantSummaryParts(this.promptRole, analysis, crossConflicts);
+		const issueText = hasIssues ? ` - ${parts.join(" | ")}` : "";
+		summary.textContent = `${analysis.tokens.length} tag${analysis.tokens.length === 1 ? "" : "s"} | ~${analysis.estimatedTokenCount} tokens${issueText}`;
+		this.assistantEl.appendChild(summary);
+
+		this.assistantEl.hidden = false;
+		this.positionPromptAssistant();
+	}
 }
 
 BubbaTextAutoComplete.enabled = true;
 BubbaTextAutoComplete.suggestionLimit = 20;
 BubbaTextAutoComplete.replaceUnderscores = false;
+BubbaTextAutoComplete.promptAssistantEnabled = true;
 
 function resolveGroup(node, inputName, inputData) {
 	const config = inputData?.[1]?.["bubba.autocomplete"];
@@ -598,7 +1049,7 @@ export function installStringWidgetHook() {
 			}
 
 			inputEl.dataset.bubbaAutocompleteAttached = "1";
-			new BubbaTextAutoComplete(inputEl, group);
+			new BubbaTextAutoComplete(inputEl, group, node, inputName);
 			return result;
 		};
 

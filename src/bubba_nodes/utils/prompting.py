@@ -101,6 +101,24 @@ def dedupe_prompt_tokens(items: list[str]) -> list[str]:
     return output
 
 
+def normalize_prompt_section_value(text: str, cleanup: bool) -> str:
+    value = str(text or "").strip()
+    if cleanup:
+        return clean_prompt_value(value)
+    return value
+
+
+def prompt_value_to_tokens(text: str, cleanup: bool, dedupe: bool) -> list[str]:
+    value = normalize_prompt_section_value(text, cleanup)
+    tokens = split_prompt_tokens(value)
+    if cleanup:
+        tokens = [clean_prompt_value(item) for item in tokens]
+        tokens = [item for item in tokens if item]
+    if dedupe:
+        tokens = dedupe_prompt_tokens(tokens)
+    return tokens
+
+
 def format_positive_prompt(values: list[str], format_mode: str) -> str:
     if not values:
         return ""
@@ -137,34 +155,17 @@ def build_prompts_from_sections(
     section_lines: list[str] = []
 
     for key in POSITIVE_SECTION_KEYS:
-        value = (normalized.get(key, "") or "").strip()
-        if cleanup:
-            value = clean_prompt_value(value)
-        normalized[key] = value
-        if value:
-            parts = split_prompt_tokens(value)
-            if dedupe:
-                parts = dedupe_prompt_tokens(parts)
-            value = ", ".join(parts)
-            normalized[key] = value
+        section_value = normalize_prompt_section_value(normalized.get(key, ""), cleanup)
+        normalized[key] = section_value
+        if section_value:
+            section_tokens = prompt_value_to_tokens(section_value, cleanup, dedupe)
+            normalized[key] = ", ".join(section_tokens)
             if include_character_in_positive or key != "character":
-                positive_tokens.extend(parts)
+                positive_tokens.extend(section_tokens)
         section_lines.append(f"{key}: {normalized[key]}")
 
-    negative_value = (normalized.get("negative", "") or "").strip()
-    if cleanup:
-        negative_value = clean_prompt_value(negative_value)
-    negative_parts = split_prompt_tokens(negative_value)
-    if cleanup:
-        cleaned_negative_parts = []
-        for item in negative_parts:
-            cleaned = clean_prompt_value(item)
-            if cleaned:
-                cleaned_negative_parts.append(cleaned)
-        negative_parts = cleaned_negative_parts
-    if dedupe:
-        negative_parts = dedupe_prompt_tokens(negative_parts)
-    normalized["negative"] = ", ".join(negative_parts)
+    negative_tokens = prompt_value_to_tokens(normalized.get("negative", ""), cleanup, dedupe)
+    normalized["negative"] = ", ".join(negative_tokens)
 
     if dedupe:
         positive_tokens = dedupe_prompt_tokens(positive_tokens)

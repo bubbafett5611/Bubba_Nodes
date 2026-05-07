@@ -1,6 +1,7 @@
 const { app } = window.comfyAPI.app;
 
 const AUTOCOMPLETE_ENABLED_KEY = "bubba.Autocomplete.Enabled";
+const PROMPT_ASSISTANT_ENABLED_KEY = "bubba.PromptAssistant.Enabled";
 const AUTOCOMPLETE_SUGGESTION_LIMIT_KEY = "bubba.Autocomplete.SuggestionLimit";
 const AUTOCOMPLETE_SUGGESTION_LIMIT_DEFAULT = 20;
 const AUTOCOMPLETE_REPLACE_UNDERSCORES_KEY = "bubba.Autocomplete.ReplaceUnderscores";
@@ -50,9 +51,12 @@ app.registerExtension({
 			const { installEmptyLatentSizeMenu } = await import("./latent_size_menu.js");
 			const { installSamplerSeedButton } = await import("./sampler_seed_button.js");
 			const { installImageCompareNode } = await import("./image_compare_node.js");
+			const { installSaveResultWarnings } = await import("./save_result_warnings.js");
+			const { installMetadataDebugNode } = await import("./metadata_debug_node.js");
 
 			// installStringWidgetHook() is deferred to setup() where ComfyWidgets.STRING is ready
 			BubbaTextAutoComplete.enabled = localStorage.getItem(AUTOCOMPLETE_ENABLED_KEY) !== "false";
+			BubbaTextAutoComplete.promptAssistantEnabled = localStorage.getItem(PROMPT_ASSISTANT_ENABLED_KEY) !== "false";
 			BubbaTextAutoComplete.suggestionLimit = normalizeSuggestionLimit(
 				localStorage.getItem(AUTOCOMPLETE_SUGGESTION_LIMIT_KEY) ?? AUTOCOMPLETE_SUGGESTION_LIMIT_DEFAULT,
 			);
@@ -62,6 +66,8 @@ app.registerExtension({
 			installEmptyLatentSizeMenu();
 			installSamplerSeedButton();
 			installImageCompareNode();
+			installSaveResultWarnings();
+			installMetadataDebugNode();
 
 			// Seed caches in background without blocking init
 			try {
@@ -102,6 +108,17 @@ app.registerExtension({
 				onChange(value) {
 					BubbaTextAutoComplete.enabled = !!value;
 					localStorage.setItem(AUTOCOMPLETE_ENABLED_KEY, String(!!value));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: PROMPT_ASSISTANT_ENABLED_KEY,
+				name: "Bubba: Prompt Tag Chips + Hints",
+				type: "boolean",
+				defaultValue: true,
+				onChange(value) {
+					BubbaTextAutoComplete.promptAssistantEnabled = !!value;
+					localStorage.setItem(PROMPT_ASSISTANT_ENABLED_KEY, String(!!value));
 				},
 			});
 

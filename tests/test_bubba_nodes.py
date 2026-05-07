@@ -300,6 +300,59 @@ class TestBubbaSaveImage:
             assert "workflow" not in saved.info
             assert json.loads(saved.info["bubba_metadata"])["model_name"] == "nova"
 
+    def test_save_images_warns_when_connected_metadata_is_empty(self, tmp_path, monkeypatch):
+        class _FolderPathsStub:
+            @staticmethod
+            def get_output_directory():
+                return str(tmp_path)
+
+        monkeypatch.setattr(save_image_module, "folder_paths", _FolderPathsStub)
+
+        image_path = tmp_path / "Hero" / "empty_metadata_00001_.png"
+        image_path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color=(70, 80, 90)).save(image_path)
+
+        UI.ImageSaveHelper.get_save_images_ui.return_value.as_dict.return_value = {
+            "images": [{"filename": image_path.name, "subfolder": "Hero", "type": "output"}],
+        }
+
+        result = BubbaSaveImage().save_images(
+            images=[object()],
+            filepath="Hero/empty_metadata",
+            preview_only=False,
+            save_workflow_metadata=False,
+            metadata=BubbaMetadata(),
+        )
+
+        assert result["ui"]["metadata_warnings"] == [
+            "Bubba metadata input is connected but contains no model, prompt, sampler, seed, or LoRA data."
+        ]
+
+    def test_save_images_does_not_warn_when_metadata_is_not_connected(self, tmp_path, monkeypatch):
+        class _FolderPathsStub:
+            @staticmethod
+            def get_output_directory():
+                return str(tmp_path)
+
+        monkeypatch.setattr(save_image_module, "folder_paths", _FolderPathsStub)
+
+        image_path = tmp_path / "Hero" / "plain_00001_.png"
+        image_path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color=(90, 80, 70)).save(image_path)
+
+        UI.ImageSaveHelper.get_save_images_ui.return_value.as_dict.return_value = {
+            "images": [{"filename": image_path.name, "subfolder": "Hero", "type": "output"}],
+        }
+
+        result = BubbaSaveImage().save_images(
+            images=[object()],
+            filepath="Hero/plain",
+            preview_only=False,
+            save_workflow_metadata=False,
+        )
+
+        assert "metadata_warnings" not in result["ui"]
+
     def test_save_then_load_preserves_bubba_metadata_for_multi_image_batch(self, tmp_path, monkeypatch):
         class _FolderPathsStub:
             @staticmethod
@@ -359,11 +412,13 @@ class TestBubbaMetadataDebug:
             seed=9,
             filepath="Character/Scene",
         )
-        (metadata_text,) = node.debug_metadata(metadata)
+        result = node.debug_metadata(metadata)
+        (metadata_text,) = result["result"]
         payload = json.loads(metadata_text)
 
         assert payload["model_name"] == "myModel"
         assert payload["seed"] == 9
+        assert result["ui"]["metadata_text"] == [metadata_text]
 
     def test_metadata(self):
         assert BubbaMetadataDebug.RETURN_TYPES == ("STRING",)

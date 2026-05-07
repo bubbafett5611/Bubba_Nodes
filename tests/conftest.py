@@ -1,7 +1,12 @@
 import os
+import re
+import shutil
 import sys
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 
 def _install_runtime_mocks():
@@ -77,3 +82,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 def pytest_sessionstart(session):
     """Ensure runtime mocks are in place at the start of the session."""
     _install_runtime_mocks()
+
+
+@pytest.fixture
+def tmp_path(request):
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.name).strip("_") or "test"
+    temp_root = Path(__file__).resolve().parents[1] / ".test_tmp" / "tmp_path"
+    temp_path = temp_root / safe_name
+    shutil.rmtree(temp_path, ignore_errors=True)
+    temp_path.mkdir(parents=True, exist_ok=True)
+    try:
+        yield temp_path
+    finally:
+        shutil.rmtree(temp_path, ignore_errors=True)

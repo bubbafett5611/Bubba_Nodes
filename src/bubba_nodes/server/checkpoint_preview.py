@@ -19,7 +19,15 @@ def _build_preview_candidates(checkpoint_file: Path) -> list[Path]:
     return candidates
 
 
-def _resolve_checkpoint_path(model: str, folder_paths_module) -> Path | None:
+def _is_relative_to_base(candidate: Path, base_path: Path) -> bool:
+    try:
+        candidate.relative_to(base_path)
+    except ValueError:
+        return False
+    return True
+
+
+def _resolve_model_file_path(folder_name: str, model: str, folder_paths_module) -> Path | None:
     if folder_paths_module is None:
         return None
 
@@ -30,51 +38,30 @@ def _resolve_checkpoint_path(model: str, folder_paths_module) -> Path | None:
         return None
 
     if hasattr(folder_paths_module, "get_full_path"):
-        resolved = folder_paths_module.get_full_path("checkpoints", normalized)
+        resolved = folder_paths_module.get_full_path(folder_name, normalized)
         if resolved:
             path = Path(resolved)
             if path.exists():
                 return path
 
     if hasattr(folder_paths_module, "get_folder_paths"):
-        for base in folder_paths_module.get_folder_paths("checkpoints"):
+        for base in folder_paths_module.get_folder_paths(folder_name):
             base_path = Path(base).resolve()
             candidate = (base_path / normalized).resolve()
-            if not str(candidate).startswith(str(base_path)):
+            if not _is_relative_to_base(candidate, base_path):
                 continue
             if candidate.exists():
                 return candidate
 
     return None
+
+
+def _resolve_checkpoint_path(model: str, folder_paths_module) -> Path | None:
+    return _resolve_model_file_path("checkpoints", model, folder_paths_module)
 
 
 def _resolve_lora_path(model: str, folder_paths_module) -> Path | None:
-    if folder_paths_module is None:
-        return None
-
-    normalized = str(model or "").strip().replace("\\", "/").lstrip("/")
-    if not normalized:
-        return None
-    if ".." in normalized.split("/"):
-        return None
-
-    if hasattr(folder_paths_module, "get_full_path"):
-        resolved = folder_paths_module.get_full_path("loras", normalized)
-        if resolved:
-            path = Path(resolved)
-            if path.exists():
-                return path
-
-    if hasattr(folder_paths_module, "get_folder_paths"):
-        for base in folder_paths_module.get_folder_paths("loras"):
-            base_path = Path(base).resolve()
-            candidate = (base_path / normalized).resolve()
-            if not str(candidate).startswith(str(base_path)):
-                continue
-            if candidate.exists():
-                return candidate
-
-    return None
+    return _resolve_model_file_path("loras", model, folder_paths_module)
 
 
 def _normalize_civitai_url(url: str) -> str:
