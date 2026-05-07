@@ -3,9 +3,11 @@
 import { getDanbooruCategoryLabel, formatNumber, getSearchQueryVariations } from './utils.js';
 import { getSearchIndex, findMatchesFromIndex, findMatchMetadata } from './search.js';
 import { getWordList, ensureEmbeddingCacheSeeded } from './cache.js';
+import { findPromptSnippetsByQuery, normalizeSnippetName, savePromptSnippet } from './snippets.js';
 
 const WORKER_RESPONSE_TIMEOUT_MS = 10000;
 const PROMPT_CHIP_LIMIT = 36;
+const SNIPPET_PREVIEW_LENGTH = 64;
 const PROMPT_CONFLICT_RULES = [
 	{ terms: ["solo", "multiple people"], severity: "hard" },
 	{ terms: ["solo", "group"], severity: "hard" },
@@ -67,6 +69,19 @@ const promptAssistantInstancesByNode = new WeakMap();
 			margin-left: 8px;
 			font-style: italic;
 		}
+		.bubba-autocomplete-item-snippet {
+			opacity: 0.7;
+			margin-left: 8px;
+		}
+		.bubba-autocomplete-item-preview {
+			display: block;
+			margin-top: 3px;
+			opacity: 0.68;
+			font-size: 11px;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
 		.bubba-prompt-assistant {
 			position: fixed;
 			z-index: 99998;
@@ -120,6 +135,66 @@ const promptAssistantInstancesByNode = new WeakMap();
 		.bubba-prompt-summary {
 			opacity: 0.78;
 			padding: 2px 4px;
+		}
+		.bubba-selection-snippet-action {
+			position: fixed;
+			z-index: 100000;
+			min-height: 28px;
+			padding: 0 10px;
+			border-radius: 999px;
+			border: 1px solid rgba(128, 128, 128, 0.3);
+			background: color-mix(in srgb, var(--comfy-menu-bg) 95%, transparent);
+			color: var(--input-text);
+			font-size: 11px;
+			line-height: 1;
+			box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+			cursor: pointer;
+		}
+		.bubba-selection-snippet-action[hidden] {
+			display: none;
+		}
+		.bubba-snippet-save-popover {
+			position: fixed;
+			z-index: 100001;
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			padding: 8px;
+			border-radius: 10px;
+			border: 1px solid rgba(128, 128, 128, 0.3);
+			background: var(--comfy-menu-bg);
+			box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+		}
+		.bubba-snippet-save-popover[hidden] {
+			display: none;
+		}
+		.bubba-snippet-save-input {
+			min-width: 180px;
+			height: 28px;
+			padding: 0 8px;
+			border-radius: 8px;
+		}
+		.bubba-snippet-save-button {
+			height: 28px;
+			padding: 0 10px;
+			border-radius: 8px;
+		}
+		.bubba-snippet-save-notice {
+			position: fixed;
+			z-index: 100002;
+			min-height: 28px;
+			padding: 0 10px;
+			border-radius: 999px;
+			border: 1px solid rgba(102, 184, 255, 0.34);
+			background: color-mix(in srgb, var(--comfy-menu-bg) 92%, rgba(102, 184, 255, 0.12));
+			color: var(--input-text);
+			font-size: 11px;
+			line-height: 28px;
+			box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+			white-space: nowrap;
+		}
+		.bubba-snippet-save-notice[hidden] {
+			display: none;
 		}
 	`;
 	if (typeof document !== "undefined") {
@@ -304,6 +379,17 @@ function buildPromptIssueChips(role, analysis, crossConflicts) {
 	return chips;
 }
 
+function getSnippetPreviewText(value, maxLength = SNIPPET_PREVIEW_LENGTH) {
+	const normalized = String(value || "").replace(/\s+/g, " ").trim();
+	if (!normalized) {
+		return "";
+	}
+	if (normalized.length <= maxLength) {
+		return normalized;
+	}
+	return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+}
+
 export class BubbaTextAutoComplete {
 	constructor(inputEl, group, node = null, inputName = "") {
 		this.inputEl = inputEl;
@@ -318,6 +404,55 @@ export class BubbaTextAutoComplete {
 		this.assistantEl.classList.add("bubba-prompt-assistant");
 		this.assistantEl.hidden = true;
 		document.body.appendChild(this.assistantEl);
+		this.selectionSnippetEl = document.createElement("button");
+		this.selectionSnippetEl.type = "button";
+		this.selectionSnippetEl.classList.add("bubba-selection-snippet-action");
+		this.selectionSnippetEl.hidden = true;
+		this.selectionSnippetEl.textContent = "Save snippet";
+		this.selectionSnippetEl.onmousedown = (event) => {
+			event.preventDefault();
+		};
+		this.selectionSnippetEl.onclick = () => this.saveSelectedSnippet();
+		document.body.appendChild(this.selectionSnippetEl);
+		this.snippetSavePopoverEl = document.createElement("div");
+		this.snippetSavePopoverEl.classList.add("bubba-snippet-save-popover");
+		this.snippetSavePopoverEl.hidden = true;
+		this.snippetSavePopoverEl.onmousedown = (event) => {
+			event.preventDefault();
+		};
+		this.snippetNameInputEl = document.createElement("input");
+		this.snippetNameInputEl.type = "text";
+		this.snippetNameInputEl.classList.add("bubba-snippet-save-input");
+		this.snippetNameInputEl.placeholder = "snippet_name";
+		this.snippetNameInputEl.onkeydown = (event) => {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				this.commitSnippetSave();
+				return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				this.hideSnippetSavePopover();
+			}
+		};
+		const saveSnippetButton = document.createElement("button");
+		saveSnippetButton.type = "button";
+		saveSnippetButton.textContent = "Save";
+		saveSnippetButton.classList.add("bubba-snippet-save-button");
+		saveSnippetButton.onclick = () => this.commitSnippetSave();
+		const cancelSnippetButton = document.createElement("button");
+		cancelSnippetButton.type = "button";
+		cancelSnippetButton.textContent = "Cancel";
+		cancelSnippetButton.classList.add("bubba-snippet-save-button");
+		cancelSnippetButton.onclick = () => this.hideSnippetSavePopover();
+		this.snippetSavePopoverEl.appendChild(this.snippetNameInputEl);
+		this.snippetSavePopoverEl.appendChild(saveSnippetButton);
+		this.snippetSavePopoverEl.appendChild(cancelSnippetButton);
+		document.body.appendChild(this.snippetSavePopoverEl);
+		this.snippetSaveNoticeEl = document.createElement("div");
+		this.snippetSaveNoticeEl.classList.add("bubba-snippet-save-notice");
+		this.snippetSaveNoticeEl.hidden = true;
+		document.body.appendChild(this.snippetSaveNoticeEl);
 		this.menuEl.style.display = "none";
 		this.items = [];
 		this.selectedIndex = -1;
@@ -337,6 +472,10 @@ export class BubbaTextAutoComplete {
 		this.workerPending = new Map();
 		this.inputWasConnected = this.inputEl.isConnected;
 		this.promptAssistantBlurTimer = null;
+		this.selectionSnippetBlurTimer = null;
+		this.lastSelectedPromptText = "";
+		this.snippetPopoverAnchorRect = null;
+		this.snippetSaveNoticeTimer = null;
 
 		this.onInput = this.onInput.bind(this);
 		this.onInputImmediate = this.onInputImmediate.bind(this);
@@ -347,9 +486,17 @@ export class BubbaTextAutoComplete {
 		this.updatePromptAssistant = this.updatePromptAssistant.bind(this);
 		this.requestPromptAssistantPosition = this.requestPromptAssistantPosition.bind(this);
 		this.positionPromptAssistant = this.positionPromptAssistant.bind(this);
+		this.updateSelectionSnippetAction = this.updateSelectionSnippetAction.bind(this);
+		this.positionSelectionSnippetAction = this.positionSelectionSnippetAction.bind(this);
+		this.positionSnippetSavePopover = this.positionSnippetSavePopover.bind(this);
+		this.commitSnippetSave = this.commitSnippetSave.bind(this);
+		this.positionSnippetSaveNotice = this.positionSnippetSaveNotice.bind(this);
 
 		this.inputEl.addEventListener("input", this.onInput);
 		this.inputEl.addEventListener("keydown", this.onKeyDown);
+		this.inputEl.addEventListener("keyup", this.updateSelectionSnippetAction);
+		this.inputEl.addEventListener("mouseup", this.updateSelectionSnippetAction);
+		this.inputEl.addEventListener("select", this.updateSelectionSnippetAction);
 		this.inputEl.addEventListener("blur", this.onBlur);
 		this.inputEl.addEventListener("focus", this.onFocus);
 		window.addEventListener("resize", this.requestPromptAssistantPosition);
@@ -422,6 +569,9 @@ export class BubbaTextAutoComplete {
 		this.destroyed = true;
 		this.inputEl.removeEventListener("input", this.onInput);
 		this.inputEl.removeEventListener("keydown", this.onKeyDown);
+		this.inputEl.removeEventListener("keyup", this.updateSelectionSnippetAction);
+		this.inputEl.removeEventListener("mouseup", this.updateSelectionSnippetAction);
+		this.inputEl.removeEventListener("select", this.updateSelectionSnippetAction);
 		this.inputEl.removeEventListener("blur", this.onBlur);
 		this.inputEl.removeEventListener("focus", this.onFocus);
 		window.removeEventListener("resize", this.requestPromptAssistantPosition);
@@ -436,10 +586,21 @@ export class BubbaTextAutoComplete {
 			clearTimeout(this.promptAssistantBlurTimer);
 			this.promptAssistantBlurTimer = null;
 		}
+		if (this.selectionSnippetBlurTimer) {
+			clearTimeout(this.selectionSnippetBlurTimer);
+			this.selectionSnippetBlurTimer = null;
+		}
+		if (this.snippetSaveNoticeTimer) {
+			clearTimeout(this.snippetSaveNoticeTimer);
+			this.snippetSaveNoticeTimer = null;
+		}
 		unregisterPromptAssistantInstance(this.node, this);
 		this.disableSearchWorker();
 		this.menuEl.remove();
 		this.assistantEl.remove();
+		this.selectionSnippetEl.remove();
+		this.snippetSavePopoverEl.remove();
+		this.snippetSaveNoticeEl.remove();
 	}
 
 	postWorkerMessage(payload, timeoutMs = WORKER_RESPONSE_TIMEOUT_MS) {
@@ -501,11 +662,14 @@ export class BubbaTextAutoComplete {
 		const caret = this.inputEl.selectionStart ?? value.length;
 		const tokenStart = this.getTokenStart(value, caret);
 		const raw = value.slice(tokenStart, caret);
+		const trimmed = raw.trim().toLowerCase();
 		return {
 			caret,
 			tokenStart,
 			raw,
-			query: raw.trim().toLowerCase(),
+			query: trimmed,
+			snippetMode: trimmed.startsWith("@"),
+			snippetQuery: trimmed.startsWith("@") ? trimmed.slice(1) : "",
 		};
 	}
 
@@ -544,6 +708,18 @@ export class BubbaTextAutoComplete {
 				altSpan.textContent = `<- ${item.matchedAlias}`;
 				row.appendChild(altSpan);
 			}
+			if (item.kind === "snippet") {
+				const snippetSpan = document.createElement("span");
+				snippetSpan.classList.add("bubba-autocomplete-item-snippet");
+				snippetSpan.textContent = item.category ? `${item.category} snippet` : "snippet";
+				row.appendChild(snippetSpan);
+				if (item.previewText) {
+					const previewSpan = document.createElement("span");
+					previewSpan.classList.add("bubba-autocomplete-item-preview");
+					previewSpan.textContent = item.previewText;
+					row.appendChild(previewSpan);
+				}
+			}
 			if (i === 0) {
 				row.classList.add("selected");
 			}
@@ -576,7 +752,9 @@ export class BubbaTextAutoComplete {
 		if (!item?.text) {
 			return;
 		}
-		const text = BubbaTextAutoComplete.replaceUnderscores ? item.text.replaceAll("_", " ") : item.text;
+		const text = item.kind === "snippet"
+			? String(item.insertText || "")
+			: (BubbaTextAutoComplete.replaceUnderscores ? item.text.replaceAll("_", " ") : item.text);
 		const value = this.inputEl.value;
 		const caret = this.inputEl.selectionStart ?? value.length;
 		const { tokenStart, raw } = this.getQuery();
@@ -584,7 +762,9 @@ export class BubbaTextAutoComplete {
 		const before = value.slice(0, tokenStart);
 		const after = value.slice(caret);
 		const needsComma = !after.trimStart().startsWith(",");
-		const insertion = `${leadingSpaces}${text}${needsComma ? ", " : ""}`;
+		const insertion = item.kind === "snippet"
+			? `${leadingSpaces}${text}`
+			: `${leadingSpaces}${text}${needsComma ? ", " : ""}`;
 		const nextValue = `${before}${insertion}${after}`;
 		const nextCaret = before.length + insertion.length;
 
@@ -657,6 +837,7 @@ export class BubbaTextAutoComplete {
 
 	onInput() {
 		this.updatePromptAssistant();
+		this.updateSelectionSnippetAction();
 		for (const instance of getNodeAssistantInstances(this.node)) {
 			if (instance !== this) {
 				instance.updatePromptAssistant();
@@ -697,12 +878,31 @@ export class BubbaTextAutoComplete {
 				});
 		}
 
-		const { query } = this.getQuery();
+		const { query, snippetMode, snippetQuery } = this.getQuery();
 		if (!query) {
 			this.latestQuery = "";
 			this.previousQuery = "";
 			this.previousMatchedPool = null;
 			this.hide();
+			return;
+		}
+
+		if (snippetMode) {
+			const snippetResults = findPromptSnippetsByQuery(snippetQuery, BubbaTextAutoComplete.suggestionLimit).map((snippet) => ({
+				kind: "snippet",
+				text: `@${snippet.name}`,
+				insertText: snippet.text,
+				category: snippet.category,
+				previewText: getSnippetPreviewText(snippet.text),
+				snippetName: snippet.name,
+			}));
+			this.latestQuery = query;
+			this.previousQuery = "";
+			this.previousMatchedPool = null;
+			this.show(snippetResults.map((item) => ({
+				...item,
+				text: item.snippetName,
+			})));
 			return;
 		}
 
@@ -806,7 +1006,12 @@ export class BubbaTextAutoComplete {
 			clearTimeout(this.promptAssistantBlurTimer);
 			this.promptAssistantBlurTimer = null;
 		}
+		if (this.selectionSnippetBlurTimer) {
+			clearTimeout(this.selectionSnippetBlurTimer);
+			this.selectionSnippetBlurTimer = null;
+		}
 		this.updatePromptAssistant();
+		this.updateSelectionSnippetAction();
 		this.onInputImmediate();
 	}
 
@@ -819,6 +1024,10 @@ export class BubbaTextAutoComplete {
 		this.promptAssistantBlurTimer = setTimeout(() => {
 			this.promptAssistantBlurTimer = null;
 			this.hidePromptAssistant();
+		}, 120);
+		this.selectionSnippetBlurTimer = setTimeout(() => {
+			this.selectionSnippetBlurTimer = null;
+			this.hideSelectionSnippetAction();
 		}, 120);
 	}
 
@@ -866,17 +1075,48 @@ export class BubbaTextAutoComplete {
 		this.assistantEl.style.visibility = "hidden";
 	}
 
+	hideSelectionSnippetAction() {
+		this.selectionSnippetEl.hidden = true;
+		this.selectionSnippetEl.style.visibility = "hidden";
+	}
+
+	hideSnippetSavePopover() {
+		this.snippetSavePopoverEl.hidden = true;
+		this.snippetSavePopoverEl.style.visibility = "hidden";
+		this.snippetPopoverAnchorRect = null;
+	}
+
+	hideSnippetSaveNotice() {
+		this.snippetSaveNoticeEl.hidden = true;
+		this.snippetSaveNoticeEl.style.visibility = "hidden";
+		if (this.snippetSaveNoticeTimer) {
+			clearTimeout(this.snippetSaveNoticeTimer);
+			this.snippetSaveNoticeTimer = null;
+		}
+	}
+
 	requestPromptAssistantPosition() {
 		if (this.inputWasDetached()) {
 			this.destroy();
 			return;
 		}
-		if (!this.inputEl.isConnected || this.promptAssistantPositionFrame || this.assistantEl.hidden) {
+		if (!this.inputEl.isConnected || this.promptAssistantPositionFrame) {
 			return;
 		}
 		this.promptAssistantPositionFrame = requestAnimationFrame(() => {
 			this.promptAssistantPositionFrame = null;
-			this.positionPromptAssistant();
+			if (!this.assistantEl.hidden) {
+				this.positionPromptAssistant();
+			}
+			if (!this.selectionSnippetEl.hidden) {
+				this.positionSelectionSnippetAction();
+			}
+			if (!this.snippetSavePopoverEl.hidden) {
+				this.positionSnippetSavePopover();
+			}
+			if (!this.snippetSaveNoticeEl.hidden) {
+				this.positionSnippetSaveNotice();
+			}
 		});
 	}
 
@@ -913,6 +1153,166 @@ export class BubbaTextAutoComplete {
 		this.assistantEl.style.left = `${Math.round(left)}px`;
 		this.assistantEl.style.top = `${Math.round(top)}px`;
 		this.assistantEl.style.visibility = "visible";
+	}
+
+	getSelectedPromptText() {
+		const start = this.inputEl.selectionStart ?? 0;
+		const end = this.inputEl.selectionEnd ?? 0;
+		if (end <= start) {
+			return "";
+		}
+		return String(this.inputEl.value || "").slice(start, end).trim();
+	}
+
+	positionSelectionSnippetAction() {
+		if (this.inputWasDetached()) {
+			this.destroy();
+			return;
+		}
+		if (!this.inputEl.isConnected || this.selectionSnippetEl.hidden) {
+			return;
+		}
+
+		const rect = this.inputEl.getBoundingClientRect();
+		const isVisible = rect.width > 0
+			&& rect.height > 0
+			&& rect.bottom > 0
+			&& rect.top < window.innerHeight
+			&& rect.right > 0
+			&& rect.left < window.innerWidth;
+
+		if (!isVisible) {
+			this.selectionSnippetEl.style.visibility = "hidden";
+			return;
+		}
+
+		const width = this.selectionSnippetEl.offsetWidth || 96;
+		const height = this.selectionSnippetEl.offsetHeight || 28;
+		const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+		const top = rect.top - height - 6 >= 8
+			? rect.top - height - 6
+			: Math.min(rect.bottom + 6, window.innerHeight - height - 8);
+
+		this.selectionSnippetEl.style.left = `${Math.round(left)}px`;
+		this.selectionSnippetEl.style.top = `${Math.round(top)}px`;
+		this.selectionSnippetEl.style.visibility = "visible";
+	}
+
+	positionSnippetSavePopover() {
+		if (this.snippetSavePopoverEl.hidden) {
+			return;
+		}
+
+		const triggerRect = this.snippetPopoverAnchorRect || this.inputEl.getBoundingClientRect();
+		const width = this.snippetSavePopoverEl.offsetWidth || 260;
+		const height = this.snippetSavePopoverEl.offsetHeight || 44;
+		const left = Math.max(8, Math.min(triggerRect.right - width, window.innerWidth - width - 8));
+		const top = triggerRect.top - height - 6 >= 8
+			? triggerRect.top - height - 6
+			: Math.min(triggerRect.bottom + 6, window.innerHeight - height - 8);
+
+		this.snippetSavePopoverEl.style.left = `${Math.round(left)}px`;
+		this.snippetSavePopoverEl.style.top = `${Math.round(top)}px`;
+		this.snippetSavePopoverEl.style.visibility = "visible";
+	}
+
+	positionSnippetSaveNotice() {
+		if (this.snippetSaveNoticeEl.hidden) {
+			return;
+		}
+
+		const triggerRect = this.snippetPopoverAnchorRect || this.inputEl.getBoundingClientRect();
+		const width = this.snippetSaveNoticeEl.offsetWidth || 120;
+		const height = this.snippetSaveNoticeEl.offsetHeight || 28;
+		const left = Math.max(8, Math.min(triggerRect.right - width, window.innerWidth - width - 8));
+		const top = triggerRect.top - height - 6 >= 8
+			? triggerRect.top - height - 6
+			: Math.min(triggerRect.bottom + 6, window.innerHeight - height - 8);
+
+		this.snippetSaveNoticeEl.style.left = `${Math.round(left)}px`;
+		this.snippetSaveNoticeEl.style.top = `${Math.round(top)}px`;
+		this.snippetSaveNoticeEl.style.visibility = "visible";
+	}
+
+	showSnippetSaveNotice(message) {
+		this.snippetSaveNoticeEl.textContent = message;
+		this.snippetSaveNoticeEl.hidden = false;
+		this.positionSnippetSaveNotice();
+		if (this.snippetSaveNoticeTimer) {
+			clearTimeout(this.snippetSaveNoticeTimer);
+		}
+		this.snippetSaveNoticeTimer = setTimeout(() => {
+			this.snippetSaveNoticeTimer = null;
+			this.hideSnippetSaveNotice();
+		}, 1600);
+	}
+
+	updateSelectionSnippetAction() {
+		if (this.inputWasDetached()) {
+			this.destroy();
+			return;
+		}
+		if (!this.inputEl.isConnected || document.activeElement !== this.inputEl) {
+			this.hideSelectionSnippetAction();
+			return;
+		}
+
+		const selectedText = this.getSelectedPromptText();
+		if (!selectedText) {
+			this.lastSelectedPromptText = "";
+			this.hideSelectionSnippetAction();
+			return;
+		}
+
+		this.lastSelectedPromptText = selectedText;
+		this.selectionSnippetEl.hidden = false;
+		this.positionSelectionSnippetAction();
+	}
+
+	saveSelectedSnippet() {
+		const selectedText = this.getSelectedPromptText() || this.lastSelectedPromptText;
+		if (!selectedText) {
+			this.hideSelectionSnippetAction();
+			return;
+		}
+
+		const suggestedName = normalizeSnippetName(selectedText.split(/\s+/).slice(0, 4).join("_")) || "";
+		this.snippetPopoverAnchorRect = this.inputEl.getBoundingClientRect();
+		this.snippetNameInputEl.value = suggestedName;
+		this.snippetSavePopoverEl.hidden = false;
+		this.positionSnippetSavePopover();
+		queueMicrotask(() => {
+			this.snippetNameInputEl.focus();
+			this.snippetNameInputEl.select();
+		});
+	}
+
+	commitSnippetSave() {
+		const selectedText = this.getSelectedPromptText() || this.lastSelectedPromptText;
+		const snippetName = normalizeSnippetName(this.snippetNameInputEl.value);
+		if (!selectedText) {
+			this.hideSnippetSavePopover();
+			this.hideSelectionSnippetAction();
+			return;
+		}
+		if (!snippetName) {
+			this.snippetNameInputEl.focus();
+			return;
+		}
+		try {
+			savePromptSnippet({
+				name: snippetName,
+				text: selectedText,
+				category: this.promptRole,
+			});
+			this.snippetPopoverAnchorRect = this.inputEl.getBoundingClientRect();
+			this.lastSelectedPromptText = "";
+			this.hideSnippetSavePopover();
+			this.hideSelectionSnippetAction();
+			this.showSnippetSaveNotice(`Saved @${snippetName}`);
+		} catch {
+			this.snippetNameInputEl.focus();
+		}
 	}
 
 	updatePromptAssistant() {
