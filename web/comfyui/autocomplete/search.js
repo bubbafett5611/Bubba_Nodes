@@ -58,6 +58,39 @@ export function scorePreparedText(normText, compactText, preparedQueries) {
 	return best;
 }
 
+export function getPreparedMatchKind(normText, compactText, preparedQueries) {
+	for (const query of preparedQueries) {
+		const normalizedQuery = query.norm;
+		const compactQuery = query.compact;
+		if (!normalizedQuery) {
+			continue;
+		}
+		if (normText === normalizedQuery || (compactQuery && compactText === compactQuery)) {
+			return "exact";
+		}
+	}
+
+	for (const query of preparedQueries) {
+		const normalizedQuery = query.norm;
+		const compactQuery = query.compact;
+		if (!normalizedQuery) {
+			continue;
+		}
+		if (normText.startsWith(normalizedQuery) || (compactQuery && compactText.startsWith(compactQuery))) {
+			return "prefix";
+		}
+	}
+
+	return "contains";
+}
+
+export function getMatchPriority(matchKind, matchedAlias) {
+	const kind = String(matchKind || "contains");
+	const aliasPenalty = matchedAlias ? 3 : 0;
+	const base = kind === "exact" ? 8 : kind === "prefix" ? 6 : 4;
+	return Math.max(0, base - aliasPenalty);
+}
+
 export function buildPreparedQueries(queryVariations) {
 	const prepared = [];
 	const seen = new Set();
@@ -216,12 +249,14 @@ export function findMatchesFromIndex(index, queryVariations) {
 		const entry = index.entries[idx];
 		let bestScore = scorePreparedText(entry.textNorm, entry.textCompact, preparedQueries);
 		let bestAlias = null;
+		let matchKind = bestScore > 0 ? getPreparedMatchKind(entry.textNorm, entry.textCompact, preparedQueries) : null;
 
 		for (let i = 0; i < entry.aliasNorm.length; i += 1) {
 			const aliasScore = scorePreparedText(entry.aliasNorm[i], entry.aliasCompact[i], preparedQueries) - 20;
 			if (aliasScore > bestScore) {
 				bestScore = aliasScore;
 				bestAlias = entry.aliasNorm[i];
+				matchKind = getPreparedMatchKind(entry.aliasNorm[i], entry.aliasCompact[i], preparedQueries);
 			}
 		}
 
@@ -229,6 +264,8 @@ export function findMatchesFromIndex(index, queryVariations) {
 			matched.push({
 				...entry.item,
 				matchScore: bestScore,
+				matchKind,
+				matchPriority: getMatchPriority(matchKind, bestAlias),
 				matchedAlias: bestAlias,
 			});
 		}
@@ -249,14 +286,21 @@ export function findMatchMetadata(item, queryVariations) {
 
 	const text = String(item.text || "");
 	const aliases = Array.isArray(item.aliases) ? item.aliases : [];
-	let bestScore = scoreTextMatch(text, queryVariations);
+	const preparedQueries = buildPreparedQueries(queryVariations);
+	const textNorm = normalizeSearchText(text);
+	const textCompact = textNorm.replace(/\s+/g, "");
+	let bestScore = scorePreparedText(textNorm, textCompact, preparedQueries);
 	let bestAlias = null;
+	let matchKind = bestScore > 0 ? getPreparedMatchKind(textNorm, textCompact, preparedQueries) : null;
 
 	for (const alias of aliases) {
-		const aliasScore = scoreTextMatch(alias, queryVariations) - 20;
+		const aliasNorm = normalizeSearchText(alias);
+		const aliasCompact = aliasNorm.replace(/\s+/g, "");
+		const aliasScore = scorePreparedText(aliasNorm, aliasCompact, preparedQueries) - 20;
 		if (aliasScore > bestScore) {
 			bestScore = aliasScore;
 			bestAlias = alias;
+			matchKind = getPreparedMatchKind(aliasNorm, aliasCompact, preparedQueries);
 		}
 	}
 
@@ -266,6 +310,8 @@ export function findMatchMetadata(item, queryVariations) {
 
 	return {
 		score: bestScore,
+		matchKind,
+		matchPriority: getMatchPriority(matchKind, bestAlias),
 		matchedAlias: bestAlias,
 	};
 }

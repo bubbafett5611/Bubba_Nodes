@@ -3,10 +3,24 @@ from __future__ import annotations
 import os
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 _route_registered = False
-_DEFAULT_UPSTREAM_CSV_URL = "https://raw.githubusercontent.com/DraconicDragon1/" "danbooru-e621-autocomplete/main/danbooru_e621_merged.csv"
+_ARCHIVE_RAW_BASE_URL = "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists"
+_DEFAULT_DANBOORU_CSV_URL = f"{_ARCHIVE_RAW_BASE_URL}/danbooru/danbooru_2026-04-01_pt20-ia-dd.csv"
+_DEFAULT_E621_CSV_URL = f"{_ARCHIVE_RAW_BASE_URL}/e621/e621_2026-04-01_pt20-ia-ed.csv"
+_DEFAULT_LEGACY_MERGED_CSV_URL = (
+    "https://raw.githubusercontent.com/DraconicDragon1/" "danbooru-e621-autocomplete/main/danbooru_e621_merged.csv"
+)
+
+
+@dataclass(frozen=True)
+class TagSource:
+    name: str
+    filename: str
+    env_var: str
+    default_url: str
 
 
 def _repo_root() -> Path:
@@ -19,7 +33,22 @@ def _local_csv_path() -> Path:
 
 
 def _upstream_csv_url() -> str:
-    return os.getenv("BUBBA_UPSTREAM_CSV_URL", _DEFAULT_UPSTREAM_CSV_URL)
+    return os.getenv("BUBBA_UPSTREAM_CSV_URL", _DEFAULT_LEGACY_MERGED_CSV_URL)
+
+
+def _local_tags_dir() -> Path:
+    return _repo_root() / "web" / "comfyui" / "tags"
+
+
+def _tag_sources() -> list[TagSource]:
+    return [
+        TagSource("danbooru", "danbooru.csv", "BUBBA_DANBOORU_CSV_URL", _DEFAULT_DANBOORU_CSV_URL),
+        TagSource("e621", "e621.csv", "BUBBA_E621_CSV_URL", _DEFAULT_E621_CSV_URL),
+    ]
+
+
+def _tag_source_url(source: TagSource) -> str:
+    return os.getenv(source.env_var, source.default_url)
 
 
 def _download_upstream_csv(url: str) -> bytes:
@@ -104,43 +133,57 @@ def register_autocomplete_routes() -> None:
 
     @routes.post("/bubba/sync_upstream_cache")
     async def bubba_sync_upstream_cache(_request):
-        target = _local_csv_path()
-        url = _upstream_csv_url()
+        results = []
 
-        try:
-            payload = _download_upstream_csv(url)
-            _save_bytes_atomic(target, payload)
-        except urllib.error.HTTPError as error:
-            return web.json_response(
+        for source in _tag_sources():
+            target = _local_tags_dir() / source.filename
+            url = _tag_source_url(source)
+
+            try:
+                payload = _download_upstream_csv(url)
+                _save_bytes_atomic(target, payload)
+            except urllib.error.HTTPError as error:
+                return web.json_response(
+                    {
+                        "status": "error",
+                        "source": source.name,
+                        "error": f"{source.name} upstream responded with HTTP {error.code}.",
+                    },
+                    status=502,
+                )
+            except urllib.error.URLError as error:
+                return web.json_response(
+                    {
+                        "status": "error",
+                        "source": source.name,
+                        "error": f"Unable to reach {source.name} upstream source: {error.reason}",
+                    },
+                    status=502,
+                )
+            except Exception as error:
+                return web.json_response(
+                    {
+                        "status": "error",
+                        "source": source.name,
+                        "error": f"Failed to sync {source.name} CSV: {error}",
+                    },
+                    status=500,
+                )
+
+            results.append(
                 {
-                    "status": "error",
-                    "error": f"Upstream responded with HTTP {error.code}.",
-                },
-                status=502,
-            )
-        except urllib.error.URLError as error:
-            return web.json_response(
-                {
-                    "status": "error",
-                    "error": f"Unable to reach upstream source: {error.reason}",
-                },
-                status=502,
-            )
-        except Exception as error:
-            return web.json_response(
-                {
-                    "status": "error",
-                    "error": f"Failed to sync upstream CSV: {error}",
-                },
-                status=500,
+                    "source": source.name,
+                    "source_url": url,
+                    "target": str(target),
+                    "bytes": len(payload),
+                }
             )
 
         return web.json_response(
             {
                 "status": "ok",
-                "source_url": url,
-                "target": str(target),
-                "bytes": len(payload),
+                "sources": results,
+                "bytes": sum(result["bytes"] for result in results),
             }
         )
 

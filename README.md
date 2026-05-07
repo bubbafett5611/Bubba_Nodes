@@ -120,9 +120,10 @@ If you use a dedicated ComfyUI venv/conda env, run that command from inside the 
 - Use arrow keys to select, then press Tab or Enter to insert.
 - Add custom words from ComfyUI settings using local storage.
 - Enable or disable local-tag suggestions with `Bubba: Include Local CSV Tags`.
-- Tag data is read from `web/comfyui/danbooru_e621_merged.csv`.
+- Tag data is read from source-specific CSV files in `web/comfyui/tags/` when available, currently `danbooru.csv` and `e621.csv`.
+- If source-specific CSV files are unavailable, autocomplete falls back to the bundled legacy `web/comfyui/danbooru_e621_merged.csv`.
 - Use `Bubba: Local CSV Source` to open the current local CSV.
-- Use `Bubba: Local CSV Sync + Cache` and `Download Latest + Rebuild Cache` to download the newest DraconicDragon merged CSV and rebuild browser cache from the local file.
+- Use `Bubba: Local CSV Sync + Cache` and `Download Sources + Rebuild Cache` to download the newest configured source CSVs and rebuild browser cache from local files.
 - Suggestions are ranked by canonical and alias prefix match, then post count.
 - `Bubba: Prompt Tag Chips + Hints` toggles the inline prompt assistant independently from autocomplete.
 

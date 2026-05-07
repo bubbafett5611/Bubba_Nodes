@@ -1,6 +1,6 @@
 // UI component for text autocomplete
 
-import { getDanbooruCategoryLabel, formatNumber, getSearchQueryVariations } from './utils.js';
+import { getTagCategoryLabel, formatNumber, getSearchQueryVariations } from './utils.js';
 import { getSearchIndex, findMatchesFromIndex, findMatchMetadata } from './search.js';
 import { getWordList, ensureEmbeddingCacheSeeded } from './cache.js';
 import { findPromptSnippetsByQuery, normalizeSnippetName, savePromptSnippet } from './snippets.js';
@@ -695,8 +695,16 @@ export class BubbaTextAutoComplete {
 			textSpan.textContent = item.text;
 			row.appendChild(textSpan);
 			if (typeof item.count === "number") {
-				const categoryLabel = getDanbooruCategoryLabel(item.category);
-				const metaText = categoryLabel ? `${formatNumber(item.count)} | ${categoryLabel}` : formatNumber(item.count);
+				const categoryLabel = getTagCategoryLabel(item.source, item.category);
+				const sourceLabel = item.sources?.length ? item.sources.join("+") : item.source;
+				const metaParts = [formatNumber(item.count)];
+				if (sourceLabel) {
+					metaParts.push(sourceLabel);
+				}
+				if (categoryLabel) {
+					metaParts.push(categoryLabel);
+				}
+				const metaText = metaParts.join(" | ");
 				const metaSpan = document.createElement("span");
 				metaSpan.classList.add("bubba-autocomplete-item-meta");
 				metaSpan.textContent = metaText;
@@ -795,6 +803,11 @@ export class BubbaTextAutoComplete {
 		if (aBucket !== bBucket) {
 			return bBucket - aBucket;
 		}
+		const aPriority = Number.isFinite(a.matchPriority) ? a.matchPriority : 0;
+		const bPriority = Number.isFinite(b.matchPriority) ? b.matchPriority : 0;
+		if (aPriority !== bPriority) {
+			return bPriority - aPriority;
+		}
 		const aCount = typeof a.count === "number" ? a.count : -1;
 		const bCount = typeof b.count === "number" ? b.count : -1;
 		if (aCount !== bCount) {
@@ -813,8 +826,12 @@ export class BubbaTextAutoComplete {
 			return [];
 		}
 
+		const hasCanonicalExactMatch = matched.some((item) => item?.matchKind === "exact" && !item?.matchedAlias);
 		const top = [];
 		for (const item of matched) {
+			if (hasCanonicalExactMatch && item?.matchedAlias) {
+				continue;
+			}
 			let inserted = false;
 			for (let i = 0; i < top.length; i += 1) {
 				if (this.compareMatches(item, top[i]) < 0) {
@@ -964,6 +981,8 @@ export class BubbaTextAutoComplete {
 								return {
 									...item,
 									matchScore: match.score,
+									matchKind: match.matchKind,
+									matchPriority: match.matchPriority,
 									matchedAlias: match.matchedAlias,
 								};
 							})

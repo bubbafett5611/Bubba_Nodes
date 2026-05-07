@@ -11,6 +11,11 @@ function compareMatches(a, b) {
 	if (aBucket !== bBucket) {
 		return bBucket - aBucket;
 	}
+	const aPriority = Number.isFinite(a.matchPriority) ? a.matchPriority : 0;
+	const bPriority = Number.isFinite(b.matchPriority) ? b.matchPriority : 0;
+	if (aPriority !== bPriority) {
+		return bPriority - aPriority;
+	}
 	const aCount = typeof a.count === "number" ? a.count : -1;
 	const bCount = typeof b.count === "number" ? b.count : -1;
 	if (aCount !== bCount) {
@@ -27,8 +32,12 @@ function selectTopMatches(matched, limit) {
 		return [];
 	}
 
+	const hasCanonicalExactMatch = matched.some((item) => item?.matchKind === "exact" && !item?.matchedAlias);
 	const top = [];
 	for (const item of matched) {
+		if (hasCanonicalExactMatch && item?.matchedAlias) {
+			continue;
+		}
 		let inserted = false;
 		for (let i = 0; i < top.length; i += 1) {
 			if (compareMatches(item, top[i]) < 0) {

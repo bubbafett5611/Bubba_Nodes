@@ -89,6 +89,8 @@ export async function hydrateDanbooruTagsFromPersistentCache() {
 export function setDanbooruTags(tags) {
 	const serialized = tags.map((tag) => ({
 		text: tag.text,
+		source: tag.source,
+		sources: tag.sources,
 		count: tag.count,
 		category: tag.category,
 		aliases: normalizeAliases(tag.aliases),

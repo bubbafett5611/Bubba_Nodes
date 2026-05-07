@@ -3,20 +3,53 @@
 import { toInt, normalizeDanbooruCategory, normalizeEntry, parseCsvRow, toCsvField, hasLikelySwappedCountCategory, formatNumber } from './utils.js';
 import { getDanbooruTags, setDanbooruTags, setDanbooruMeta, getDanbooruMeta, cacheStorageKeys, clearDanbooruCache, hydrateDanbooruTagsFromPersistentCache, clearDanbooruPersistentCache } from './cache.js';
 
-const bundledCacheSchemaVersion = 1;
+const bundledCacheSchemaVersion = 3;
 const LOCAL_DANBOORU_MERGED_CSV_URL = new URL("../danbooru_e621_merged.csv", import.meta.url);
+const LOCAL_TAG_SOURCE_DEFINITIONS = [
+	{
+		source: "danbooru",
+		url: new URL("../tags/danbooru.csv", import.meta.url),
+	},
+	{
+		source: "e621",
+		url: new URL("../tags/e621.csv", import.meta.url),
+	},
+];
+const LEGACY_MERGED_TAG_SOURCE = {
+	source: "merged",
+	url: LOCAL_DANBOORU_MERGED_CSV_URL,
+	legacyMerged: true,
+};
 
-export async function loadBundledDanbooruCache() {
-	const response = await fetch(LOCAL_DANBOORU_MERGED_CSV_URL, {
+function appendTags(target, source) {
+	for (const tag of source || []) {
+		target.push(tag);
+	}
+}
+
+function countTagsBySource(tags) {
+	const counts = {};
+	for (const tag of tags || []) {
+		const source = String(tag?.source || "unknown").trim() || "unknown";
+		counts[source] = (counts[source] || 0) + 1;
+	}
+	return counts;
+}
+
+async function fetchCsvText(url, label) {
+	const response = await fetch(url, {
 		cache: "no-store",
 		headers: {
 			"Accept": "text/csv, text/plain;q=0.9, */*;q=0.8",
 		},
 	});
 	if (!response.ok) {
-		throw new Error(`Unable to load local merged Danbooru cache (${response.status}).`);
+		throw new Error(`Unable to load ${label} (${response.status}).`);
 	}
-	const csvText = await response.text();
+	return response.text();
+}
+
+export function parseTagCsv(csvText, source) {
 	const tags = [];
 	const lines = csvText
 		.split(/\r?\n/g)
@@ -69,18 +102,23 @@ export async function loadBundledDanbooruCache() {
 			if (key === "generated_at") {
 				generatedAt = value;
 			}
+			if (key === "source" && value) {
+				source = String(value).trim().toLowerCase() || source;
+			}
 			continue;
 		}
 
 		const header = line.toLowerCase();
-		if (header.startsWith("tag,") || header.startsWith("name,")) {
+		if (header.startsWith("source,") || header.startsWith("tag,") || header.startsWith("name,")) {
 			const cols = parseCsvRow(line).map((part) => String(part || "").trim().toLowerCase());
+			const sourceIdx = cols.indexOf("source");
 			const nameIdx = cols.indexOf("tag") >= 0 ? cols.indexOf("tag") : cols.indexOf("name");
 			const countIdx = cols.indexOf("post_count") >= 0 ? cols.indexOf("post_count") : cols.indexOf("count");
 			const categoryIdx = cols.indexOf("category") >= 0 ? cols.indexOf("category") : cols.indexOf("type");
 			const aliasesIdx = cols.indexOf("aliases") >= 0 ? cols.indexOf("aliases") : cols.indexOf("alias");
 
 			columnMap = {
+				sourceIdx,
 				nameIdx: nameIdx >= 0 ? nameIdx : 0,
 				countIdx: countIdx >= 0 ? countIdx : 1,
 				categoryIdx,
@@ -100,12 +138,14 @@ export async function loadBundledDanbooruCache() {
 		const countIdx = columnMap?.countIdx ?? 1;
 		const categoryIdx = Number.isInteger(columnMap?.categoryIdx) ? columnMap.categoryIdx : 2;
 		const aliasesIdx = Number.isInteger(columnMap?.aliasesIdx) ? columnMap.aliasesIdx : 3;
+		const sourceIdx = Number.isInteger(columnMap?.sourceIdx) ? columnMap.sourceIdx : -1;
 
 		const tag = String(parts[nameIdx] || "").trim();
 		const count = Math.max(0, toInt(String(parts[countIdx] || "0").trim(), 0));
 		const category = categoryIdx >= 0 ? normalizeDanbooruCategory(String(parts[categoryIdx] || "").trim()) : null;
 		const aliases = aliasesIdx >= 0 ? String(parts[aliasesIdx] || "").trim() : "";
-		const entry = normalizeEntry({ name: tag, count, category, aliases }, "danbooru");
+		const rowSource = sourceIdx >= 0 ? String(parts[sourceIdx] || "").trim().toLowerCase() : source;
+		const entry = normalizeEntry({ name: tag, count, category, aliases, source: rowSource }, source);
 		if (entry) {
 			tags.push(entry);
 		}
@@ -114,9 +154,64 @@ export async function loadBundledDanbooruCache() {
 	return {
 		tags,
 		meta: {
-			seedSource: "upstream",
+			source,
 			schemaVersion: bundledCacheSchemaVersion,
 			generatedAt,
+		},
+	};
+}
+
+async function loadTagSource(definition) {
+	const csvText = await fetchCsvText(definition.url, `${definition.source} tag CSV`);
+	const parsed = parseTagCsv(csvText, definition.source);
+	return {
+		...parsed,
+		meta: {
+			...parsed.meta,
+			url: String(definition.url),
+			source: definition.source,
+			count: parsed.tags.length,
+			legacyMerged: !!definition.legacyMerged,
+		},
+	};
+}
+
+export async function loadBundledDanbooruCache() {
+	const loadedSources = [];
+	const tags = [];
+
+	for (const definition of LOCAL_TAG_SOURCE_DEFINITIONS) {
+		try {
+			const loaded = await loadTagSource(definition);
+			if (loaded.tags.length) {
+				loadedSources.push(loaded.meta);
+				appendTags(tags, loaded.tags);
+			}
+		} catch (error) {
+			console.warn(`Bubba Autocomplete: failed to load ${definition.source} tag CSV`, error);
+		}
+	}
+
+	if (!tags.length) {
+		const loaded = await loadTagSource(LEGACY_MERGED_TAG_SOURCE);
+		loadedSources.push(loaded.meta);
+		appendTags(tags, loaded.tags);
+	}
+
+	const generatedAt = loadedSources
+		.map((source) => source.generatedAt)
+		.filter(Boolean)
+		.sort()
+		.pop() || null;
+
+	return {
+		tags,
+		meta: {
+			seedSource: loadedSources.some((source) => source.legacyMerged) ? "legacy-merged" : "source-csv",
+			schemaVersion: bundledCacheSchemaVersion,
+			generatedAt,
+			sources: loadedSources,
+			sourceCounts: countTagsBySource(tags),
 		},
 	};
 }
@@ -127,7 +222,10 @@ export async function ensureLocalCsvCacheSeeded() {
 	if (existing.length > 0) {
 		const hasAliasData = existing.some((entry) => Array.isArray(entry?.aliases) && entry.aliases.length > 0);
 		const hasSwappedData = hasLikelySwappedCountCategory(existing);
-		if (hasAliasData && !hasSwappedData) {
+		const meta = getDanbooruMeta();
+		const hasSourceMetadata = Array.isArray(meta?.sources) && meta.sources.length > 0;
+		const hasCurrentSchema = meta?.schemaVersion === bundledCacheSchemaVersion;
+		if (hasAliasData && !hasSwappedData && hasSourceMetadata && hasCurrentSchema) {
 			return;
 		}
 	}
@@ -145,10 +243,12 @@ export async function ensureLocalCsvCacheSeeded() {
 			schemaVersion: bundled.meta.schemaVersion,
 			bundledGeneratedAt: bundled.meta.generatedAt,
 			fetchMode: "local-csv",
-			sourceUrl: String(LOCAL_DANBOORU_MERGED_CSV_URL),
+			sourceUrl: bundled.meta.sources?.map((source) => source.url).filter(Boolean).join(", "),
+			sources: bundled.meta.sources,
+			sourceCounts: bundled.meta.sourceCounts,
 		});
 	} catch (error) {
-		console.warn("Bubba Autocomplete: failed to load local merged Danbooru cache", error);
+		console.warn("Bubba Autocomplete: failed to load local tag CSV cache", error);
 	}
 }
 
@@ -169,6 +269,8 @@ export async function fetchLocalCsvTags() {
 		tags,
 		truncated: false,
 		mode: "local-csv",
+		sources: bundled.meta.sources,
+		sourceCounts: bundled.meta.sourceCounts,
 	};
 }
 
@@ -190,6 +292,17 @@ export function parseLocalTagCacheStatus() {
 	if (meta.truncated) {
 		details.push("truncated");
 	}
+	if (Array.isArray(meta.sources) && meta.sources.length) {
+		details.push(`${meta.sources.length} file${meta.sources.length === 1 ? "" : "s"}`);
+	}
+	if (meta.sourceCounts && typeof meta.sourceCounts === "object") {
+		const sourceCountText = Object.entries(meta.sourceCounts)
+			.map(([source, count]) => `${source} ${formatNumber(count)}`)
+			.join(", ");
+		if (sourceCountText) {
+			details.push(sourceCountText);
+		}
+	}
 	const detailText = details.length ? ` (${details.join(", ")})` : "";
 	return `Cached ${countText} local tags${detailText}. Updated ${dateText}.`;
 }
@@ -200,10 +313,10 @@ export function buildLocalTagCacheCsvLines(tags, meta = {}) {
 
 	const lines = [
 		`# schema_version=${bundledCacheSchemaVersion}`,
-		"# source=danbooru",
+		"# source=multi",
 		`# generated_at=${generatedAt}`,
 		`# tag_count=${tags.length}`,
-		"tag,count,category,aliases",
+		"source,tag,count,category,aliases",
 	];
 
 	for (const tag of tags) {
@@ -214,7 +327,8 @@ export function buildLocalTagCacheCsvLines(tags, meta = {}) {
 		const count = typeof tag.count === "number" ? tag.count : 0;
 		const category = normalizeDanbooruCategory(tag.category);
 		const aliases = (tag.aliases || []).join(",");
-		lines.push(`${toCsvField(text)},${count},${category ?? ""},${toCsvField(aliases)}`);
+		const source = String(tag.source || "").trim();
+		lines.push(`${toCsvField(source)},${toCsvField(text)},${count},${category ?? ""},${toCsvField(aliases)}`);
 	}
 
 	return lines;
@@ -234,7 +348,7 @@ export function exportLocalTagCacheCsv() {
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
-	a.download = "danbooru_e621_merged.csv";
+	a.download = "bubba_local_tags.csv";
 	a.style.display = "none";
 	document.body.appendChild(a);
 	a.click();
@@ -277,19 +391,21 @@ export async function refreshLocalCsvCache(buttonEl) {
 			fetchMode: result.mode,
 			truncated: result.truncated,
 			seedSource: "local",
-			sourceUrl: String(LOCAL_DANBOORU_MERGED_CSV_URL),
+			sourceUrl: result.sources?.map((source) => source.url).filter(Boolean).join(", "),
+			sources: result.sources,
+			sourceCounts: result.sourceCounts,
 			schemaVersion: bundledCacheSchemaVersion,
 		};
 		setDanbooruTags(result.tags);
 		setDanbooruMeta(nextMeta);
-		alert(`Bubba Autocomplete: Cached ${formatNumber(result.tags.length)} tags from local merged CSV.`);
+		alert(`Bubba Autocomplete: Cached ${formatNumber(result.tags.length)} tags from local CSV sources.`);
 	} catch (error) {
 		console.error(error);
 		alert(`Bubba Autocomplete: Failed to refresh local CSV. ${error?.message || "Unknown error"}`);
 	} finally {
 		if (buttonEl) {
 			buttonEl.disabled = false;
-			buttonEl.textContent = "Download Latest + Rebuild Cache";
+			buttonEl.textContent = "Download Sources + Rebuild Cache";
 		}
 	}
 }
@@ -303,3 +419,4 @@ export function clearLocalTagCache() {
 
 export const bundledCacheVersion = bundledCacheSchemaVersion;
 export const localDanbooruMergedCsvUrl = LOCAL_DANBOORU_MERGED_CSV_URL;
+export const localTagSourceDefinitions = LOCAL_TAG_SOURCE_DEFINITIONS;

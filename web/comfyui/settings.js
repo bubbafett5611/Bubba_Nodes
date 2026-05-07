@@ -394,14 +394,14 @@ app.registerExtension({
 					const container = createSettingPanel();
 					const status = createStatusText(parseLocalTagCacheStatus());
 					const hint = createText(
-						"Autocomplete uses an in-memory search index built from this browser cache for fast typing.",
+						"Autocomplete uses an in-memory search index built from local source CSVs and this browser cache for fast typing.",
 						"12px",
 						0.7,
 						"0",
 					);
 
 					const refreshBtn = document.createElement("button");
-					refreshBtn.textContent = "Download Latest + Rebuild Cache";
+					refreshBtn.textContent = "Download Sources + Rebuild Cache";
 					refreshBtn.onclick = async () => {
 						await refreshLocalCsvCache(refreshBtn);
 						status.textContent = parseLocalTagCacheStatus();

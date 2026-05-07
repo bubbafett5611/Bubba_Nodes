@@ -1012,6 +1012,16 @@ class TestAutocompleteServerRoutes:
         monkeypatch.setenv("BUBBA_UPSTREAM_CSV_URL", "https://example.invalid/cache.csv")
         assert autocomplete_server._upstream_csv_url() == "https://example.invalid/cache.csv"
 
+    def test_tag_source_url_uses_env_override(self, monkeypatch):
+        source = autocomplete_server.TagSource(
+            "example",
+            "example.csv",
+            "BUBBA_EXAMPLE_CSV_URL",
+            "https://example.invalid/default.csv",
+        )
+        monkeypatch.setenv("BUBBA_EXAMPLE_CSV_URL", "https://example.invalid/override.csv")
+        assert autocomplete_server._tag_source_url(source) == "https://example.invalid/override.csv"
+
     def test_save_bytes_atomic_writes_file(self, tmp_path):
         target = tmp_path / "nested" / "cache.csv"
         autocomplete_server._save_bytes_atomic(target, b"tag,count\nfoo,1\n")
@@ -1054,8 +1064,16 @@ class TestAutocompleteServerRoutes:
         )
 
         monkeypatch.setattr(autocomplete_server, "_route_registered", False)
-        monkeypatch.setattr(autocomplete_server, "_local_csv_path", lambda: tmp_path / "danbooru_e621_merged.csv")
-        monkeypatch.setattr(autocomplete_server, "_download_upstream_csv", lambda url: b"tag,count\nfoo,1\n")
+        monkeypatch.setattr(autocomplete_server, "_local_tags_dir", lambda: tmp_path / "tags")
+        monkeypatch.setattr(
+            autocomplete_server,
+            "_tag_sources",
+            lambda: [
+                autocomplete_server.TagSource("danbooru", "danbooru.csv", "BUBBA_DANBOORU_CSV_URL", "https://example.invalid/danbooru.csv"),
+                autocomplete_server.TagSource("e621", "e621.csv", "BUBBA_E621_CSV_URL", "https://example.invalid/e621.csv"),
+            ],
+        )
+        monkeypatch.setattr(autocomplete_server, "_download_upstream_csv", lambda url: f"tag,count\n{url},1\n".encode())
 
         autocomplete_server.register_autocomplete_routes()
 
@@ -1069,4 +1087,7 @@ class TestAutocompleteServerRoutes:
         sync_result = asyncio.run(fake_routes.post_handlers["/bubba/sync_upstream_cache"](None))
         assert sync_result["status"] == 200
         assert sync_result["payload"]["status"] == "ok"
-        assert sync_result["payload"]["bytes"] == len(b"tag,count\nfoo,1\n")
+        assert len(sync_result["payload"]["sources"]) == 2
+        assert (tmp_path / "tags" / "danbooru.csv").exists()
+        assert (tmp_path / "tags" / "e621.csv").exists()
+        assert sync_result["payload"]["bytes"] == sum(source["bytes"] for source in sync_result["payload"]["sources"])
