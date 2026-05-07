@@ -1,4 +1,14 @@
 const { app } = window.comfyAPI.app;
+import {
+	basenameWithoutExtension,
+	createQuickSection,
+	getWidgetValue,
+	installLiteMenuObserver,
+	normalizeSlashes,
+	positionMenuNearCursor as positionSharedMenuNearCursor,
+	rewriteCivitaiUrl,
+	setupKeyboardNavigation as setupSharedKeyboardNavigation,
+} from "./menu_shared.js";
 import { readBooleanSetting, readNumberSetting, readStringArray, writeStringArray } from "./storage.js";
 
 const EXTENSION_NAME = "bubba.CheckpointTreeMenu";
@@ -19,13 +29,73 @@ const CHECKPOINT_MENU_RECENTS_LIMIT_KEY = "bubba.CheckpointMenu.RecentsLimit";
 const CHECKPOINT_MENU_RECENTS_LIMIT_DEFAULT = 14;
 
 let stylesInstalled = false;
-let observerInstalled = false;
 let previewPanel = null;
 let previewImage = null;
 let previewLabel = null;
 let previewRequestToken = 0;
 const civitaiLinkCache = new Map();
+const previewUrlCache = new Map();
 let activeMenuContext = null;
+
+function getCheckpointSelectionPath(node) {
+	return normalizeSlashes(getWidgetValue(node, "ckpt_name"));
+}
+
+function refreshCheckpointAssetState(node) {
+	const checkpointPath = getCheckpointSelectionPath(node);
+	if (!checkpointPath) {
+		node.bubbaCheckpointAssetPath = "";
+		node.bubbaCheckpointPreviewUrl = null;
+		node.bubbaCheckpointPreviewStatus = "idle";
+		node.bubbaCheckpointCivitaiUrl = null;
+		node.bubbaCheckpointCivitaiStatus = "idle";
+		return;
+	}
+	if (node.bubbaCheckpointAssetPath === checkpointPath && node.bubbaCheckpointAssetLoading) {
+		return;
+	}
+	if (
+		node.bubbaCheckpointAssetPath === checkpointPath
+		&& node.bubbaCheckpointPreviewStatus
+		&& node.bubbaCheckpointCivitaiStatus
+	) {
+		return;
+	}
+
+	node.bubbaCheckpointAssetPath = checkpointPath;
+	node.bubbaCheckpointAssetLoading = true;
+	node.bubbaCheckpointPreviewStatus = "loading";
+	node.bubbaCheckpointCivitaiStatus = "loading";
+	const requestToken = (node.bubbaCheckpointAssetToken || 0) + 1;
+	node.bubbaCheckpointAssetToken = requestToken;
+
+	const candidates = buildPreviewCandidates(checkpointPath);
+	Promise.all([
+		resolveFirstExistingPreview(checkpointPath, candidates),
+		getCivitaiUrl(checkpointPath),
+	]).then(([preview, civitaiUrl]) => {
+		if (node.bubbaCheckpointAssetToken !== requestToken) {
+			return;
+		}
+		node.bubbaCheckpointPreviewUrl = preview?.url || null;
+		node.bubbaCheckpointPreviewStatus = preview?.url ? "ready" : "missing";
+		node.bubbaCheckpointCivitaiUrl = civitaiUrl || null;
+		node.bubbaCheckpointCivitaiStatus = civitaiUrl ? "ready" : "missing";
+		node.bubbaCheckpointAssetLoading = false;
+		node.setDirtyCanvas?.(true, true);
+	}).catch(() => {
+		if (node.bubbaCheckpointAssetToken !== requestToken) {
+			return;
+		}
+		node.bubbaCheckpointPreviewUrl = null;
+		node.bubbaCheckpointPreviewStatus = "missing";
+		node.bubbaCheckpointCivitaiUrl = null;
+		node.bubbaCheckpointCivitaiStatus = "missing";
+		node.bubbaCheckpointAssetLoading = false;
+		node.setDirtyCanvas?.(true, true);
+	});
+}
+
 
 function installStyles() {
 	if (stylesInstalled) {
@@ -112,6 +182,12 @@ function installStyles() {
 			align-items: center;
 			gap: 8px;
 		}
+		.bubba-ckpt-entry-actions {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			flex: 0 0 auto;
+		}
 		.bubba-ckpt-quick-header {
 			opacity: 0.85;
 			font-size: calc(11px * var(--bubba-font-scale));
@@ -134,11 +210,12 @@ function installStyles() {
 			padding-right: 8px;
 			border-right: 1px solid rgba(255, 255, 255, 0.14);
 		}
+		.bubba-ckpt-preview-btn,
 		.bubba-ckpt-info-btn {
-			width: calc(18px * var(--bubba-icon-scale));
+			min-width: calc(18px * var(--bubba-icon-scale));
 			height: calc(18px * var(--bubba-icon-scale));
 			flex: 0 0 auto;
-			border-radius: 50%;
+			border-radius: 999px;
 			border: 1px solid rgba(95, 187, 255, 0.6);
 			background: rgba(7, 14, 24, 0.94);
 			color: #a8dcff;
@@ -146,15 +223,23 @@ function installStyles() {
 			line-height: calc(16px * var(--bubba-icon-scale));
 			text-align: center;
 			cursor: pointer;
-			padding: 0;
+			padding: 0 6px;
 			font-weight: 700;
 			box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32);
 		}
+		.bubba-ckpt-preview-btn {
+			font-size: calc(10px * var(--bubba-icon-scale));
+			color: #d6efff;
+			border-color: rgba(128, 213, 255, 0.72);
+			background: rgba(14, 28, 42, 0.96);
+		}
+		.bubba-ckpt-preview-btn:hover,
 		.bubba-ckpt-info-btn:hover {
 			background: rgba(18, 38, 60, 0.98);
 			border-color: rgba(138, 213, 255, 0.95);
 			color: #d8f1ff;
 		}
+		.bubba-ckpt-menu .litemenu-entry.selected .bubba-ckpt-preview-btn,
 		.bubba-ckpt-menu .litemenu-entry.selected .bubba-ckpt-info-btn,
 		.bubba-ckpt-menu .litemenu-entry[aria-selected="true"] .bubba-ckpt-info-btn,
 		.bubba-ckpt-menu .litemenu-entry[data-selected="true"] .bubba-ckpt-info-btn {
@@ -163,11 +248,37 @@ function installStyles() {
 			color: #e9f7ff;
 			box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
 		}
+		.bubba-ckpt-menu .litemenu-entry[aria-selected="true"] .bubba-ckpt-preview-btn,
+		.bubba-ckpt-menu .litemenu-entry[data-selected="true"] .bubba-ckpt-preview-btn {
+			background: rgba(6, 11, 20, 0.96);
+			border-color: rgba(156, 221, 255, 0.98);
+			color: #e9f7ff;
+			box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+		}
+		.bubba-ckpt-preview-btn.is-missing,
 		.bubba-ckpt-info-btn.is-loading {
 			opacity: 0.7;
 		}
+		.bubba-ckpt-info-btn.is-loading::after {
+			content: "";
+		}
+		.bubba-ckpt-preview-btn.is-missing,
 		.bubba-ckpt-info-btn.is-missing {
 			opacity: 0.4;
+		}
+		.bubba-ckpt-status-pill {
+			font-size: 10px;
+			line-height: 1;
+			padding: 3px 6px;
+			border-radius: 999px;
+			border: 1px solid rgba(255, 206, 120, 0.42);
+			background: rgba(61, 44, 10, 0.24);
+			color: rgba(255, 223, 166, 0.92);
+			flex: 0 0 auto;
+			display: none;
+		}
+		.bubba-ckpt-status-pill.is-visible {
+			display: inline-flex;
 		}
 		.bubba-ckpt-fav-btn {
 			width: calc(18px * var(--bubba-icon-scale));
@@ -452,7 +563,7 @@ async function getCivitaiUrl(checkpointPath) {
 	}
 
 	if (civitaiLinkCache.has(key)) {
-		return civitaiLinkCache.get(key);
+		return rewriteCivitaiUrl(civitaiLinkCache.get(key));
 	}
 
 	try {
@@ -464,7 +575,7 @@ async function getCivitaiUrl(checkpointPath) {
 		const payload = await response.json();
 		const url = typeof payload?.url === "string" ? payload.url : null;
 		civitaiLinkCache.set(key, url);
-		return url;
+		return rewriteCivitaiUrl(url);
 	} catch {
 		civitaiLinkCache.set(key, null);
 		return null;
@@ -494,6 +605,20 @@ function resolveFirstExistingPreview(checkpointPath, candidates) {
 	});
 }
 
+async function getResolvedPreviewUrl(checkpointPath) {
+	const key = normalizeSlashes(checkpointPath);
+	if (!key) {
+		return null;
+	}
+	if (previewUrlCache.has(key)) {
+		return previewUrlCache.get(key);
+	}
+	const preview = await resolveFirstExistingPreview(key, buildPreviewCandidates(key));
+	const url = preview?.url || null;
+	previewUrlCache.set(key, url);
+	return url;
+}
+
 async function showPreviewForEntry(entryElement) {
 	if (!isCheckpointPreviewEnabled()) {
 		hidePreviewPanel();
@@ -513,11 +638,12 @@ async function showPreviewForEntry(entryElement) {
 	}
 
 	const requestToken = ++previewRequestToken;
-	const preview = await resolveFirstExistingPreview(checkpointPath, candidates);
+	const previewUrl = await getResolvedPreviewUrl(checkpointPath);
 	if (requestToken !== previewRequestToken) {
 		return;
 	}
-	if (!preview) {
+	if (!previewUrl) {
+		markEntryPreviewState(entryElement, false);
 		const fallbackLabel = candidates[0].split("/").pop() || candidates[0];
 		previewImage.removeAttribute("src");
 		previewLabel.textContent = `No preview found for ${fallbackLabel}`;
@@ -526,11 +652,50 @@ async function showPreviewForEntry(entryElement) {
 		return;
 	}
 
-	previewImage.src = preview.url;
+	markEntryPreviewState(entryElement, true);
+	previewImage.src = previewUrl;
 	const chosenName = candidates[0].split("/").pop() || candidates[0];
 	previewLabel.textContent = chosenName;
 	previewPanel.classList.add("is-visible");
 	positionPreviewPanel(entryElement);
+}
+
+function ensureEntryActionArea(entryElement) {
+	let actions = entryElement.querySelector(":scope > .bubba-ckpt-entry-actions");
+	if (actions) {
+		return actions;
+	}
+	actions = document.createElement("span");
+	actions.className = "bubba-ckpt-entry-actions";
+	entryElement.appendChild(actions);
+	return actions;
+}
+
+function ensureEntryStatusPill(entryElement) {
+	let pill = entryElement.querySelector(":scope > .bubba-ckpt-entry-actions > .bubba-ckpt-status-pill");
+	if (pill) {
+		return pill;
+	}
+	const actions = ensureEntryActionArea(entryElement);
+	pill = document.createElement("span");
+	pill.className = "bubba-ckpt-status-pill";
+	actions.appendChild(pill);
+	return pill;
+}
+
+function setEntryStatusPill(entryElement, text = "") {
+	const pill = ensureEntryStatusPill(entryElement);
+	pill.textContent = text;
+	pill.classList.toggle("is-visible", !!text);
+}
+
+function markEntryPreviewState(entryElement, hasPreview) {
+	const button = entryElement.querySelector(":scope > .bubba-ckpt-entry-actions > .bubba-ckpt-preview-btn");
+	if (button) {
+		button.classList.toggle("is-missing", hasPreview === false);
+		button.title = hasPreview === false ? "No preview available" : "Show preview";
+	}
+	setEntryStatusPill(entryElement, hasPreview === false ? "No preview" : "");
 }
 
 function bindEntryPreview(entryElement) {
@@ -574,7 +739,41 @@ function ensureFileEntryLayout(entryElement) {
 		label.appendChild(entryElement.firstChild);
 	}
 	entryElement.appendChild(label);
+	ensureEntryActionArea(entryElement);
 	return label;
+}
+
+function bindEntryPreviewButton(entryElement) {
+	if (!entryElement || entryElement.dataset?.bubbaPreviewButtonBound === "1") {
+		return;
+	}
+	entryElement.dataset.bubbaPreviewButtonBound = "1";
+	ensureFileEntryLayout(entryElement);
+	const actions = ensureEntryActionArea(entryElement);
+
+	const button = document.createElement("button");
+	button.type = "button";
+	button.className = "bubba-ckpt-preview-btn";
+	button.textContent = "Prev";
+	button.title = "Show preview";
+	actions.appendChild(button);
+	ensureEntryStatusPill(entryElement);
+
+	button.addEventListener("mousedown", (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+	});
+
+	button.addEventListener("click", async (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		await showPreviewForEntry(entryElement);
+	});
+
+	entryElement.addEventListener("mouseenter", async () => {
+		const previewUrl = await getResolvedPreviewUrl(entryElement.dataset?.bubbaCkptPath);
+		markEntryPreviewState(entryElement, !!previewUrl);
+	});
 }
 
 function bindEntryCivitaiButton(entryElement) {
@@ -590,7 +789,7 @@ function bindEntryCivitaiButton(entryElement) {
 	button.className = "bubba-ckpt-info-btn";
 	button.textContent = "i";
 	button.title = "Open CivitAI page";
-	entryElement.appendChild(button);
+	ensureEntryActionArea(entryElement).appendChild(button);
 
 	button.addEventListener("mousedown", (event) => {
 		event.preventDefault();
@@ -638,7 +837,7 @@ function bindEntryFavoriteButton(entryElement) {
 	};
 
 	syncState();
-	entryElement.appendChild(button);
+	ensureEntryActionArea(entryElement).appendChild(button);
 
 	button.addEventListener("mousedown", (event) => {
 		event.preventDefault();
@@ -669,45 +868,31 @@ function bindEntryFavoriteButton(entryElement) {
 }
 
 function buildQuickSection(title, paths, entryByPath, displayNameWithoutExtension) {
-	if (!paths.length) {
-		return null;
-	}
-
-	const section = document.createDocumentFragment();
-	const header = document.createElement("div");
-	header.className = "litemenu-entry bubba-ckpt-quick-header";
-	header.textContent = title;
-	section.appendChild(header);
-
-	for (const path of paths) {
-		const sourceEntry = entryByPath.get(path);
-		if (!sourceEntry) {
-			continue;
-		}
-
-		const quickItem = document.createElement("div");
-		quickItem.className = "litemenu-entry bubba-ckpt-file bubba-ckpt-quick-item";
-		quickItem.dataset.bubbaCkptPath = path;
-		quickItem.setAttribute("data-value", path);
-		const fileLeaf = path.split("/").pop() || path;
-		quickItem.textContent = displayNameWithoutExtension(fileLeaf);
-
-		bindEntryPreview(quickItem);
-		bindEntrySelectionTracking(quickItem);
-		bindEntryCivitaiButton(quickItem);
-		bindEntryFavoriteButton(quickItem);
-
-		quickItem.addEventListener("click", (event) => {
-			if (event.defaultPrevented) {
-				return;
-			}
-			sourceEntry.click();
-		});
-
-		section.appendChild(quickItem);
-	}
-
-	return section;
+	return createQuickSection({
+		title,
+		values: paths,
+		entryByValue: entryByPath,
+		headerClass: "bubba-ckpt-quick-header",
+		createItem(path, sourceEntry) {
+			const quickItem = document.createElement("div");
+			quickItem.className = "litemenu-entry bubba-ckpt-file bubba-ckpt-quick-item";
+			quickItem.dataset.bubbaCkptPath = path;
+			quickItem.setAttribute("data-value", path);
+			const fileLeaf = path.split("/").pop() || path;
+			quickItem.textContent = displayNameWithoutExtension(fileLeaf);
+			bindEntryPreview(quickItem);
+			bindEntryPreviewButton(quickItem);
+			bindEntrySelectionTracking(quickItem);
+			bindEntryCivitaiButton(quickItem);
+			bindEntryFavoriteButton(quickItem);
+			quickItem.addEventListener("click", (event) => {
+				if (!event.defaultPrevented) {
+					sourceEntry.click();
+				}
+			});
+			return quickItem;
+		},
+	});
 }
 
 function setupKeyboardNavigation(menu) {
@@ -802,22 +987,21 @@ function isCheckpointWidget(node, widget) {
 	return !!node && TARGET_NODE_CLASSES.has(node.comfyClass) && widget?.name === "ckpt_name";
 }
 
+function setupCheckpointKeyboardNavigation(menu) {
+	setupSharedKeyboardNavigation(menu, {
+		boundDatasetKey: "bubbaKeyboardBound",
+		headerClass: "bubba-ckpt-quick-header",
+		focusClass: "bubba-ckpt-kb-focus",
+		selectedSelector: ".litemenu-entry.bubba-ckpt-selected, .litemenu-entry.selected, .litemenu-entry[aria-selected='true'], .litemenu-entry[data-selected='true']",
+		folderClass: "bubba-ckpt-folder",
+		folderArrowSelector: ".bubba-ckpt-folder-arrow",
+		folderCollapsedGlyph: "â–¶",
+		folderExpandedGlyph: "â–¼",
+	});
+}
+
 function positionMenu(menu) {
-	let left = app.canvas.last_mouse[0] - 10;
-	let top = app.canvas.last_mouse[1] - 10;
-
-	const bodyRect = document.body.getBoundingClientRect();
-	const menuRect = menu.getBoundingClientRect();
-
-	if (bodyRect.width && left > bodyRect.width - menuRect.width - 10) {
-		left = bodyRect.width - menuRect.width - 10;
-	}
-	if (bodyRect.height && top > bodyRect.height - menuRect.height - 10) {
-		top = bodyRect.height - menuRect.height - 10;
-	}
-
-	menu.style.left = `${left}px`;
-	menu.style.top = `${top}px`;
+	positionSharedMenuNearCursor(menu, app);
 }
 
 function buildCheckpointTreeMenu(menu, selectedCheckpointValue = "", checkpointWidget = null) {
@@ -828,16 +1012,8 @@ function buildCheckpointTreeMenu(menu, selectedCheckpointValue = "", checkpointW
 		selectedCheckpointValue,
 		checkpointWidget,
 	};
-	const selectedNormalized = String(selectedCheckpointValue || "").replace(/\\/g, "/").trim();
-
-	const displayNameWithoutExtension = (name) => {
-		const trimmed = String(name || "").trim();
-		const dotIndex = trimmed.lastIndexOf(".");
-		if (dotIndex <= 0) {
-			return trimmed;
-		}
-		return trimmed.slice(0, dotIndex);
-	};
+	const selectedNormalized = normalizeSlashes(selectedCheckpointValue);
+	const displayNameWithoutExtension = basenameWithoutExtension;
 
 	// Save original ComfyUI entries on first build; restore them on subsequent rebuilds
 	// to prevent dynamically-added quick/folder elements from being re-processed.
@@ -871,7 +1047,7 @@ function buildCheckpointTreeMenu(menu, selectedCheckpointValue = "", checkpointW
 
 	for (const entry of entries) {
 		const rawValue = entry.getAttribute("data-value") || "";
-		const normalizedRawValue = rawValue.replace(/\\/g, "/");
+		const normalizedRawValue = normalizeSlashes(rawValue);
 		const pathParts = rawValue.split(splitBy).filter(Boolean);
 		if (!pathParts.length) {
 			rootItems.push(entry);
@@ -923,6 +1099,7 @@ function buildCheckpointTreeMenu(menu, selectedCheckpointValue = "", checkpointW
 	for (const item of rootItems) {
 		item.classList.add("bubba-ckpt-file");
 		bindEntryPreview(item);
+		bindEntryPreviewButton(item);
 		bindEntrySelectionTracking(item);
 		bindEntryCivitaiButton(item);
 		bindEntryFavoriteButton(item);
@@ -1004,6 +1181,7 @@ function buildCheckpointTreeMenu(menu, selectedCheckpointValue = "", checkpointW
 			for (const item of items) {
 				item.classList.add("bubba-ckpt-file");
 				bindEntryPreview(item);
+				bindEntryPreviewButton(item);
 				bindEntrySelectionTracking(item);
 				bindEntryCivitaiButton(item);
 				bindEntryFavoriteButton(item);
@@ -1058,54 +1236,28 @@ function buildCheckpointTreeMenu(menu, selectedCheckpointValue = "", checkpointW
 		selectedEntry.scrollIntoView({ block: "nearest" });
 	}
 
-	setupKeyboardNavigation(menu);
+	setupCheckpointKeyboardNavigation(menu);
 }
 
-function installMenuObserver() {
-	if (observerInstalled) {
-		return;
-	}
-	observerInstalled = true;
-
-	const observer = new MutationObserver((mutations) => {
-		const node = app.canvas.current_node;
-		if (!node || !TARGET_NODE_CLASSES.has(node.comfyClass)) {
-			return;
-		}
-
-		for (const mutation of mutations) {
-			for (const removed of mutation.removedNodes) {
-				if (removed.classList?.contains("litecontextmenu")) {
-					hidePreviewPanel();
-				}
-			}
-			for (const added of mutation.addedNodes) {
-				if (!added.classList?.contains("litecontextmenu")) {
-					continue;
-				}
-
-				const widget = app.canvas.getWidgetAtCursor();
-				if (!isCheckpointWidget(node, widget)) {
-					continue;
-				}
-
-				requestAnimationFrame(() => {
-					if (!added.querySelector(".comfy-context-menu-filter")) {
-						return;
-					}
-					buildCheckpointTreeMenu(added, String(widget?.value ?? ""), widget);
-				});
-				return;
-			}
-		}
-	});
-
-	observer.observe(document.body, { childList: true, subtree: false });
-}
+const ensureCheckpointMenuObserver = installLiteMenuObserver({
+	app,
+	isTargetNode(node) {
+		return !!node && TARGET_NODE_CLASSES.has(node.comfyClass);
+	},
+	isTargetWidget(node, widget) {
+		return isCheckpointWidget(node, widget);
+	},
+	onMenuOpen(menu, node, widget) {
+		buildCheckpointTreeMenu(menu, String(widget?.value ?? ""), widget);
+	},
+	onMenuClose() {
+		hidePreviewPanel();
+	},
+});
 
 function installCheckpointTieredMenus() {
 	installStyles();
-	installMenuObserver();
+	ensureCheckpointMenuObserver();
 
 	app.registerExtension({
 		name: EXTENSION_NAME,

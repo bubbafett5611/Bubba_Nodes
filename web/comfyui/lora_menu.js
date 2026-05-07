@@ -1,4 +1,14 @@
 const { app } = window.comfyAPI.app;
+import {
+	basenameWithoutExtension,
+	createQuickSection,
+	getWidgetValue,
+	installLiteMenuObserver,
+	normalizeSlashes,
+	positionMenuNearCursor as positionSharedMenuNearCursor,
+	rewriteCivitaiUrl,
+	setupKeyboardNavigation as setupSharedKeyboardNavigation,
+} from "./menu_shared.js";
 import { readBooleanSetting, readNumberSetting, readStringArray, writeStringArray } from "./storage.js";
 
 const EXTENSION_NAME = "bubba.LoraTreeMenu";
@@ -19,13 +29,73 @@ const LORA_MENU_RECENTS_LIMIT_KEY = "bubba.LoraMenu.RecentsLimit";
 const LORA_MENU_RECENTS_LIMIT_DEFAULT = 14;
 
 let stylesInstalled = false;
-let observerInstalled = false;
 let previewPanel = null;
 let previewImage = null;
 let previewLabel = null;
 let previewRequestToken = 0;
 const civitaiLinkCache = new Map();
+const previewUrlCache = new Map();
 let activeMenuContext = null;
+
+function getLoraSelectionPath(node) {
+	return normalizeSlashes(getWidgetValue(node, "lora_name"));
+}
+
+function refreshLoraAssetState(node) {
+	const loraPath = getLoraSelectionPath(node);
+	if (!loraPath) {
+		node.bubbaLoraAssetPath = "";
+		node.bubbaLoraPreviewUrl = null;
+		node.bubbaLoraPreviewStatus = "idle";
+		node.bubbaLoraCivitaiUrl = null;
+		node.bubbaLoraCivitaiStatus = "idle";
+		return;
+	}
+	if (node.bubbaLoraAssetPath === loraPath && node.bubbaLoraAssetLoading) {
+		return;
+	}
+	if (
+		node.bubbaLoraAssetPath === loraPath
+		&& node.bubbaLoraPreviewStatus
+		&& node.bubbaLoraCivitaiStatus
+	) {
+		return;
+	}
+
+	node.bubbaLoraAssetPath = loraPath;
+	node.bubbaLoraAssetLoading = true;
+	node.bubbaLoraPreviewStatus = "loading";
+	node.bubbaLoraCivitaiStatus = "loading";
+	const requestToken = (node.bubbaLoraAssetToken || 0) + 1;
+	node.bubbaLoraAssetToken = requestToken;
+
+	const candidates = buildPreviewCandidates(loraPath);
+	Promise.all([
+		resolveFirstExistingPreview(loraPath, candidates),
+		getCivitaiUrl(loraPath),
+	]).then(([preview, civitaiUrl]) => {
+		if (node.bubbaLoraAssetToken !== requestToken) {
+			return;
+		}
+		node.bubbaLoraPreviewUrl = preview?.url || null;
+		node.bubbaLoraPreviewStatus = preview?.url ? "ready" : "missing";
+		node.bubbaLoraCivitaiUrl = civitaiUrl || null;
+		node.bubbaLoraCivitaiStatus = civitaiUrl ? "ready" : "missing";
+		node.bubbaLoraAssetLoading = false;
+		node.setDirtyCanvas?.(true, true);
+	}).catch(() => {
+		if (node.bubbaLoraAssetToken !== requestToken) {
+			return;
+		}
+		node.bubbaLoraPreviewUrl = null;
+		node.bubbaLoraPreviewStatus = "missing";
+		node.bubbaLoraCivitaiUrl = null;
+		node.bubbaLoraCivitaiStatus = "missing";
+		node.bubbaLoraAssetLoading = false;
+		node.setDirtyCanvas?.(true, true);
+	});
+}
+
 
 function installStyles() {
 	if (stylesInstalled) {
@@ -112,6 +182,12 @@ function installStyles() {
 			align-items: center;
 			gap: 8px;
 		}
+		.bubba-lora-entry-actions {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			flex: 0 0 auto;
+		}
 		.bubba-lora-quick-header {
 			opacity: 0.85;
 			font-size: calc(11px * var(--bubba-font-scale));
@@ -134,11 +210,12 @@ function installStyles() {
 			padding-right: 8px;
 			border-right: 1px solid rgba(255, 255, 255, 0.14);
 		}
+		.bubba-lora-preview-btn,
 		.bubba-lora-info-btn {
-			width: calc(18px * var(--bubba-icon-scale));
+			min-width: calc(18px * var(--bubba-icon-scale));
 			height: calc(18px * var(--bubba-icon-scale));
 			flex: 0 0 auto;
-			border-radius: 50%;
+			border-radius: 999px;
 			border: 1px solid rgba(176, 139, 255, 0.6);
 			background: rgba(14, 7, 24, 0.94);
 			color: #c8aaff;
@@ -146,15 +223,23 @@ function installStyles() {
 			line-height: calc(16px * var(--bubba-icon-scale));
 			text-align: center;
 			cursor: pointer;
-			padding: 0;
+			padding: 0 6px;
 			font-weight: 700;
 			box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32);
 		}
+		.bubba-lora-preview-btn {
+			font-size: calc(10px * var(--bubba-icon-scale));
+			color: #efe5ff;
+			border-color: rgba(200, 170, 255, 0.72);
+			background: rgba(28, 14, 42, 0.96);
+		}
+		.bubba-lora-preview-btn:hover,
 		.bubba-lora-info-btn:hover {
 			background: rgba(38, 18, 60, 0.98);
 			border-color: rgba(200, 170, 255, 0.95);
 			color: #e0d1ff;
 		}
+		.bubba-lora-menu .litemenu-entry.selected .bubba-lora-preview-btn,
 		.bubba-lora-menu .litemenu-entry.selected .bubba-lora-info-btn,
 		.bubba-lora-menu .litemenu-entry[aria-selected="true"] .bubba-lora-info-btn,
 		.bubba-lora-menu .litemenu-entry[data-selected="true"] .bubba-lora-info-btn {
@@ -163,11 +248,34 @@ function installStyles() {
 			color: #ede5ff;
 			box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
 		}
+		.bubba-lora-menu .litemenu-entry[aria-selected="true"] .bubba-lora-preview-btn,
+		.bubba-lora-menu .litemenu-entry[data-selected="true"] .bubba-lora-preview-btn {
+			background: rgba(14, 7, 24, 0.96);
+			border-color: rgba(210, 185, 255, 0.98);
+			color: #ede5ff;
+			box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+		}
+		.bubba-lora-preview-btn.is-missing,
 		.bubba-lora-info-btn.is-loading {
 			opacity: 0.7;
 		}
+		.bubba-lora-preview-btn.is-missing,
 		.bubba-lora-info-btn.is-missing {
 			opacity: 0.4;
+		}
+		.bubba-lora-status-pill {
+			font-size: 10px;
+			line-height: 1;
+			padding: 3px 6px;
+			border-radius: 999px;
+			border: 1px solid rgba(255, 206, 120, 0.42);
+			background: rgba(61, 44, 10, 0.24);
+			color: rgba(255, 223, 166, 0.92);
+			flex: 0 0 auto;
+			display: none;
+		}
+		.bubba-lora-status-pill.is-visible {
+			display: inline-flex;
 		}
 		.bubba-lora-fav-btn {
 			width: calc(18px * var(--bubba-icon-scale));
@@ -387,7 +495,7 @@ function createCivitaiLookupUrl(loraPath) {
 async function getCivitaiUrl(loraPath) {
 	const key = String(loraPath || "").trim();
 	if (!key) return null;
-	if (civitaiLinkCache.has(key)) return civitaiLinkCache.get(key);
+	if (civitaiLinkCache.has(key)) return rewriteCivitaiUrl(civitaiLinkCache.get(key));
 	try {
 		const response = await fetch(createCivitaiLookupUrl(key));
 		if (!response.ok) {
@@ -397,7 +505,7 @@ async function getCivitaiUrl(loraPath) {
 		const payload = await response.json();
 		const url = typeof payload?.url === "string" ? payload.url : null;
 		civitaiLinkCache.set(key, url);
-		return url;
+		return rewriteCivitaiUrl(url);
 	} catch {
 		civitaiLinkCache.set(key, null);
 		return null;
@@ -432,6 +540,16 @@ function resolveFirstExistingPreview(loraPath, candidates) {
 	});
 }
 
+async function getResolvedPreviewUrl(loraPath) {
+	const key = normalizeSlashes(loraPath);
+	if (!key) return null;
+	if (previewUrlCache.has(key)) return previewUrlCache.get(key);
+	const preview = await resolveFirstExistingPreview(key, buildPreviewCandidates(key));
+	const url = preview?.url || null;
+	previewUrlCache.set(key, url);
+	return url;
+}
+
 async function showPreviewForEntry(entryElement) {
 	if (!isPreviewEnabled()) { hidePreviewPanel(); return; }
 	ensurePreviewPanel();
@@ -442,9 +560,10 @@ async function showPreviewForEntry(entryElement) {
 	if (!candidates.length) { hidePreviewPanel(); return; }
 
 	const requestToken = ++previewRequestToken;
-	const preview = await resolveFirstExistingPreview(loraPath, candidates);
+	const previewUrl = await getResolvedPreviewUrl(loraPath);
 	if (requestToken !== previewRequestToken) return;
-	if (!preview) {
+	if (!previewUrl) {
+		markEntryPreviewState(entryElement, false);
 		const fallbackLabel = candidates[0].split("/").pop() || candidates[0];
 		previewImage.removeAttribute("src");
 		previewLabel.textContent = `No preview found for ${fallbackLabel}`;
@@ -453,7 +572,8 @@ async function showPreviewForEntry(entryElement) {
 		return;
 	}
 
-	previewImage.src = preview.url;
+	markEntryPreviewState(entryElement, true);
+	previewImage.src = previewUrl;
 	previewLabel.textContent = candidates[0].split("/").pop() || candidates[0];
 	previewPanel.classList.add("is-visible");
 	positionPreviewPanel(entryElement);
@@ -464,6 +584,40 @@ function bindEntryPreview(entryElement) {
 	entryElement.dataset.bubbaLoraPreviewBound = "1";
 	entryElement.addEventListener("mouseenter", () => showPreviewForEntry(entryElement));
 	entryElement.addEventListener("mouseleave", () => hidePreviewPanel());
+}
+
+function ensureEntryActionArea(entryElement) {
+	let actions = entryElement.querySelector(":scope > .bubba-lora-entry-actions");
+	if (actions) return actions;
+	actions = document.createElement("span");
+	actions.className = "bubba-lora-entry-actions";
+	entryElement.appendChild(actions);
+	return actions;
+}
+
+function ensureEntryStatusPill(entryElement) {
+	let pill = entryElement.querySelector(":scope > .bubba-lora-entry-actions > .bubba-lora-status-pill");
+	if (pill) return pill;
+	const actions = ensureEntryActionArea(entryElement);
+	pill = document.createElement("span");
+	pill.className = "bubba-lora-status-pill";
+	actions.appendChild(pill);
+	return pill;
+}
+
+function setEntryStatusPill(entryElement, text = "") {
+	const pill = ensureEntryStatusPill(entryElement);
+	pill.textContent = text;
+	pill.classList.toggle("is-visible", !!text);
+}
+
+function markEntryPreviewState(entryElement, hasPreview) {
+	const button = entryElement.querySelector(":scope > .bubba-lora-entry-actions > .bubba-lora-preview-btn");
+	if (button) {
+		button.classList.toggle("is-missing", hasPreview === false);
+		button.title = hasPreview === false ? "No preview available" : "Show preview";
+	}
+	setEntryStatusPill(entryElement, hasPreview === false ? "No preview" : "");
 }
 
 function bindEntrySelectionTracking(entryElement) {
@@ -483,7 +637,31 @@ function ensureFileEntryLayout(entryElement) {
 	label.className = "bubba-lora-file-label";
 	while (entryElement.firstChild) label.appendChild(entryElement.firstChild);
 	entryElement.appendChild(label);
+	ensureEntryActionArea(entryElement);
 	return label;
+}
+
+function bindEntryPreviewButton(entryElement) {
+	if (!entryElement || entryElement.dataset?.bubbaLoraPreviewButtonBound === "1") return;
+	entryElement.dataset.bubbaLoraPreviewButtonBound = "1";
+	ensureFileEntryLayout(entryElement);
+	const actions = ensureEntryActionArea(entryElement);
+	const button = document.createElement("button");
+	button.type = "button";
+	button.className = "bubba-lora-preview-btn";
+	button.textContent = "Prev";
+	button.title = "Show preview";
+	actions.appendChild(button);
+	ensureEntryStatusPill(entryElement);
+	button.addEventListener("mousedown", (event) => { event.preventDefault(); event.stopPropagation(); });
+	button.addEventListener("click", async (event) => {
+		event.preventDefault(); event.stopPropagation();
+		await showPreviewForEntry(entryElement);
+	});
+	entryElement.addEventListener("mouseenter", async () => {
+		const previewUrl = await getResolvedPreviewUrl(entryElement.dataset?.bubbaLorPath);
+		markEntryPreviewState(entryElement, !!previewUrl);
+	});
 }
 
 function bindEntryCivitaiButton(entryElement) {
@@ -496,7 +674,7 @@ function bindEntryCivitaiButton(entryElement) {
 	button.className = "bubba-lora-info-btn";
 	button.textContent = "i";
 	button.title = "Open CivitAI page";
-	entryElement.appendChild(button);
+	ensureEntryActionArea(entryElement).appendChild(button);
 
 	button.addEventListener("mousedown", (event) => { event.preventDefault(); event.stopPropagation(); });
 	button.addEventListener("click", async (event) => {
@@ -532,7 +710,7 @@ function bindEntryFavoriteButton(entryElement) {
 		button.textContent = on ? "★" : "☆";
 	};
 	syncState();
-	entryElement.appendChild(button);
+	ensureEntryActionArea(entryElement).appendChild(button);
 
 	button.addEventListener("mousedown", (event) => { event.preventDefault(); event.stopPropagation(); });
 	button.addEventListener("click", (event) => {
@@ -556,36 +734,31 @@ function bindEntryFavoriteButton(entryElement) {
 }
 
 function buildQuickSection(title, paths, entryByPath, displayNameWithoutExtension) {
-	if (!paths.length) return null;
-	const section = document.createDocumentFragment();
-	const header = document.createElement("div");
-	header.className = "litemenu-entry bubba-lora-quick-header";
-	header.textContent = title;
-	section.appendChild(header);
-
-	for (const path of paths) {
-		const sourceEntry = entryByPath.get(path);
-		if (!sourceEntry) continue;
-
-		const quickItem = document.createElement("div");
-		quickItem.className = "litemenu-entry bubba-lora-file bubba-lora-quick-item";
-		quickItem.dataset.bubbaLorPath = path;
-		quickItem.setAttribute("data-value", path);
-		const fileLeaf = path.split("/").pop() || path;
-		quickItem.textContent = displayNameWithoutExtension(fileLeaf);
-
-		bindEntryPreview(quickItem);
-		bindEntrySelectionTracking(quickItem);
-		bindEntryCivitaiButton(quickItem);
-		bindEntryFavoriteButton(quickItem);
-
-		quickItem.addEventListener("click", (event) => {
-			if (event.defaultPrevented) return;
-			sourceEntry.click();
-		});
-		section.appendChild(quickItem);
-	}
-	return section;
+	return createQuickSection({
+		title,
+		values: paths,
+		entryByValue: entryByPath,
+		headerClass: "bubba-lora-quick-header",
+		createItem(path, sourceEntry) {
+			const quickItem = document.createElement("div");
+			quickItem.className = "litemenu-entry bubba-lora-file bubba-lora-quick-item";
+			quickItem.dataset.bubbaLorPath = path;
+			quickItem.setAttribute("data-value", path);
+			const fileLeaf = path.split("/").pop() || path;
+			quickItem.textContent = displayNameWithoutExtension(fileLeaf);
+			bindEntryPreview(quickItem);
+			bindEntryPreviewButton(quickItem);
+			bindEntrySelectionTracking(quickItem);
+			bindEntryCivitaiButton(quickItem);
+			bindEntryFavoriteButton(quickItem);
+			quickItem.addEventListener("click", (event) => {
+				if (!event.defaultPrevented) {
+					sourceEntry.click();
+				}
+			});
+			return quickItem;
+		},
+	});
 }
 
 function setupKeyboardNavigation(menu) {
@@ -647,29 +820,29 @@ function isLoraWidget(node, widget) {
 	return !!node && TARGET_NODE_CLASSES.has(node.comfyClass) && widget?.name === "lora_name";
 }
 
+function setupLoraKeyboardNavigation(menu) {
+	setupSharedKeyboardNavigation(menu, {
+		boundDatasetKey: "bubbaLoraKeyboardBound",
+		headerClass: "bubba-lora-quick-header",
+		focusClass: "bubba-lora-kb-focus",
+		selectedSelector: ".litemenu-entry.bubba-lora-selected, .litemenu-entry.selected, .litemenu-entry[aria-selected='true'], .litemenu-entry[data-selected='true']",
+		folderClass: "bubba-lora-folder",
+		folderArrowSelector: ".bubba-lora-folder-arrow",
+		folderCollapsedGlyph: "▶",
+		folderExpandedGlyph: "▼",
+	});
+}
+
 function positionMenu(menu) {
-	let left = app.canvas.last_mouse[0] - 10;
-	let top = app.canvas.last_mouse[1] - 10;
-	const bodyRect = document.body.getBoundingClientRect();
-	const menuRect = menu.getBoundingClientRect();
-	if (bodyRect.width && left > bodyRect.width - menuRect.width - 10) left = bodyRect.width - menuRect.width - 10;
-	if (bodyRect.height && top > bodyRect.height - menuRect.height - 10) top = bodyRect.height - menuRect.height - 10;
-	menu.style.left = `${left}px`;
-	menu.style.top = `${top}px`;
+	positionSharedMenuNearCursor(menu, app);
 }
 
 function buildLoraTreeMenu(menu, selectedLoraValue = "", loraWidget = null) {
 	menu.classList.add("bubba-lora-menu");
 	applyMenuPreferences(menu);
 	activeMenuContext = { menu, selectedLoraValue, loraWidget };
-	const selectedNormalized = String(selectedLoraValue || "").replace(/\\/g, "/").trim();
-
-	const displayNameWithoutExtension = (name) => {
-		const trimmed = String(name || "").trim();
-		const dotIndex = trimmed.lastIndexOf(".");
-		if (dotIndex <= 0) return trimmed;
-		return trimmed.slice(0, dotIndex);
-	};
+	const selectedNormalized = normalizeSlashes(selectedLoraValue);
+	const displayNameWithoutExtension = basenameWithoutExtension;
 
 	let entries;
 	let rootContainer;
@@ -696,7 +869,7 @@ function buildLoraTreeMenu(menu, selectedLoraValue = "", loraWidget = null) {
 
 	for (const entry of entries) {
 		const rawValue = entry.getAttribute("data-value") || "";
-		const normalizedRawValue = rawValue.replace(/\\/g, "/");
+		const normalizedRawValue = normalizeSlashes(rawValue);
 		const pathParts = rawValue.split(splitBy).filter(Boolean);
 		if (!pathParts.length) { rootItems.push(entry); continue; }
 
@@ -734,6 +907,7 @@ function buildLoraTreeMenu(menu, selectedLoraValue = "", loraWidget = null) {
 	for (const item of rootItems) {
 		item.classList.add("bubba-lora-file");
 		bindEntryPreview(item);
+		bindEntryPreviewButton(item);
 		bindEntrySelectionTracking(item);
 		bindEntryCivitaiButton(item);
 		bindEntryFavoriteButton(item);
@@ -795,6 +969,7 @@ function buildLoraTreeMenu(menu, selectedLoraValue = "", loraWidget = null) {
 			for (const item of (contents.get(itemsSymbol) || [])) {
 				item.classList.add("bubba-lora-file");
 				bindEntryPreview(item);
+				bindEntryPreviewButton(item);
 				bindEntrySelectionTracking(item);
 				bindEntryCivitaiButton(item);
 				bindEntryFavoriteButton(item);
@@ -840,40 +1015,28 @@ function buildLoraTreeMenu(menu, selectedLoraValue = "", loraWidget = null) {
 		selectedEntry.scrollIntoView({ block: "nearest" });
 	}
 
-	setupKeyboardNavigation(menu);
+	setupLoraKeyboardNavigation(menu);
 }
 
-function installMenuObserver() {
-	if (observerInstalled) return;
-	observerInstalled = true;
-
-	const observer = new MutationObserver((mutations) => {
-		const node = app.canvas.current_node;
-		if (!node || !TARGET_NODE_CLASSES.has(node.comfyClass)) return;
-
-		for (const mutation of mutations) {
-			for (const removed of mutation.removedNodes) {
-				if (removed.classList?.contains("litecontextmenu")) hidePreviewPanel();
-			}
-			for (const added of mutation.addedNodes) {
-				if (!added.classList?.contains("litecontextmenu")) continue;
-				const widget = app.canvas.getWidgetAtCursor();
-				if (!isLoraWidget(node, widget)) continue;
-				requestAnimationFrame(() => {
-					if (!added.querySelector(".comfy-context-menu-filter")) return;
-					buildLoraTreeMenu(added, String(widget?.value ?? ""), widget);
-				});
-				return;
-			}
-		}
-	});
-
-	observer.observe(document.body, { childList: true, subtree: false });
-}
+const ensureLoraMenuObserver = installLiteMenuObserver({
+	app,
+	isTargetNode(node) {
+		return !!node && TARGET_NODE_CLASSES.has(node.comfyClass);
+	},
+	isTargetWidget(node, widget) {
+		return isLoraWidget(node, widget);
+	},
+	onMenuOpen(menu, node, widget) {
+		buildLoraTreeMenu(menu, String(widget?.value ?? ""), widget);
+	},
+	onMenuClose() {
+		hidePreviewPanel();
+	},
+});
 
 function installLoraTieredMenus() {
 	installStyles();
-	installMenuObserver();
+	ensureLoraMenuObserver();
 
 	app.registerExtension({
 		name: EXTENSION_NAME,

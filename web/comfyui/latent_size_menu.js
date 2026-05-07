@@ -1,4 +1,10 @@
 const { app } = window.comfyAPI.app;
+import {
+	createQuickSection,
+	installLiteMenuObserver,
+	makeHeadingCollapsible as makeSharedHeadingCollapsible,
+	setupKeyboardNavigation,
+} from "./menu_shared.js";
 import { readStringArray, writeStringArray } from "./storage.js";
 
 const EXTENSION_NAME = "bubba.EmptyLatentSizeMenu";
@@ -10,7 +16,6 @@ const SIZE_MENU_RECENTS_LIMIT = 12;
 const SIZE_MENU_EXPANDED_KEY = "bubba.SizeMenu.Expanded";
 
 let stylesInstalled = false;
-let observerInstalled = false;
 let previewPanel = null;
 let previewRect = null;
 let previewTitle = null;
@@ -48,6 +53,14 @@ function installStyles() {
             border-radius: 8px;
             font-size: 13px;
             transition: background-color 120ms ease, transform 120ms ease;
+        }
+        .bubba-size-menu .litemenu-entry.bubba-size-focused {
+            background: rgba(102, 184, 255, 0.18);
+            box-shadow: inset 0 0 0 1px rgba(102, 184, 255, 0.34);
+        }
+        .bubba-size-menu .litemenu-entry.bubba-size-selected {
+            background: rgba(102, 184, 255, 0.2);
+            box-shadow: inset 0 0 0 1px rgba(102, 184, 255, 0.42);
         }
         .bubba-size-menu .litemenu-entry:hover:not(.bubba-size-heading):not(.bubba-size-quick-header) {
             background: rgba(102, 184, 255, 0.14);
@@ -96,12 +109,28 @@ function installStyles() {
             gap: 8px;
             min-width: 0;
         }
-        .bubba-size-option-label {
+        .bubba-size-option-main {
+            display: flex;
+            align-items: center;
             flex: 1;
             min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+        }
+        .bubba-size-option-label {
+            font-weight: 600;
+            letter-spacing: 0;
+            flex: 0 0 auto;
+        }
+        .bubba-size-model-pill {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            opacity: 0.9;
+            border: 1px solid rgba(130, 210, 255, 0.3);
+            background: rgba(102, 184, 255, 0.12);
+            border-radius: 999px;
+            padding: 2px 6px;
+            flex: 0 0 auto;
         }
         .bubba-size-mp-pill {
             font-size: 11px;
@@ -254,41 +283,14 @@ function toggleCollapsedGroup(heading) {
 }
 
 function makeHeadingCollapsible(headingEntry, presetEntries, heading, isCollapsed) {
-    if (!headingEntry) {
-        return;
-    }
-
-    const chevron = headingEntry.querySelector(".bubba-size-chevron");
-    if (chevron) {
-        chevron.textContent = "▾";
-    }
-
-    const applyState = (collapsed) => {
-        for (const entry of presetEntries) {
-            entry.style.display = collapsed ? "none" : "";
-        }
-        headingEntry.classList.toggle("is-collapsed", collapsed);
-    };
-
-    applyState(isCollapsed);
-
-    // Remove data-value so LiteGraph has nothing to commit if events leak through.
-    headingEntry.removeAttribute("data-value");
-
-    for (const eventName of ["mousedown", "mouseup", "pointerdown", "pointerup"]) {
-        headingEntry.addEventListener(eventName, (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            event.stopImmediatePropagation();
-        });
-    }
-
-    headingEntry.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        const nowCollapsed = toggleCollapsedGroup(heading);
-        applyState(nowCollapsed);
+    makeSharedHeadingCollapsible({
+        headingEntry,
+        controlledEntries: presetEntries,
+        isCollapsed,
+        onToggle() {
+            return toggleCollapsedGroup(heading);
+        },
+        chevronSelector: ".bubba-size-chevron",
     });
 }
 
@@ -464,6 +466,18 @@ function formatHeading(rawValue) {
     return text.replace(/^---\s*/, "").replace(/\s*---$/, "");
 }
 
+function parseDisplayParts(displayLabel) {
+    const text = String(displayLabel || "").trim();
+    const sep = text.indexOf(" - ");
+    if (sep < 0) {
+        return { dimensions: text, modelLabel: "" };
+    }
+    return {
+        dimensions: text.slice(0, sep),
+        modelLabel: text.slice(sep + 3),
+    };
+}
+
 function ensureEntryLayout(entry, rawValue) {
     if (!entry || entry.dataset?.bubbaSizeLayoutApplied === "1") {
         return;
@@ -471,23 +485,35 @@ function ensureEntryLayout(entry, rawValue) {
     entry.dataset.bubbaSizeLayoutApplied = "1";
 
     const { displayLabel } = parseGroupAndLabel(rawValue);
+    const { dimensions, modelLabel } = parseDisplayParts(displayLabel);
 
     const main = document.createElement("span");
     main.className = "bubba-size-option";
 
+    const mainInfo = document.createElement("span");
+    mainInfo.className = "bubba-size-option-main";
+
     const label = document.createElement("span");
     label.className = "bubba-size-option-label";
-    label.textContent = displayLabel;
+    label.textContent = dimensions;
 
     const mpPill = document.createElement("span");
     mpPill.className = "bubba-size-mp-pill";
     mpPill.textContent = getMpLabel(rawValue);
 
+    const modelPill = document.createElement("span");
+    modelPill.className = "bubba-size-model-pill";
+    modelPill.textContent = modelLabel;
+
     while (entry.firstChild) {
         entry.removeChild(entry.firstChild);
     }
 
-    main.appendChild(label);
+    mainInfo.appendChild(label);
+    main.appendChild(mainInfo);
+    if (modelLabel) {
+        main.appendChild(modelPill);
+    }
     if (mpPill.textContent) {
         main.appendChild(mpPill);
     }
@@ -544,42 +570,27 @@ function bindEntryFavoriteButton(entryElement) {
 }
 
 function buildQuickSection(title, values, entryByValue) {
-    if (!values.length) {
-        return null;
-    }
-
-    const fragment = document.createDocumentFragment();
-    const header = document.createElement("div");
-    header.className = "litemenu-entry bubba-size-quick-header";
-    header.textContent = title;
-    fragment.appendChild(header);
-
-    for (const value of values) {
-        const sourceEntry = entryByValue.get(value);
-        if (!sourceEntry) {
-            continue;
-        }
-
-        const quickItem = document.createElement("div");
-        quickItem.className = "litemenu-entry bubba-size-quick-item";
-        quickItem.setAttribute("data-value", value);
-        quickItem.dataset.valueForPreview = value;
-
-        ensureEntryLayout(quickItem, value);
-        bindEntryPreview(quickItem);
-        bindEntryFavoriteButton(quickItem);
-
-        quickItem.addEventListener("click", (event) => {
-            if (event.defaultPrevented) {
-                return;
-            }
-            sourceEntry.click();
-        });
-
-        fragment.appendChild(quickItem);
-    }
-
-    return fragment;
+    return createQuickSection({
+        title,
+        values,
+        entryByValue,
+        headerClass: "bubba-size-quick-header",
+        createItem(value, sourceEntry) {
+            const quickItem = document.createElement("div");
+            quickItem.className = "litemenu-entry bubba-size-quick-item";
+            quickItem.setAttribute("data-value", value);
+            quickItem.dataset.valueForPreview = value;
+            ensureEntryLayout(quickItem, value);
+            bindEntryPreview(quickItem);
+            bindEntryFavoriteButton(quickItem);
+            quickItem.addEventListener("click", (event) => {
+                if (!event.defaultPrevented) {
+                    sourceEntry.click();
+                }
+            });
+            return quickItem;
+        },
+    });
 }
 
 function buildSizeMenu(menu, selectedValue = "") {
@@ -667,57 +678,39 @@ function buildSizeMenu(menu, selectedValue = "") {
     if (favoriteSection) {
         rootContainer.prepend(favoriteSection);
     }
+
+    setupKeyboardNavigation(menu, {
+        boundDatasetKey: "bubbaSizeKeyboardBound",
+        headerClass: "bubba-size-quick-header",
+        skipClassNames: ["bubba-size-heading"],
+        focusClass: "bubba-size-focused",
+        selectedSelector: ".bubba-size-selected",
+    });
 }
 
 function isTargetWidget(node, widget) {
     return !!node && node.comfyClass === TARGET_NODE_CLASS && widget?.name === TARGET_WIDGET_NAME;
 }
 
-function installMenuObserver() {
-    if (observerInstalled) {
-        return;
-    }
-    observerInstalled = true;
-
-    const observer = new MutationObserver((mutations) => {
-        const node = app.canvas.current_node;
-        if (!node || node.comfyClass !== TARGET_NODE_CLASS) {
-            return;
-        }
-
-        for (const mutation of mutations) {
-            for (const removed of mutation.removedNodes) {
-                if (removed.classList?.contains("litecontextmenu")) {
-                    hidePreviewPanel();
-                }
-            }
-            for (const added of mutation.addedNodes) {
-                if (!added.classList?.contains("litecontextmenu")) {
-                    continue;
-                }
-
-                const widget = app.canvas.getWidgetAtCursor();
-                if (!isTargetWidget(node, widget)) {
-                    continue;
-                }
-
-                requestAnimationFrame(() => {
-                    if (!added.querySelector(".comfy-context-menu-filter")) {
-                        return;
-                    }
-                    buildSizeMenu(added, String(widget?.value ?? ""));
-                });
-                return;
-            }
-        }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: false });
-}
+const ensureMenuObserver = installLiteMenuObserver({
+    app,
+    isTargetNode(node) {
+        return !!node && node.comfyClass === TARGET_NODE_CLASS;
+    },
+    isTargetWidget(node, widget) {
+        return isTargetWidget(node, widget);
+    },
+    onMenuOpen(menu, node, widget) {
+        buildSizeMenu(menu, String(widget?.value ?? ""));
+    },
+    onMenuClose() {
+        hidePreviewPanel();
+    },
+});
 
 function installEmptyLatentSizeMenu() {
     installStyles();
-    installMenuObserver();
+    ensureMenuObserver();
 
     app.registerExtension({
         name: EXTENSION_NAME,
