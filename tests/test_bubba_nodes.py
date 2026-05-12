@@ -665,6 +665,36 @@ class TestBubbaComboLoader:
         clip_original.clone.assert_not_called()
         assert metadata.clip_skip == 0
 
+    def test_external_clip_loader_receives_device_option(self):
+        import src.bubba_nodes.nodes.combo_loader as combo_module
+
+        node = BubbaComboLoader()
+
+        mock_ckpt = MagicMock()
+        mock_ckpt.load_checkpoint.return_value = ("MODEL", "CHECKPOINT_CLIP", "VAE")
+        combo_module.CheckpointLoaderSimple = MagicMock(return_value=mock_ckpt)
+
+        mock_clip_loader = MagicMock()
+        mock_clip_loader.load_clip.return_value = ("EXTERNAL_CLIP",)
+        combo_module.CLIPLoader = MagicMock(return_value=mock_clip_loader)
+
+        _, clip, _, _, _ = node.load(
+            "models/example.safetensors",
+            combo_module._NONE_SENTINEL,
+            "AnimaTEModel.safetensors",
+            combo_module._CLIP_TYPES[0],
+            0,
+            None,
+            "cpu",
+        )
+
+        assert clip == "EXTERNAL_CLIP"
+        mock_clip_loader.load_clip.assert_called_once_with(
+            "AnimaTEModel.safetensors",
+            type=combo_module._CLIP_TYPES[0],
+            device="cpu",
+        )
+
     def test_prompt_builders_no_longer_expose_clip_skip_option(self):
         assert "clip_skip" not in BubbaCharacterPromptBuilder.INPUT_TYPES().get("optional", {})
 

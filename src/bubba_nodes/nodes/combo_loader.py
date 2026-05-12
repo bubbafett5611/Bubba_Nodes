@@ -66,6 +66,14 @@ class BubbaComboLoader:
                 ),
             },
             "optional": {
+                "clip_device": (
+                    ["default", "cpu"],
+                    {
+                        "default": "default",
+                        "advanced": True,
+                        "tooltip": "Load external CLIP/text encoder on the default device or CPU. CPU can avoid DynamicVRAM text-encoder crashes.",
+                    },
+                ),
                 "metadata": (
                     "BUBBA_METADATA",
                     {"tooltip": "Optional metadata object to update with model name."},
@@ -84,7 +92,7 @@ class BubbaComboLoader:
         "Set vae_name or clip_name to 'None' to use the checkpoint's built-in version."
     )
 
-    def load(self, ckpt_name, vae_name, clip_name, clip_type, clip_skip, metadata=None):
+    def load(self, ckpt_name, vae_name, clip_name, clip_type, clip_skip, metadata=None, clip_device="default"):
         # --- Checkpoint ---------------------------------------------------------
         model, ckpt_clip, ckpt_vae = CheckpointLoaderSimple().load_checkpoint(ckpt_name)
 
@@ -96,7 +104,7 @@ class BubbaComboLoader:
 
         # --- CLIP/text-encoder override -----------------------------------------
         if clip_name and clip_name != _NONE_SENTINEL:
-            (clip,) = CLIPLoader().load_clip(clip_name, type=clip_type)
+            (clip,) = CLIPLoader().load_clip(clip_name, type=clip_type, device=clip_device or "default")
         else:
             clip = ckpt_clip
 
