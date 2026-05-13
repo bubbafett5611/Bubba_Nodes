@@ -3,9 +3,6 @@ from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFont
 import torch
 
-# TODO(new-node): Add a styled overlay preset node (cinematic, compact, streamer HUD) with reusable typography/layout presets.
-# TODO(optimize): Evaluate moving text rasterization to cached layers keyed by text+font+width to reduce repeated draw cost.
-
 from ..models import BubbaMetadata
 from ..utils.image_ops import pil_to_tensor_like, tensor_sample_to_pil
 
@@ -56,8 +53,6 @@ def _parse_overlay_rgba(color: str) -> tuple[int, int, int, int]:
 
 
 def _wrap_overlay_text_to_width(text: str, font, max_width: int) -> str:
-    """Word-wrap each line so it fits within max_width pixels."""
-    # TODO(optimize): Reuse a singleton probe canvas/draw context instead of allocating a new image each call.
     probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     result_lines = []
     for paragraph in text.split("\n"):
@@ -163,15 +158,15 @@ def _render_overlay_image_batch(
                 draw.multiline_text((pad_x, y0 + bottom_text_y), bottom_wrapped, font=font, fill=(255, 255, 255, 255))
             composed = Image.alpha_composite(src_rgba, overlay)
         else:
-            new_h = height + top_bar_h + bottom_bar_h
+            new_h = int(height + top_bar_h + bottom_bar_h)
             composed = Image.new("RGBA", (width, new_h), (0, 0, 0, 0))
             draw = ImageDraw.Draw(composed)
             if top_wrapped:
                 draw.rectangle((0, 0, width, top_bar_h), fill=rgba)
                 draw.multiline_text((pad_x, top_text_y), top_wrapped, font=font, fill=(255, 255, 255, 255))
-            composed.paste(src_rgba, (0, top_bar_h))
+            composed.paste(src_rgba, (0, int(top_bar_h)))
             if bottom_wrapped:
-                y0 = top_bar_h + height
+                y0 = int(top_bar_h + height)
                 draw.rectangle((0, y0, width, new_h), fill=rgba)
                 draw.multiline_text((pad_x, y0 + bottom_text_y), bottom_wrapped, font=font, fill=(255, 255, 255, 255))
 
@@ -187,199 +182,9 @@ def _render_overlay_image_batch(
     return (torch.stack(output, dim=0),)
 
 
-class BubbaOverlay:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-                "model_text": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Optional model label text.",
-                        "multiline": False,
-                    },
-                ),
-                "info_text": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Optional generation info text.",
-                        "multiline": False,
-                    },
-                ),
-                "positive_text": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Optional positive prompt text.",
-                        "multiline": True,
-                    },
-                ),
-                "negative_text": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Optional negative prompt text.",
-                        "multiline": True,
-                    },
-                ),
-                "show_model": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "model_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "top",
-                    },
-                ),
-                "show_info": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "info_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "top",
-                    },
-                ),
-                "show_positive": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "positive_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "bottom",
-                    },
-                ),
-                "show_negative": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "negative_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "bottom",
-                    },
-                ),
-                "background_color": (
-                    "STRING",
-                    {
-                        "default": "#000000AA",
-                        "multiline": False,
-                    },
-                ),
-                "font_size": (
-                    "INT",
-                    {
-                        "default": 40,
-                        "min": 10,
-                        "max": 1000,
-                        "control_after_generate": False,
-                    },
-                ),
-                "overlay_mode": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
-    FUNCTION = "add_text_overlay"
-    CATEGORY = "Bubba Nodes/Image/Overlay"
-    DESCRIPTION = "Adds an iTools-style text bar in overlay or underlay mode from individually toggled metadata fields."
-
-    @staticmethod
-    def _compose_text(
-        model_text,
-        info_text,
-        positive_text,
-        negative_text,
-        show_model,
-        show_info,
-        show_positive,
-        show_negative,
-        model_position,
-        info_position,
-        positive_position,
-        negative_position,
-    ):
-        return _compose_overlay_text(
-            model_text,
-            info_text,
-            positive_text,
-            negative_text,
-            show_model,
-            show_info,
-            show_positive,
-            show_negative,
-            model_position,
-            info_position,
-            positive_position,
-            negative_position,
-        )
-
-    @staticmethod
-    def _parse_rgba(color: str) -> tuple[int, int, int, int]:
-        return _parse_overlay_rgba(color)
-
-    @staticmethod
-    def _wrap_text_to_width(text: str, font, max_width: int) -> str:
-        return _wrap_overlay_text_to_width(text, font, max_width)
-
-    @staticmethod
-    @lru_cache(maxsize=16)
-    def _get_font(font_size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-        return _get_overlay_font(font_size)
-
-    def add_text_overlay(
-        self,
-        image,
-        model_text,
-        info_text,
-        positive_text,
-        negative_text,
-        show_model,
-        show_info,
-        show_positive,
-        show_negative,
-        model_position,
-        info_position,
-        positive_position,
-        negative_position,
-        background_color,
-        font_size,
-        overlay_mode,
-    ):
-        return _render_overlay_image_batch(
-            image,
-            model_text, info_text, positive_text, negative_text,
-            show_model, show_info, show_positive, show_negative,
-            model_position, info_position, positive_position, negative_position,
-            background_color,
-            font_size,
-            overlay_mode,
-        )
-
-
 class BubbaOverlayFromMetadata:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "image": ("IMAGE",),
@@ -466,7 +271,6 @@ class BubbaOverlayFromMetadata:
     @staticmethod
     def _extract_fields(metadata) -> tuple[str, str, str, str]:
         payload = BubbaMetadata.coerce(metadata)
-
         return (
             payload.model_name,
             payload.formatted_sampler_info(),

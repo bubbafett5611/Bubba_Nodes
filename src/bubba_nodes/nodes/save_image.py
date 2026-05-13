@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from comfy_api.latest import UI
 from PIL import Image
@@ -18,11 +18,12 @@ from ..models import BubbaMetadata
 
 
 _DEFAULT_METADATA_DICT = BubbaMetadata().to_dict()
+_METADATA_FIELDS_IGNORED_FOR_EMPTY_WARNING = {"filepath"}
 
 
 class BubbaSaveImage:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "images": ("IMAGE",),
@@ -62,7 +63,8 @@ class BubbaSaveImage:
             },
         }
 
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("BUBBA_METADATA",)
+    RETURN_NAMES = ("metadata",)
     FUNCTION = "save_images"
     OUTPUT_NODE = True
     CATEGORY = "Bubba Nodes/Image/Save"
@@ -71,6 +73,21 @@ class BubbaSaveImage:
     @staticmethod
     def _is_default_metadata(metadata: BubbaMetadata) -> bool:
         return metadata.to_dict() == _DEFAULT_METADATA_DICT
+
+    @staticmethod
+    def _has_generation_metadata(metadata: BubbaMetadata) -> bool:
+        metadata_dict = metadata.to_dict()
+        return any(
+            metadata_dict.get(key) != default_value
+            for key, default_value in _DEFAULT_METADATA_DICT.items()
+            if key not in _METADATA_FIELDS_IGNORED_FOR_EMPTY_WARNING
+        )
+
+    @classmethod
+    def _metadata_input_warnings(cls, metadata_was_connected: bool, metadata: BubbaMetadata) -> list[str]:
+        if not metadata_was_connected or cls._has_generation_metadata(metadata):
+            return []
+        return ["Bubba metadata input is connected but contains no model, prompt, sampler, seed, or LoRA data."]
 
     @staticmethod
     def _resolve_base_dir(image_type: str) -> Path:
@@ -123,13 +140,24 @@ class BubbaSaveImage:
         return entries
 
     @staticmethod
+    def _png_text_entry_matches(existing_value: str | None, expected_value: str) -> bool:
+        if existing_value == expected_value:
+            return True
+        if existing_value is None:
+            return False
+        try:
+            return json.loads(existing_value) == json.loads(expected_value)
+        except Exception:
+            return False
+
+    @staticmethod
     def _embed_metadata_in_png(image_path: Path, text_entries: Mapping[str, str]) -> None:
         if image_path.suffix.lower() != ".png" or not image_path.exists() or not text_entries:
             return
 
         with Image.open(image_path) as source:
-            existing_text = {key: value for key, value in source.info.items() if isinstance(value, str)}
-            if all(existing_text.get(str(key)) == value for key, value in text_entries.items()):
+            existing_text = {str(key): value for key, value in source.info.items() if isinstance(value, str)}
+            if all(BubbaSaveImage._png_text_entry_matches(existing_text.get(str(key)), value) for key, value in text_entries.items()):
                 return
 
             png_info = PngInfo()
@@ -140,10 +168,11 @@ class BubbaSaveImage:
             source.save(image_path, pnginfo=png_info)
 
     @classmethod
-    def _embed_metadata_in_saved_images(cls, save_result: dict, text_entries: Mapping[str, str]) -> None:
+    def _try_embed_metadata_in_saved_images(cls, save_result: dict, text_entries: Mapping[str, str]) -> list[str]:
         # TODO(optimize): Parallelize metadata embedding when multiple images are saved in one batch.
+        failed_paths: list[str] = []
         if not text_entries:
-            return
+            return failed_paths
         for item in save_result.get("images", []):
             if not isinstance(item, dict):
                 continue
@@ -153,33 +182,44 @@ class BubbaSaveImage:
             try:
                 cls._embed_metadata_in_png(path, text_entries)
             except Exception:
-                # Keep save flow resilient if metadata embedding fails on any file.
-                continue
+                failed_paths.append(str(path))
+        return failed_paths
 
     def save_images(self, images, filepath, preview_only, save_workflow_metadata, metadata=None, prompt=None, extra_pnginfo=None):
-        normalized_metadata = BubbaMetadata.coerce(metadata)
+        input_metadata = BubbaMetadata.coerce(metadata)
+        metadata_warnings = self._metadata_input_warnings(metadata is not None, input_metadata)
+        normalized_metadata = input_metadata
         resolved_filepath = (filepath or "").strip() or normalized_metadata.filepath or "Character/Scene"
+        normalized_metadata = normalized_metadata.updated(filepath=resolved_filepath)
         has_metadata = not self._is_default_metadata(normalized_metadata)
+        metadata_json_compact = normalized_metadata.to_json(pretty=False) if has_metadata else None
+        metadata_json_pretty = normalized_metadata.to_json(pretty=True) if has_metadata else None
 
         if preview_only:
-            result = UI.PreviewImage(images, cls=None).as_dict()
-            if has_metadata:
-                result["metadata_text"] = normalized_metadata.to_json(pretty=True)
-            return {"ui": result}
+            result = UI.PreviewImage(images, cls=cast(Any, None)).as_dict()
+            if metadata_warnings:
+                result["metadata_warnings"] = metadata_warnings
+            if metadata_json_pretty is not None:
+                result["metadata_text"] = metadata_json_pretty
+            return {"ui": result, "result": (normalized_metadata,)}
 
         result = UI.ImageSaveHelper.get_save_images_ui(
-                images=images,
-                filename_prefix=resolved_filepath,
-                cls=None,
-            ).as_dict()
+            images=images,
+            filename_prefix=resolved_filepath,
+            cls=cast(Any, None),
+        ).as_dict()
         png_text_entries = self._build_png_text_entries(
-            normalized_metadata.to_json(pretty=False) if has_metadata else None,
+            metadata_json_compact,
             save_workflow_metadata,
             prompt,
             extra_pnginfo,
         )
         if png_text_entries:
-            self._embed_metadata_in_saved_images(result, png_text_entries)
-        if has_metadata:
-            result["metadata_text"] = normalized_metadata.to_json(pretty=True)
-        return {"ui": result}
+            failed_metadata_paths = self._try_embed_metadata_in_saved_images(result, png_text_entries)
+            if failed_metadata_paths:
+                metadata_warnings.extend(f"Failed to embed PNG metadata in {path}" for path in failed_metadata_paths)
+        if metadata_warnings:
+            result["metadata_warnings"] = metadata_warnings
+        if metadata_json_pretty is not None:
+            result["metadata_text"] = metadata_json_pretty
+        return {"ui": result, "result": (normalized_metadata,)}

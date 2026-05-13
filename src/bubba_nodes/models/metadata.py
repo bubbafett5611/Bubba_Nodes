@@ -1,95 +1,106 @@
-from dataclasses import dataclass
 import json
 from typing import Any, Mapping
+
+from pydantic import BaseModel, Field, field_validator
 
 # TODO(new-feature): Introduce metadata schema_version with migration helpers for backward-compatible evolution.
 # TODO(optimize): Consider a lightweight validation cache for repeated coercions of identical metadata payloads.
 
 
-@dataclass(slots=True)
-class BubbaMetadata:
-    model_name: str = ""
-    sampler_info: str = ""
-    sampler_time_seconds: float = 0.0
-    steps: int = 0
-    cfg: float = 0.0
-    sampler_name: str = ""
-    scheduler: str = ""
-    denoise: float = 0.0
-    positive_prompt: str = ""
-    negative_prompt: str = ""
-    seed: int = 0
-    filepath: str = ""
-    prompt_sections: str = ""
+class BubbaMetadata(BaseModel):
+    """Metadata container for generation info, prompts, and workflow state."""
 
-    @staticmethod
-    def _normalize_text(value: Any) -> str:
-        return str(value or "").strip()
+    # Generation info - populated by sampler
+    model_name: str = Field(default="", description="Model/checkpoint name used for generation")
+    clip_skip: int = Field(default=0, ge=0, description="Number of CLIP layers to skip during encoding")
+    sampler_time_seconds: float = Field(default=0.0, ge=0.0, description="Time taken for sampling in seconds")
+    steps: int = Field(default=0, ge=0, description="Number of sampling steps")
+    cfg: float = Field(default=0.0, ge=0.0, description="Classifier-free guidance scale")
+    sampler_name: str = Field(default="", description="Name of the sampler algorithm")
+    scheduler: str = Field(default="", description="Noise scheduler used")
+    denoise: float = Field(default=0.0, ge=0.0, le=1.0, description="Denoising strength (0-1)")
+    seed: int = Field(default=0, ge=0, description="Random seed for generation")
 
-    @staticmethod
-    def _normalize_seed(value: Any) -> int:
+    # Prompt info - populated by prompt builders
+    positive_prompt: str = Field(default="", description="Positive prompt used for generation")
+    negative_prompt: str = Field(default="", description="Negative prompt used for generation")
+
+    # LoRA info - appended by each BubbaLoraLoader in the chain
+    loras: list[str] = Field(default_factory=list, description="LoRA names applied during generation, in order")
+
+    # Workflow info
+    filepath: str = Field(default="", description="Output filepath or path prefix")
+
+    model_config = {
+        "str_strip_whitespace": True,
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "model_name": "model.safetensors",
+                    "seed": 42,
+                    "steps": 20,
+                    "cfg": 7.5,
+                    "sampler_name": "euler",
+                    "scheduler": "karras",
+                }
+            ]
+        },
+    }
+
+    @field_validator("steps", "seed", "clip_skip", mode="before")
+    @classmethod
+    def coerce_int(cls, v: Any) -> int:
         try:
-            parsed = int(value)
+            parsed = int(v)
             return parsed if parsed >= 0 else 0
-        except Exception:
+        except (ValueError, TypeError):
             return 0
 
-    @staticmethod
-    def _normalize_non_negative_int(value: Any) -> int:
+    @field_validator("cfg", "sampler_time_seconds", "denoise", mode="before")
+    @classmethod
+    def coerce_float(cls, v: Any) -> float:
         try:
-            parsed = int(value)
-            return parsed if parsed >= 0 else 0
-        except Exception:
-            return 0
-
-    @staticmethod
-    def _normalize_non_negative_float(value: Any) -> float:
-        try:
-            parsed = float(value)
-            return parsed if parsed >= 0 else 0.0
-        except Exception:
+            parsed = float(v)
+            return max(0.0, parsed)
+        except (ValueError, TypeError):
             return 0.0
 
-    def formatted_sampler_info(self) -> str:
-        # Preserve any explicit sampler_info already set by upstream nodes.
-        explicit = self._normalize_text(self.sampler_info)
-        if explicit:
-            return explicit
+    @field_validator("loras", mode="before")
+    @classmethod
+    def coerce_loras(cls, v: Any) -> list[str]:
+        if isinstance(v, list):
+            return [str(item).strip() for item in v if item]
+        if isinstance(v, str):
+            # Handle comma-separated string fallback
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return []
 
-        if (
-            self.steps <= 0
-            and not self._normalize_text(self.sampler_name)
-            and not self._normalize_text(self.scheduler)
-            and self.denoise <= 0.0
-            and self.seed <= 0
-        ):
+    @field_validator("model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath", mode="before")
+    @classmethod
+    def coerce_text(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+    def formatted_sampler_info(self) -> str:
+        """Generate formatted sampler info string from individual fields."""
+        if self.steps <= 0 and not self.sampler_name and not self.scheduler and self.denoise <= 0.0 and self.seed <= 0:
             return ""
 
-        return (
+        info = (
             f"Time: {self.sampler_time_seconds:.3f}s  Seed: {self.seed}  Steps: {self.steps}  CFG: {self.cfg}"
             f"  Sampler: {self.sampler_name}  Scheduler: {self.scheduler}  Denoise: {self.denoise}"
         )
+        if self.loras:
+            info += f"  LoRAs: {', '.join(self.loras)}"
+        return info
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "BubbaMetadata":
-        return cls(
-            model_name=cls._normalize_text(payload.get("model_name", "")),
-            sampler_info=cls._normalize_text(payload.get("sampler_info", "")),
-            sampler_time_seconds=cls._normalize_non_negative_float(payload.get("sampler_time_seconds", 0.0)),
-            steps=cls._normalize_non_negative_int(payload.get("steps", 0)),
-            cfg=cls._normalize_non_negative_float(payload.get("cfg", 0.0)),
-            sampler_name=cls._normalize_text(payload.get("sampler_name", "")),
-            scheduler=cls._normalize_text(payload.get("scheduler", "")),
-            denoise=cls._normalize_non_negative_float(payload.get("denoise", 0.0)),
-            positive_prompt=cls._normalize_text(payload.get("positive_prompt", "")),
-            negative_prompt=cls._normalize_text(payload.get("negative_prompt", "")),
-            seed=cls._normalize_seed(payload.get("seed", 0)),
-            filepath=cls._normalize_text(payload.get("filepath", "")),
-            prompt_sections=cls._normalize_text(payload.get("prompt_sections", "")),
-        )
+        """Create BubbaMetadata from a mapping/dict, validating and normalizing fields."""
+        return cls(**payload)
 
     @classmethod
     def from_json(cls, metadata_json: str) -> "BubbaMetadata":
+        """Create BubbaMetadata from JSON string."""
         try:
             payload = json.loads(metadata_json or "{}")
         except Exception:
@@ -102,6 +113,7 @@ class BubbaMetadata:
 
     @classmethod
     def coerce(cls, value: Any) -> "BubbaMetadata":
+        """Coerce various types into BubbaMetadata."""
         if isinstance(value, cls):
             return value
         if isinstance(value, dict):
@@ -111,28 +123,18 @@ class BubbaMetadata:
         return cls()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "model_name": self._normalize_text(self.model_name),
-            "sampler_info": self.formatted_sampler_info(),
-            "sampler_time_seconds": self._normalize_non_negative_float(self.sampler_time_seconds),
-            "steps": self._normalize_non_negative_int(self.steps),
-            "cfg": self._normalize_non_negative_float(self.cfg),
-            "sampler_name": self._normalize_text(self.sampler_name),
-            "scheduler": self._normalize_text(self.scheduler),
-            "denoise": self._normalize_non_negative_float(self.denoise),
-            "positive_prompt": self._normalize_text(self.positive_prompt),
-            "negative_prompt": self._normalize_text(self.negative_prompt),
-            "seed": self._normalize_seed(self.seed),
-            "prompt_sections": self._normalize_text(self.prompt_sections),
-            "filepath": self._normalize_text(self.filepath),
-        }
+        """Convert to dict for serialization."""
+        return self.model_dump()
 
     def to_json(self, pretty: bool = False) -> str:
+        """Convert to JSON string for serialization."""
+        data = self.to_dict()
         if pretty:
-            return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
-        return json.dumps(self.to_dict(), ensure_ascii=False)
+            return json.dumps(data, ensure_ascii=False, indent=2)
+        return json.dumps(data, ensure_ascii=False)
 
     def updated(self, **changes: Any) -> "BubbaMetadata":
-        payload = self.to_dict()
-        payload.update(changes)
-        return BubbaMetadata.from_mapping(payload)
+        """Return a new BubbaMetadata with specified fields updated."""
+        data = self.model_dump()
+        data.update(changes)
+        return BubbaMetadata.from_mapping(data)

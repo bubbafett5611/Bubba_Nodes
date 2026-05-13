@@ -1,37 +1,18 @@
+from ..models import BubbaMetadata
 from ..utils.prompting import (
     assemble_prompt_sections,
     build_prompts_from_sections,
-    clean_prompt_value,
-    dedupe_prompt_tokens,
-    empty_conditioning,
     encode_conditioning,
-    format_positive_prompt,
-    split_prompt_tokens,
 )
-from ..utils.prompt_analysis import (
-    find_duplicate_prompt_tokens,
-    find_pair_conflicts,
-    normalize_prompt_csv,
-)
+
 
 # TODO(new-node): Add a prompt preset library node that can load/save reusable section sets by character or scene.
 # TODO(new-feature): Add token-budget guidance output (per-model limits) to warn before conditioning truncation.
-def _build_prompts_from_sections(
-    sections: dict[str, str],
-    cleanup: bool,
-    dedupe: bool,
-    include_character_in_positive: bool = True,
-) -> tuple[str, str, str]:
-    return build_prompts_from_sections(
-        sections,
-        cleanup=cleanup,
-        dedupe=dedupe,
-        include_character_in_positive=include_character_in_positive,
-    )
+
 
 class BubbaCharacterPromptBuilder:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "clip": (
@@ -142,29 +123,22 @@ class BubbaCharacterPromptBuilder:
                         "tooltip": "Remove duplicate tags while preserving first occurrence order.",
                     },
                 ),
-            }
+            },
+            "optional": {
+                "metadata": (
+                    "BUBBA_METADATA",
+                    {
+                        "tooltip": "Optional metadata object to update with prompt sections and prompts.",
+                    },
+                ),
+            },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt", "sections", "positive_conditioning", "negative_conditioning")
+    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
+    RETURN_NAMES = ("positive_prompt", "negative_prompt", "positive_conditioning", "negative_conditioning", "metadata")
     FUNCTION = "build_prompt"
     CATEGORY = "Bubba Nodes/Prompt"
-    DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP."
-
-    @staticmethod
-    def _clean_value(text: str) -> str:
-        return clean_prompt_value(text)
-
-    @staticmethod
-    def _split_tokens(text: str) -> list[str]:
-        return split_prompt_tokens(text)
-
-    @staticmethod
-    def _dedupe_tokens(items: list[str]) -> list[str]:
-        return dedupe_prompt_tokens(items)
-
-    def _format_positive(self, values: list[str], format_mode: str) -> str:
-        return format_positive_prompt(values, format_mode)
+    DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP. Returns metadata with prompts and sections."
 
     def build_prompt(
         self,
@@ -181,6 +155,7 @@ class BubbaCharacterPromptBuilder:
         format_mode,
         cleanup,
         dedupe,
+        metadata=None,
     ):
         sections = assemble_prompt_sections(
             appearance=appearance,
@@ -194,7 +169,7 @@ class BubbaCharacterPromptBuilder:
             negative_tags=negative_tags,
             format_mode=format_mode,
         )
-        positive_prompt, negative_prompt, sections_text = _build_prompts_from_sections(
+        positive_prompt, negative_prompt, _ = build_prompts_from_sections(
             sections,
             cleanup=cleanup,
             dedupe=dedupe,
@@ -202,160 +177,11 @@ class BubbaCharacterPromptBuilder:
         )
         positive_conditioning = encode_conditioning(clip, positive_prompt)
         negative_conditioning = encode_conditioning(clip, negative_prompt)
-        return (positive_prompt, negative_prompt, sections_text, positive_conditioning, negative_conditioning)
 
-
-class BubbaPromptCleaner:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "positive_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "positive"},
-                        "tooltip": "Input positive prompt to clean.",
-                    },
-                ),
-                "negative_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "negative"},
-                        "tooltip": "Input negative prompt to clean.",
-                    },
-                ),
-                "cleanup": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Normalize spacing and separators.",
-                    },
-                ),
-                "dedupe": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Remove duplicate tags while preserving order.",
-                    },
-                ),
-            },
-            "optional": {
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "Optional CLIP to encode cleaned positive and negative conditioning outputs.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("clean_positive", "clean_negative", "positive_conditioning", "negative_conditioning")
-    FUNCTION = "clean_prompt"
-    CATEGORY = "Bubba Nodes/Prompt"
-    DESCRIPTION = "Cleans positive and negative prompts and optionally encodes conditioning when CLIP is connected."
-
-    def _normalize(self, text: str, cleanup: bool, dedupe: bool) -> str:
-        return normalize_prompt_csv(text, cleanup=cleanup, dedupe=dedupe)
-
-    @staticmethod
-    def _empty_conditioning():
-        return empty_conditioning()
-
-    def clean_prompt(self, positive_prompt, negative_prompt, cleanup, dedupe, clip=None):
-        clean_positive = self._normalize(positive_prompt, cleanup, dedupe)
-        clean_negative = self._normalize(negative_prompt, cleanup, dedupe)
-        if clip is None:
-            return (clean_positive, clean_negative, self._empty_conditioning(), self._empty_conditioning())
-        return (
-            clean_positive,
-            clean_negative,
-            encode_conditioning(clip, clean_positive),
-            encode_conditioning(clip, clean_negative),
+        # Update metadata with prompts and sections
+        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+            positive_prompt=positive_prompt,
+            negative_prompt=negative_prompt,
         )
 
-
-class BubbaPromptInspector:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "positive_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "positive"},
-                        "tooltip": "Positive prompt text to inspect.",
-                    },
-                ),
-                "negative_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "negative"},
-                        "tooltip": "Negative prompt text to inspect.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("INT", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("token_count", "duplicate_tags", "conflict_warnings", "formatted_preview")
-    FUNCTION = "inspect_prompt"
-    CATEGORY = "Bubba Nodes/Prompt"
-    DESCRIPTION = "Analyzes positive/negative prompts for token count, duplicates, conflicts, and cleaned preview text."
-
-    @staticmethod
-    def _clean_parts(text: str) -> list[str]:
-        parts = split_prompt_tokens(text)
-        cleaned = [clean_prompt_value(part) for part in parts]
-        return [part for part in cleaned if part]
-
-    def inspect_prompt(self, positive_prompt, negative_prompt):
-        # TODO(optimize): Add optional fast-path mode that skips duplicate and conflict checks for very long prompts.
-        positive_parts = self._clean_parts(positive_prompt)
-        negative_parts = self._clean_parts(negative_prompt)
-
-        token_count = len(positive_parts) + len(negative_parts)
-
-        positive_duplicates = find_duplicate_prompt_tokens(positive_parts)
-        negative_duplicates = find_duplicate_prompt_tokens(negative_parts)
-        duplicate_lines: list[str] = []
-        if positive_duplicates:
-            duplicate_lines.append(f"positive: {', '.join(positive_duplicates)}")
-        if negative_duplicates:
-            duplicate_lines.append(f"negative: {', '.join(negative_duplicates)}")
-        duplicate_tags = "\n".join(duplicate_lines) if duplicate_lines else "none"
-
-        positive_set = {part.lower() for part in positive_parts}
-        negative_set = {part.lower() for part in negative_parts}
-        cross_conflicts = sorted(positive_set.intersection(negative_set))
-
-        warning_lines: list[str] = []
-        if cross_conflicts:
-            warning_lines.append(f"present in both positive and negative: {', '.join(cross_conflicts)}")
-        positive_pair_conflicts = find_pair_conflicts(positive_parts)
-        if positive_pair_conflicts:
-            warning_lines.append(f"positive pair conflicts: {', '.join(positive_pair_conflicts)}")
-        negative_pair_conflicts = find_pair_conflicts(negative_parts)
-        if negative_pair_conflicts:
-            warning_lines.append(f"negative pair conflicts: {', '.join(negative_pair_conflicts)}")
-        conflict_warnings = "\n".join(warning_lines) if warning_lines else "none"
-
-        formatted_positive = ", ".join(dedupe_prompt_tokens(positive_parts))
-        formatted_negative = ", ".join(dedupe_prompt_tokens(negative_parts))
-        formatted_preview = (
-            f"Positive: {formatted_positive}\n\n"
-            f"Negative: {formatted_negative}\n\n"
-            f"Token count: {token_count}"
-        )
-
-        return (token_count, duplicate_tags, conflict_warnings, formatted_preview)
-
-
+        return (positive_prompt, negative_prompt, positive_conditioning, negative_conditioning, updated_metadata)

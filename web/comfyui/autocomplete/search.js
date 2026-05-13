@@ -2,6 +2,9 @@
 
 import { normalizeSearchText, normalizeAliases } from './utils.js';
 
+const MAX_PREFIX_BUCKET_LENGTH = 6;
+const MAX_CANDIDATES = 12000;
+
 export function scoreTextMatch(rawText, queryVariations) {
 	const text = String(rawText || "").toLowerCase();
 	if (!text || !queryVariations.length) {
@@ -55,6 +58,39 @@ export function scorePreparedText(normText, compactText, preparedQueries) {
 	return best;
 }
 
+export function getPreparedMatchKind(normText, compactText, preparedQueries) {
+	for (const query of preparedQueries) {
+		const normalizedQuery = query.norm;
+		const compactQuery = query.compact;
+		if (!normalizedQuery) {
+			continue;
+		}
+		if (normText === normalizedQuery || (compactQuery && compactText === compactQuery)) {
+			return "exact";
+		}
+	}
+
+	for (const query of preparedQueries) {
+		const normalizedQuery = query.norm;
+		const compactQuery = query.compact;
+		if (!normalizedQuery) {
+			continue;
+		}
+		if (normText.startsWith(normalizedQuery) || (compactQuery && compactText.startsWith(compactQuery))) {
+			return "prefix";
+		}
+	}
+
+	return "contains";
+}
+
+export function getMatchPriority(matchKind, matchedAlias) {
+	const kind = String(matchKind || "contains");
+	const aliasPenalty = matchedAlias ? 3 : 0;
+	const base = kind === "exact" ? 8 : kind === "prefix" ? 6 : 4;
+	return Math.max(0, base - aliasPenalty);
+}
+
 export function buildPreparedQueries(queryVariations) {
 	const prepared = [];
 	const seen = new Set();
@@ -88,9 +124,32 @@ function addPrefixBuckets(map, key, index) {
 	if (!key) {
 		return;
 	}
-	addIndexBucket(map, key.slice(0, 1), index);
-	addIndexBucket(map, key.slice(0, 2), index);
-	addIndexBucket(map, key.slice(0, 3), index);
+	const limit = Math.min(MAX_PREFIX_BUCKET_LENGTH, key.length);
+	for (let len = 1; len <= limit; len += 1) {
+		addIndexBucket(map, key.slice(0, len), index);
+	}
+}
+
+function findBestBucket(index, query) {
+	let bestBucket = null;
+	const sources = [query.norm, query.compact];
+	for (const source of sources) {
+		if (!source) {
+			continue;
+		}
+		const maxLen = Math.min(MAX_PREFIX_BUCKET_LENGTH, source.length);
+		for (let len = maxLen; len >= 1; len -= 1) {
+			const bucket = index.prefixBuckets.get(source.slice(0, len));
+			if (!bucket || !bucket.length) {
+				continue;
+			}
+			if (!bestBucket || bucket.length < bestBucket.length) {
+				bestBucket = bucket;
+			}
+			break;
+		}
+	}
+	return bestBucket;
 }
 
 function collectTokenKeys(values) {
@@ -164,23 +223,18 @@ export function findMatchesFromIndex(index, queryVariations) {
 
 	const candidateIndices = new Set();
 	for (const query of preparedQueries) {
-		const keys = [
-			query.norm.slice(0, 3),
-			query.norm.slice(0, 2),
-			query.norm.slice(0, 1),
-			query.compact.slice(0, 3),
-			query.compact.slice(0, 2),
-			query.compact.slice(0, 1),
-		].filter(Boolean);
-
-		for (const key of keys) {
-			const bucket = index.prefixBuckets.get(key);
-			if (!bucket) {
-				continue;
+		const bucket = findBestBucket(index, query);
+		if (!bucket) {
+			continue;
+		}
+		for (let i = 0; i < bucket.length; i += 1) {
+			candidateIndices.add(bucket[i]);
+			if (candidateIndices.size >= MAX_CANDIDATES) {
+				break;
 			}
-			for (let i = 0; i < bucket.length; i += 1) {
-				candidateIndices.add(bucket[i]);
-			}
+		}
+		if (candidateIndices.size >= MAX_CANDIDATES) {
+			break;
 		}
 	}
 
@@ -195,12 +249,14 @@ export function findMatchesFromIndex(index, queryVariations) {
 		const entry = index.entries[idx];
 		let bestScore = scorePreparedText(entry.textNorm, entry.textCompact, preparedQueries);
 		let bestAlias = null;
+		let matchKind = bestScore > 0 ? getPreparedMatchKind(entry.textNorm, entry.textCompact, preparedQueries) : null;
 
 		for (let i = 0; i < entry.aliasNorm.length; i += 1) {
 			const aliasScore = scorePreparedText(entry.aliasNorm[i], entry.aliasCompact[i], preparedQueries) - 20;
 			if (aliasScore > bestScore) {
 				bestScore = aliasScore;
 				bestAlias = entry.aliasNorm[i];
+				matchKind = getPreparedMatchKind(entry.aliasNorm[i], entry.aliasCompact[i], preparedQueries);
 			}
 		}
 
@@ -208,6 +264,8 @@ export function findMatchesFromIndex(index, queryVariations) {
 			matched.push({
 				...entry.item,
 				matchScore: bestScore,
+				matchKind,
+				matchPriority: getMatchPriority(matchKind, bestAlias),
 				matchedAlias: bestAlias,
 			});
 		}
@@ -228,14 +286,21 @@ export function findMatchMetadata(item, queryVariations) {
 
 	const text = String(item.text || "");
 	const aliases = Array.isArray(item.aliases) ? item.aliases : [];
-	let bestScore = scoreTextMatch(text, queryVariations);
+	const preparedQueries = buildPreparedQueries(queryVariations);
+	const textNorm = normalizeSearchText(text);
+	const textCompact = textNorm.replace(/\s+/g, "");
+	let bestScore = scorePreparedText(textNorm, textCompact, preparedQueries);
 	let bestAlias = null;
+	let matchKind = bestScore > 0 ? getPreparedMatchKind(textNorm, textCompact, preparedQueries) : null;
 
 	for (const alias of aliases) {
-		const aliasScore = scoreTextMatch(alias, queryVariations) - 20;
+		const aliasNorm = normalizeSearchText(alias);
+		const aliasCompact = aliasNorm.replace(/\s+/g, "");
+		const aliasScore = scorePreparedText(aliasNorm, aliasCompact, preparedQueries) - 20;
 		if (aliasScore > bestScore) {
 			bestScore = aliasScore;
 			bestAlias = alias;
+			matchKind = getPreparedMatchKind(aliasNorm, aliasCompact, preparedQueries);
 		}
 	}
 
@@ -245,6 +310,8 @@ export function findMatchMetadata(item, queryVariations) {
 
 	return {
 		score: bestScore,
+		matchKind,
+		matchPriority: getMatchPriority(matchKind, bestAlias),
 		matchedAlias: bestAlias,
 	};
 }

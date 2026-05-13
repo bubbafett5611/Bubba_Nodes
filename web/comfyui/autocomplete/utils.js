@@ -20,7 +20,8 @@ export function normalizeDanbooruCategory(value) {
 	return category;
 }
 
-export function getDanbooruCategoryLabel(value) {
+export function getTagCategoryLabel(source, value) {
+	const normalizedSource = String(source || "").toLowerCase();
 	switch (normalizeDanbooruCategory(value)) {
 		case 0:
 			return "general";
@@ -33,11 +34,26 @@ export function getDanbooruCategoryLabel(value) {
 		case 4:
 			return "character";
 		case 5:
+			if (normalizedSource === "e621") {
+				return "species";
+			}
 			return "meta";
+		case 6:
+			if (normalizedSource === "e621") {
+				return "invalid";
+			}
+			return null;
+		case 7:
+			if (normalizedSource === "e621") {
+				return "meta";
+			}
+			return null;
 		default:
 			return null;
 	}
 }
+
+export const getDanbooruCategoryLabel = (value) => getTagCategoryLabel("danbooru", value);
 
 export function parseJsonStorage(key, fallback) {
 	try {
@@ -232,7 +248,8 @@ export function normalizeEntry(entry, source) {
 	const aliases = normalizeAliases(entry.aliases ?? entry.alias);
 	return {
 		text,
-		source,
+		source: String(entry.source || source || "custom").trim().toLowerCase(),
+		sources: Array.isArray(entry.sources) ? normalizeAliases(entry.sources) : undefined,
 		count: Number.isFinite(count) ? count : null,
 		category,
 		aliases,
@@ -253,16 +270,19 @@ export function dedupeEntries(entries) {
 		}
 		const prevCount = typeof prev.count === "number" ? prev.count : -1;
 		const nextCount = typeof entry.count === "number" ? entry.count : -1;
+		const sources = mergeAliases(prev.sources || [prev.source], entry.sources || [entry.source]).filter(Boolean);
 		if (nextCount > prevCount) {
 			map.set(key, {
 				...entry,
 				aliases: mergeAliases(prev.aliases, entry.aliases),
+				sources,
 			});
 			continue;
 		}
 		map.set(key, {
 			...prev,
 			aliases: mergeAliases(prev.aliases, entry.aliases),
+			sources,
 		});
 	}
 	return [...map.values()];

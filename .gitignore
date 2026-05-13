@@ -113,3 +113,9 @@ node.zip
 .vscode/
 .claude/
 launch_comfy.bat
+
+
+.mypy_cache/
+.test_tmp/
+.ruff_cache/
+.codex-tools/
