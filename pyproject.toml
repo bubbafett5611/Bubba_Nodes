@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bubba_nodes"
-version = "1.0.0"
-description = "A collection of custom nodes for ComfyUI"
+version = "2.0.1"
+description = "A set of custom nodes for ComfyUI that tansfers metadata from part to part building it along the way."
 authors = [
   {name = "bubbafett5611", email = "metalgfx@gmail.com"}
 ]
