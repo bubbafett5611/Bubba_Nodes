@@ -75,7 +75,15 @@ class BubbaMetadata(BaseModel):
             return [s.strip() for s in v.split(",") if s.strip()]
         return []
 
-    @field_validator("model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath", mode="before")
+    @field_validator(
+        "model_name",
+        "sampler_name",
+        "scheduler",
+        "positive_prompt",
+        "negative_prompt",
+        "filepath",
+        mode="before",
+    )
     @classmethod
     def coerce_text(cls, v: Any) -> str:
         return str(v or "").strip()

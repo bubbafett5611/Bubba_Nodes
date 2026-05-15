@@ -10,6 +10,7 @@ from .lora_loader import BubbaLoraLoader
 from .upscaler import BubbaUpscaler
 from .image_compare import BubbaImageCompare
 from .k_sampler import BubbaKSampler
+from .detailer import BubbaDetailer
 from .save_image import BubbaSaveImage
 from .overlay_from_metadata import BubbaOverlayFromMetadata
 from .watermark import BubbaWatermark
@@ -30,6 +31,7 @@ NODE_CLASS_MAPPINGS = {
     "BubbaComboLoader": BubbaComboLoader,
     "BubbaLoraLoader": BubbaLoraLoader,
     "BubbaKSampler": BubbaKSampler,
+    "BubbaDetailer": BubbaDetailer,
     # Prompt
     "BubbaCharacterPromptBuilder": BubbaCharacterPromptBuilder,
     "BubbaSimplePromptBuilder": BubbaSimplePromptBuilder,
@@ -55,6 +57,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BubbaComboLoader": "Bubba Combo Loader",
     "BubbaLoraLoader": "Bubba LoRA Loader",
     "BubbaKSampler": "Bubba KSampler",
+    "BubbaDetailer": "Bubba Detailer",
     # Prompt
     "BubbaCharacterPromptBuilder": "Bubba Character Prompt Builder",
     "BubbaSimplePromptBuilder": "Bubba Simple Prompt Builder",

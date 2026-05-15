@@ -29,6 +29,7 @@ from src.bubba_nodes.nodes import (
     BubbaUpscaler,
     BubbaImageCompare,
     BubbaKSampler,
+    BubbaDetailer,
     BubbaSaveImage,
     BubbaOverlayFromMetadata,
     BubbaWatermark,
@@ -41,6 +42,14 @@ from src.bubba_nodes.nodes import (
     NODE_DISPLAY_NAME_MAPPINGS,
 )
 from src.bubba_nodes.models import BubbaMetadata
+from src.bubba_nodes.utils.detailer_masks import (
+    bbox_to_mask,
+    parse_label_filter,
+    plan_crop,
+    postprocess_mask,
+)
+from src.bubba_nodes.utils.detailer_models import discover_detector_models, resolve_detector_model_path
+from src.bubba_nodes.utils.detailer_types import DetailerDetection
 
 
 class _DummyClip:
@@ -162,6 +171,271 @@ class TestBubbaKSampler:
         assert BubbaKSampler.RETURN_TYPES == ("LATENT", "STRING", "BUBBA_METADATA", "IMAGE")
         assert BubbaKSampler.FUNCTION == "sample"
         assert BubbaKSampler.CATEGORY == "Bubba Nodes/Generation"
+
+
+class TestBubbaDetailerUtilities:
+    def test_discover_detector_models_combines_bbox_and_segm_pt_files(self, tmp_path):
+        bbox_dir = tmp_path / "bbox"
+        segm_dir = tmp_path / "segm"
+        bbox_dir.mkdir()
+        segm_dir.mkdir()
+        (bbox_dir / "face.pt").write_text("model")
+        (bbox_dir / "face.json").write_text("{}")
+        (segm_dir / "person.pt").write_text("model")
+
+        assert discover_detector_models(tmp_path) == ["bbox/face.pt", "segm/person.pt"]
+
+    def test_resolve_detector_model_path_validates_prefix_and_file(self, tmp_path):
+        bbox_dir = tmp_path / "bbox"
+        bbox_dir.mkdir()
+        model_path = bbox_dir / "face.pt"
+        model_path.write_text("model")
+
+        mode, resolved = resolve_detector_model_path("bbox/face.pt", tmp_path)
+
+        assert mode == "bbox"
+        assert resolved == model_path
+        with pytest.raises(ValueError, match="Invalid detector model mode"):
+            resolve_detector_model_path("other/face.pt", tmp_path)
+
+    def test_discovery_checks_registered_ultralytics_roots_after_models_dir(self, tmp_path, monkeypatch):
+        import folder_paths
+        import src.bubba_nodes.utils.detailer_models as detailer_models
+
+        empty_models_dir = tmp_path / "empty_models"
+        shared_models_root = tmp_path / "shared_models" / "Ultralytics"
+        (empty_models_dir / "ultralytics").mkdir(parents=True)
+        (shared_models_root / "bbox").mkdir(parents=True)
+        model_path = shared_models_root / "bbox" / "face.pt"
+        model_path.write_text("model")
+
+        monkeypatch.setattr(folder_paths, "models_dir", str(empty_models_dir), raising=False)
+        monkeypatch.setattr(folder_paths, "get_folder_paths", lambda kind: [str(shared_models_root)] if kind == "ultralytics" else [])
+
+        assert detailer_models.discover_detector_models() == ["bbox/face.pt"]
+        assert detailer_models.resolve_detector_model_path("bbox/face.pt")[1] == model_path
+
+    def test_discovery_supports_registered_bbox_folder_with_case_variation(self, tmp_path, monkeypatch):
+        import folder_paths
+        import src.bubba_nodes.utils.detailer_models as detailer_models
+
+        bbox_dir = tmp_path / "Models" / "Ultralytics" / "BBOX"
+        bbox_dir.mkdir(parents=True)
+        model_path = bbox_dir / "face.pt"
+        model_path.write_text("model")
+
+        monkeypatch.delattr(folder_paths, "models_dir", raising=False)
+        monkeypatch.setattr(folder_paths, "get_folder_paths", lambda kind: [str(bbox_dir)] if kind == "ultralytics_bbox" else [])
+
+        assert detailer_models.discover_detector_models() == ["bbox/face.pt"]
+        assert detailer_models.resolve_detector_model_path("bbox/face.pt")[1] == model_path
+
+    def test_discovery_supports_default_comfy_models_registration(self, tmp_path, monkeypatch):
+        import folder_paths
+        import src.bubba_nodes.utils.detailer_models as detailer_models
+
+        default_models_dir = tmp_path / "ComfyUI" / "models"
+        bbox_dir = default_models_dir / "ultralytics" / "bbox"
+        bbox_dir.mkdir(parents=True)
+        model_path = bbox_dir / "hand.pt"
+        model_path.write_text("model")
+
+        monkeypatch.delattr(folder_paths, "models_dir", raising=False)
+        monkeypatch.setattr(folder_paths, "get_folder_paths", lambda kind: [str(default_models_dir)] if kind == "models" else [])
+
+        assert detailer_models.discover_detector_models() == ["bbox/hand.pt"]
+        assert detailer_models.resolve_detector_model_path("bbox/hand.pt")[1] == model_path
+
+    def test_label_filter_and_bbox_mask(self):
+        assert parse_label_filter(" face, HAND ,,") == {"face", "hand"}
+        mask = bbox_to_mask((1, 2, 4, 5), 8, 8)
+        assert mask.sum().item() == 9
+        assert mask[2:5, 1:4].sum().item() == 9
+
+    def test_postprocess_mask_supports_dilation_and_erosion(self):
+        import torch
+
+        mask = torch.zeros((9, 9), dtype=torch.float32)
+        mask[4, 4] = 1.0
+
+        dilated = postprocess_mask(mask, 1, 0)
+        eroded = postprocess_mask(dilated, -1, 0)
+
+        assert dilated.sum().item() == 9
+        assert eroded.sum().item() == 1
+
+    def test_plan_crop_clamps_and_aligns_to_multiple(self):
+        import torch
+
+        mask = torch.zeros((32, 32), dtype=torch.float32)
+        mask[1:5, 1:5] = 1.0
+
+        crop = plan_crop(mask, padding=2, force_square=False)
+
+        assert crop is not None
+        assert crop.x1 == 0
+        assert crop.y1 == 0
+        assert crop.width % 8 == 0
+        assert crop.height % 8 == 0
+
+
+class TestBubbaDetailer:
+    def test_metadata(self):
+        assert BubbaDetailer.RETURN_TYPES == ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
+        assert BubbaDetailer.FUNCTION == "detail"
+        assert BubbaDetailer.CATEGORY == "Bubba Nodes/Generation"
+
+    def test_override_prompts_require_clip(self):
+        with pytest.raises(ValueError, match="overrides require"):
+            BubbaDetailer._resolve_conditioning("pos", "neg", None, "detail", "")
+
+    def test_missing_conditioning_requires_prompt_text_and_clip(self):
+        with pytest.raises(ValueError, match="needs conditioning"):
+            BubbaDetailer._resolve_conditioning(None, None, None, "", "")
+
+    def test_prompt_text_can_replace_missing_conditioning(self):
+        positive, negative = BubbaDetailer._resolve_conditioning(None, None, _DummyClip(), "face detail", "")
+
+        assert positive[0][0] == "COND:face detail"
+        assert negative[0][0] == "COND:"
+
+    def test_input_types_make_conditioning_optional(self):
+        input_types = BubbaDetailer.INPUT_TYPES()
+
+        assert "positive" not in input_types["required"]
+        assert "negative" not in input_types["required"]
+        assert "positive" in input_types["optional"]
+        assert "negative" in input_types["optional"]
+
+    def test_detect_sample_converts_bbox_result(self):
+        import torch
+
+        class _Boxes:
+            xyxy = torch.tensor([[1.0, 2.0, 4.0, 5.0]])
+            conf = torch.tensor([0.9])
+            cls = torch.tensor([0])
+
+        result = types.SimpleNamespace(boxes=_Boxes(), names={0: "face"})
+
+        class _Detector:
+            def __call__(self, image, conf, verbose):
+                return [result]
+
+        image = torch.zeros((1, 8, 8, 3), dtype=torch.float32)
+        detections, fallbacks = BubbaDetailer._detect_sample(_Detector(), image, "bbox", 0.3, "", "")
+
+        assert fallbacks == 0
+        assert len(detections) == 1
+        assert isinstance(detections[0], DetailerDetection)
+        assert detections[0].label == "face"
+        assert detections[0].area == 9
+
+    def test_no_detection_path_returns_original_and_zero_mask(self, monkeypatch):
+        import torch
+        import src.bubba_nodes.nodes.detailer as detailer_module
+
+        class _Detector:
+            pass
+
+        monkeypatch.setattr(detailer_module, "load_detector", lambda name: ("bbox", "face.pt", _Detector()))
+        monkeypatch.setattr(
+            BubbaDetailer,
+            "_detect_sample",
+            classmethod(lambda cls, detector, image, mode, confidence, include_labels, exclude_labels: ([], 0)),
+        )
+
+        image = torch.ones((1, 8, 8, 3), dtype=torch.float32)
+        source_metadata = BubbaMetadata(model_name="nova", seed=9)
+        result_image, result_mask, metadata, info = BubbaDetailer().detail(
+            image,
+            model=object(),
+            vae=object(),
+            positive=[],
+            negative=[],
+            detector_model_name="bbox/face.pt",
+            confidence=0.3,
+            mask_dilation=4,
+            mask_blur=4,
+            inpaint_padding=32,
+            force_square_crop=False,
+            guide_size=512,
+            guide_size_for=True,
+            max_size=1024,
+            seed=1,
+            steps=1,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="normal",
+            denoise=0.45,
+            max_detections=10,
+            inpaint_model=False,
+            metadata=source_metadata,
+        )
+
+        assert torch.equal(result_image, image)
+        assert result_mask.sum().item() == 0
+        assert metadata == source_metadata
+        assert "Processed: 0" in info
+
+    def test_inpaint_crop_uses_inpaint_model_conditioning(self, monkeypatch):
+        import torch
+        import nodes
+
+        class _FakeVae:
+            def decode(self, samples):
+                return samples
+
+        conditioning = nodes.InpaintModelConditioning.return_value
+        conditioning.encode.return_value = ("INPAINT_POS", "INPAINT_NEG", {"samples": torch.zeros((1, 4, 2, 2))})
+        nodes.common_ksampler.return_value = ({"samples": torch.ones((1, 8, 8, 3))},)
+
+        image = torch.zeros((1, 8, 8, 3), dtype=torch.float32)
+        mask = torch.ones((1, 8, 8), dtype=torch.float32)
+
+        refined = BubbaDetailer._inpaint_crop(
+            image,
+            mask,
+            (0, 0, 8, 8),
+            model="MODEL",
+            vae=_FakeVae(),
+            positive="POS",
+            negative="NEG",
+            seed=1,
+            steps=2,
+            cfg=3.0,
+            sampler_name="euler",
+            scheduler="normal",
+            denoise=0.45,
+            guide_size=512,
+            guide_size_for_bbox=True,
+            max_size=1024,
+            inpaint_model=True,
+        )
+
+        conditioning.encode.assert_called_once()
+        nodes.common_ksampler.assert_called_once()
+        call_args = nodes.common_ksampler.call_args.args
+        assert call_args[6] == "INPAINT_POS"
+        assert call_args[7] == "INPAINT_NEG"
+        assert torch.equal(refined, torch.ones((1, 8, 8, 3)))
+
+    def test_prepare_guided_crop_upscales_small_bbox_to_guide_size(self):
+        import torch
+
+        image = torch.zeros((1, 128, 128, 3), dtype=torch.float32)
+        mask = torch.ones((1, 128, 128), dtype=torch.float32)
+
+        upscaled_image, upscaled_mask = BubbaDetailer._prepare_guided_crop(
+            image,
+            mask,
+            crop_bbox=(48, 48, 80, 80),
+            guide_size=512,
+            guide_size_for_bbox=True,
+            max_size=1024,
+        )
+
+        assert upscaled_image.shape[1:3] == (1024, 1024)
+        assert upscaled_mask.shape[-2:] == (1024, 1024)
 
 
 class TestBubbaOverlayFromMetadata:
@@ -1014,6 +1288,7 @@ class TestMappings:
         assert "BubbaLoadImageWithMetadata" in NODE_CLASS_MAPPINGS
         assert "BubbaCheckpointLoader" in NODE_CLASS_MAPPINGS
         assert "BubbaKSampler" in NODE_CLASS_MAPPINGS
+        assert "BubbaDetailer" in NODE_CLASS_MAPPINGS
         assert "BubbaSaveImage" in NODE_CLASS_MAPPINGS
         assert "BubbaOverlayFromMetadata" in NODE_CLASS_MAPPINGS
         assert "BubbaWatermark" in NODE_CLASS_MAPPINGS
@@ -1030,6 +1305,7 @@ class TestMappings:
         assert NODE_CLASS_MAPPINGS["BubbaEmptyLatentBySize"] is BubbaEmptyLatentBySize
         assert NODE_CLASS_MAPPINGS["BubbaLoadImageWithMetadata"] is BubbaLoadImageWithMetadata
         assert NODE_CLASS_MAPPINGS["BubbaCheckpointLoader"] is BubbaCheckpointLoader
+        assert NODE_CLASS_MAPPINGS["BubbaDetailer"] is BubbaDetailer
         assert NODE_CLASS_MAPPINGS["BubbaOverlayFromMetadata"] is BubbaOverlayFromMetadata
         assert NODE_CLASS_MAPPINGS["BubbaMetadataDebug"] is BubbaMetadataDebug
         assert NODE_CLASS_MAPPINGS["BubbaCharacterPromptBuilder"] is BubbaCharacterPromptBuilder

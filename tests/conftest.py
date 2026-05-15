@@ -14,6 +14,7 @@ def _install_runtime_mocks():
     mock_nodes = MagicMock()
     mock_nodes.CheckpointLoaderSimple = MagicMock()
     mock_nodes.common_ksampler = MagicMock()
+    mock_nodes.InpaintModelConditioning = MagicMock()
     sys.modules["nodes"] = mock_nodes
 
     # Mock comfy.samplers for sampler INPUT_TYPES class constants.
