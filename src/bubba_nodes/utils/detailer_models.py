@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 
-_DETECTOR_CACHE: dict[tuple[str, float], Any] = {}
+_DETECTOR_CACHE_MAX_SIZE = 2
+_DETECTOR_CACHE: OrderedDict[tuple[str, float], Any] = OrderedDict()
 _NO_MODELS_SENTINEL = "No ultralytics models found"
 
 
@@ -132,7 +134,9 @@ def load_detector(model_name: str, root: str | Path | None = None):
     mode, path = resolve_detector_model_path(model_name, root)
     stat = path.stat()
     cache_key = (str(path.resolve()), stat.st_mtime)
-    if cache_key not in _DETECTOR_CACHE:
+    if cache_key in _DETECTOR_CACHE:
+        _DETECTOR_CACHE.move_to_end(cache_key)
+    else:
         try:
             from ultralytics import YOLO
         except Exception as error:
@@ -141,4 +145,10 @@ def load_detector(model_name: str, root: str | Path | None = None):
                 "Install it in the ComfyUI Python environment, then restart ComfyUI."
             ) from error
         _DETECTOR_CACHE[cache_key] = YOLO(str(path))
+        while len(_DETECTOR_CACHE) > _DETECTOR_CACHE_MAX_SIZE:
+            _DETECTOR_CACHE.popitem(last=False)
     return mode, path, _DETECTOR_CACHE[cache_key]
+
+
+def clear_detector_cache() -> None:
+    _DETECTOR_CACHE.clear()

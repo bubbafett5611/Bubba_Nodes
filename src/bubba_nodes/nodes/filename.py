@@ -1,9 +1,7 @@
-import re
+from ..utils.paths import sanitize_path_component
 
 # TODO(new-node): Add a template-based filename node with date, seed, and model placeholders.
 # TODO(optimize): Precompute an optional transliteration/slugify pipeline for consistent cross-platform paths.
-
-INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 
 class BubbaFilename:
@@ -37,19 +35,13 @@ class BubbaFilename:
         }
 
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("filepath",)
+    RETURN_NAMES = ("save_prefix",)
     FUNCTION = "build_path"
     CATEGORY = "Bubba Nodes/Workflow"
-    DESCRIPTION = "Combines a character name (folder) and scene name (filename) into a relative file path."
+    DESCRIPTION = "Combines a character name (folder) and scene name (filename) into a relative save prefix."
 
     def build_path(self, character_name, scene_name):
-        def sanitize(name, fallback):
-            name = name.strip()
-            name = name.replace(" ", "_")
-            name = INVALID_PATH_CHARS.sub("", name)
-            return name or fallback
-
-        folder = sanitize(character_name, "Character")
-        filename = sanitize(scene_name, "Scene")
-        filepath = f"{folder}/{filename}"
-        return (filepath,)
+        folder = sanitize_path_component(character_name, "Character")
+        filename = sanitize_path_component(scene_name, "Scene")
+        save_prefix = f"{folder}/{filename}"
+        return (save_prefix,)

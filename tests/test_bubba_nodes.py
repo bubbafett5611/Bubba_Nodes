@@ -50,6 +50,7 @@ from src.bubba_nodes.utils.detailer_masks import (
 )
 from src.bubba_nodes.utils.detailer_models import discover_detector_models, resolve_detector_model_path
 from src.bubba_nodes.utils.detailer_types import DetailerDetection
+from src.bubba_nodes.utils.paths import sanitize_relative_save_prefix
 
 
 class _DummyClip:
@@ -88,8 +89,20 @@ class TestBubbaFilename:
 
     def test_metadata(self):
         assert BubbaFilename.RETURN_TYPES == ("STRING",)
+        assert BubbaFilename.RETURN_NAMES == ("save_prefix",)
         assert BubbaFilename.FUNCTION == "build_path"
         assert BubbaFilename.CATEGORY == "Bubba Nodes/Workflow"
+
+
+class TestPathUtilities:
+    def test_sanitize_relative_save_prefix_keeps_normal_prefix(self):
+        assert sanitize_relative_save_prefix("Hero/Scene_01") == "Hero/Scene_01"
+
+    def test_sanitize_relative_save_prefix_removes_unsafe_path_parts(self):
+        assert sanitize_relative_save_prefix("../CON/C:/bad*name/Scene.") == "_CON/C/badname/Scene"
+
+    def test_sanitize_relative_save_prefix_handles_empty_input(self):
+        assert sanitize_relative_save_prefix("") == "Character/Scene"
 
 
 class TestBubbaEmptyLatentBySize:
@@ -141,6 +154,16 @@ class TestBubbaLoadImageWithMetadata:
         assert metadata.model_name == ""
         assert metadata.seed == 0
         assert '"model_name": ""' in metadata_text
+
+    def test_load_rgb_image_returns_image_sized_mask(self, tmp_path):
+        image_path = tmp_path / "rgb.png"
+        Image.new("RGB", (17, 11), color=(10, 20, 30)).save(image_path)
+
+        image, mask, _, _ = BubbaLoadImageWithMetadata().load_image(str(image_path))
+
+        assert tuple(image.shape[1:3]) == (11, 17)
+        assert tuple(mask.shape[-2:]) == (11, 17)
+        assert mask.sum().item() == 0
 
     def test_metadata(self):
         assert BubbaLoadImageWithMetadata.RETURN_TYPES == ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
@@ -502,6 +525,8 @@ class TestBubbaSaveImage:
         assert BubbaSaveImage.RETURN_NAMES == ("metadata",)
         assert "save_workflow_metadata" in input_types["required"]
         assert input_types["required"]["save_workflow_metadata"][1]["default"] is True
+        assert "save_a1111_metadata" in input_types["required"]
+        assert input_types["required"]["save_a1111_metadata"][1]["default"] is False
         assert input_types["hidden"] == {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"}
 
     def test_save_images_embeds_comfy_workflow_metadata_when_enabled(self, tmp_path, monkeypatch):
@@ -557,7 +582,7 @@ class TestBubbaSaveImage:
         }
 
         node = BubbaSaveImage()
-        metadata = BubbaMetadata(model_name="nova", seed=9, filepath="Hero/shot")
+        metadata = BubbaMetadata.from_mapping({"model_name": "nova", "seed": 9, "filepath": "Hero/shot"})
 
         node.save_images(
             images=[object()],
@@ -573,6 +598,56 @@ class TestBubbaSaveImage:
             assert "prompt" not in saved.info
             assert "workflow" not in saved.info
             assert json.loads(saved.info["bubba_metadata"])["model_name"] == "nova"
+
+    def test_save_images_embeds_a1111_parameters_when_enabled(self, tmp_path, monkeypatch):
+        class _FolderPathsStub:
+            @staticmethod
+            def get_output_directory():
+                return str(tmp_path)
+
+            @staticmethod
+            def get_full_path_or_raise(kind, name):
+                assert kind == "checkpoints"
+                return str(tmp_path / name)
+
+        monkeypatch.setattr(save_image_module, "folder_paths", _FolderPathsStub)
+        monkeypatch.setattr(save_image_module, "checkpoint_short_hash", lambda path: "51dc941b55")
+
+        image_path = tmp_path / "Hero" / "civitai_00001_.png"
+        image_path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color=(1, 2, 3)).save(image_path)
+        UI.ImageSaveHelper.get_save_images_ui.return_value.as_dict.return_value = {
+            "images": [{"filename": image_path.name, "subfolder": "Hero", "type": "output"}],
+        }
+
+        metadata = BubbaMetadata(
+            model_name="NovaFurryAM",
+            positive_prompt="masterpiece, lucario",
+            negative_prompt="blurry",
+            steps=30,
+            sampler_name="euler",
+            scheduler="normal",
+            cfg=5,
+            seed=2934057377,
+        )
+        prompt = {"1": {"class_type": "BubbaCheckpointLoader", "inputs": {"ckpt_name": "models/NovaFurryAM.safetensors"}}}
+
+        BubbaSaveImage().save_images(
+            images=[object()],
+            filepath="Hero/civitai",
+            save_workflow_metadata=False,
+            save_a1111_metadata=True,
+            metadata=metadata,
+            prompt=prompt,
+        )
+
+        with Image.open(image_path) as saved:
+            assert saved.info["parameters"] == (
+                "masterpiece, lucario\n"
+                "Negative prompt: blurry\n"
+                "Steps: 30, Sampler: euler, CFG scale: 5, Seed: 2934057377, "
+                "Model hash: 51dc941b55, Model: NovaFurryAM"
+            )
 
     def test_save_images_warns_when_connected_metadata_is_empty(self, tmp_path, monkeypatch):
         class _FolderPathsStub:
@@ -654,7 +729,7 @@ class TestBubbaSaveImage:
             positive_prompt="hero portrait",
             negative_prompt="blurry",
             seed=77,
-            filepath="Hero/batch",
+            save_prefix="Hero/batch",
         )
 
         node.save_images(
@@ -684,7 +759,7 @@ class TestBubbaMetadataDebug:
             positive_prompt="hero",
             negative_prompt="blurry",
             seed=9,
-            filepath="Character/Scene",
+            save_prefix="Character/Scene",
         )
         result = node.debug_metadata(metadata)
         (metadata_text,) = result["result"]
@@ -719,6 +794,7 @@ class TestBubbaMetadataModel:
         assert metadata.positive_prompt == "pos"
         assert metadata.negative_prompt == "neg"
         assert metadata.seed == 123
+        assert metadata.save_prefix == "folder/file"
         assert metadata.filepath == "folder/file"
 
     def test_from_json_invalid_payload_falls_back(self):
@@ -729,7 +805,7 @@ class TestBubbaMetadataModel:
         assert metadata.positive_prompt == ""
         assert metadata.negative_prompt == ""
         assert metadata.seed == 0
-        assert metadata.filepath == ""
+        assert metadata.save_prefix == ""
 
     def test_to_json_round_trip(self):
         metadata = BubbaMetadata(
@@ -743,7 +819,7 @@ class TestBubbaMetadataModel:
             positive_prompt="hero",
             negative_prompt="blurry",
             seed=7,
-            filepath="Character/Scene",
+            save_prefix="Character/Scene",
         )
         payload = json.loads(metadata.to_json())
 
@@ -757,7 +833,7 @@ class TestBubbaMetadataModel:
         assert payload["positive_prompt"] == "hero"
         assert payload["negative_prompt"] == "blurry"
         assert payload["seed"] == 7
-        assert payload["filepath"] == "Character/Scene"
+        assert payload["save_prefix"] == "Character/Scene"
         assert "sampler_info" not in payload
         assert "prompt_sections" not in payload
 
@@ -858,7 +934,7 @@ class TestBubbaLoraLoader:
     def test_load_lora_preserves_other_metadata_fields(self):
         node = BubbaLoraLoader()
         node._loader = self._make_mock_loader()
-        existing = BubbaMetadata(model_name="myModel", seed=42, filepath="hero/shot")
+        existing = BubbaMetadata(model_name="myModel", seed=42, save_prefix="hero/shot")
 
         _, _, _, metadata = node.load_lora(
             "MODEL",
@@ -871,7 +947,7 @@ class TestBubbaLoraLoader:
 
         assert metadata.model_name == "myModel"
         assert metadata.seed == 42
-        assert metadata.filepath == "hero/shot"
+        assert metadata.save_prefix == "hero/shot"
         assert metadata.loras == ["detail"]
 
     def test_class_attributes(self):
@@ -992,7 +1068,7 @@ class TestBubbaUpscaler:
         mock_loader.execute.return_value = MagicMock(__getitem__=lambda self, i: fake_model)
 
         def fake_upscale_execute(upscale_model, image):
-            # Simulate ESRGAN 4× output
+            # Simulate ESRGAN 4x output
             b, h, w, c = image.shape
             upscaled = torch.zeros(b, h * scale_factor, w * scale_factor, c)
             result = MagicMock()
@@ -1011,7 +1087,7 @@ class TestBubbaUpscaler:
         node = BubbaUpscaler()
         result_image, result_metadata = node.upscale(image, "4x_model.pth", scale_by=1.0, resize_method="lanczos")
 
-        # With scale_by=1.0, should be unchanged from ESRGAN output (256×256)
+        # With scale_by=1.0, should be unchanged from ESRGAN output (256x256)
         assert result_image.shape[1] == 256  # H
         assert result_image.shape[2] == 256  # W
         assert isinstance(result_metadata, BubbaMetadata)

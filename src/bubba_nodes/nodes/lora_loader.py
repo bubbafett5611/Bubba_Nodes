@@ -58,7 +58,7 @@ class BubbaLoraLoader:
     DESCRIPTION = (
         "Loads a LoRA and applies it to MODEL and CLIP. "
         "Records the LoRA name in metadata so it appears in overlays and saved image info. "
-        "Chain multiple nodes to stack LoRAs — each appends to the metadata LoRA list."
+        "Chain multiple nodes to stack LoRAs - each appends to the metadata LoRA list."
     )
 
     def load_lora(self, model, clip, lora_name, strength_model, strength_clip, metadata=None):

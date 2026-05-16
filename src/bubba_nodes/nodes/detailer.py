@@ -94,7 +94,13 @@ class BubbaDetailer:
                 "denoise": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Inpaint denoise strength."}),
                 "max_detections": (
                     "INT",
-                    {"default": 10, "min": 1, "max": 200, "step": 1, "tooltip": "Maximum regions to refine per image."},
+                    {
+                        "default": 5,
+                        "min": 1,
+                        "max": 50,
+                        "step": 1,
+                        "tooltip": "Maximum regions to refine per image. Each processed region runs an inpaint sampler pass.",
+                    },
                 ),
             },
             "optional": {

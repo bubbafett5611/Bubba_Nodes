@@ -21,7 +21,8 @@ def _compose_overlay_text(
     positive_position,
     negative_position,
 ):
-    top_parts, bottom_parts = [], []
+    top_parts: list[str] = []
+    bottom_parts: list[str] = []
     if show_model and model_text.strip():
         (top_parts if model_position == "top" else bottom_parts).append(f"Model: {model_text.strip()}")
     if show_info and info_text.strip():
