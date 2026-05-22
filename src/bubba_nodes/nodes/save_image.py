@@ -12,13 +12,15 @@ except Exception:  # pragma: no cover - only used inside Comfy runtime
     folder_paths = None
 
 from ..models import BubbaMetadata
+from ..utils.checkpointing import checkpoint_display_name, checkpoint_short_hash
+from ..utils.paths import sanitize_relative_save_prefix
 
 # TODO(new-feature): Add sidecar JSON export option for non-PNG outputs to preserve metadata portability.
 # TODO(new-node): Add a save manifest node that records every saved file path plus metadata digest for later audit/reload.
 
 
 _DEFAULT_METADATA_DICT = BubbaMetadata().to_dict()
-_METADATA_FIELDS_IGNORED_FOR_EMPTY_WARNING = {"filepath"}
+_METADATA_FIELDS_IGNORED_FOR_EMPTY_WARNING = {"save_prefix"}
 
 
 class BubbaSaveImage:
@@ -27,11 +29,11 @@ class BubbaSaveImage:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "filepath": (
+                "save_prefix": (
                     "STRING",
                     {
                         "default": "",
-                        "tooltip": "Relative output path prefix. Leave blank to use metadata.filepath when metadata is connected.",
+                        "tooltip": "Relative save prefix, usually Character/Scene. Leave blank to use metadata.save_prefix when metadata is connected.",
                     },
                 ),
                 "preview_only": (
@@ -48,12 +50,26 @@ class BubbaSaveImage:
                         "tooltip": "Enable to embed ComfyUI prompt/workflow metadata into saved PNGs, matching the default Save Image node behavior.",
                     },
                 ),
+                "save_a1111_metadata": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Enable to embed an A1111/Civitai-compatible PNG 'parameters' text block alongside Bubba metadata.",
+                    },
+                ),
             },
             "optional": {
                 "metadata": (
                     "BUBBA_METADATA",
                     {
-                        "tooltip": "Optional metadata object. When filepath is blank, metadata.filepath is used.",
+                        "tooltip": "Optional metadata object. When save_prefix is blank, metadata.save_prefix is used.",
+                    },
+                ),
+                "filepath": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "tooltip": "Deprecated compatibility input. Use save_prefix instead.",
                     },
                 ),
             },
@@ -68,7 +84,7 @@ class BubbaSaveImage:
     FUNCTION = "save_images"
     OUTPUT_NODE = True
     CATEGORY = "Bubba Nodes/Image/Save"
-    DESCRIPTION = "Saves images using filepath or metadata.filepath, with optional preview-only temp mode, optional ComfyUI workflow metadata embedding, and embedded Bubba metadata for PNG files."
+    DESCRIPTION = "Saves images using save_prefix or metadata.save_prefix, with optional preview-only temp mode, optional ComfyUI workflow metadata embedding, optional A1111/Civitai-compatible parameters metadata, and embedded Bubba metadata for PNG files."
 
     @staticmethod
     def _is_default_metadata(metadata: BubbaMetadata) -> bool:
@@ -122,6 +138,8 @@ class BubbaSaveImage:
         cls,
         metadata_json: str | None,
         save_workflow_metadata: bool,
+        save_a1111_metadata: bool,
+        metadata: BubbaMetadata,
         prompt: Any,
         extra_pnginfo: Mapping[str, Any] | None,
     ) -> dict[str, str]:
@@ -137,7 +155,80 @@ class BubbaSaveImage:
                         entries[str(key)] = text_value
         if metadata_json:
             entries["bubba_metadata"] = metadata_json
+        if save_a1111_metadata:
+            parameters_text = cls._build_a1111_parameters(metadata, prompt)
+            if parameters_text:
+                entries["parameters"] = parameters_text
         return entries
+
+    @staticmethod
+    def _format_a1111_sampler(metadata: BubbaMetadata) -> str:
+        sampler = metadata.sampler_name.strip()
+        scheduler = metadata.scheduler.strip()
+        if not sampler:
+            return ""
+        if scheduler and scheduler.lower() not in {"normal", "simple"}:
+            return f"{sampler}_{scheduler}"
+        return sampler
+
+    @classmethod
+    def _find_checkpoint_name_in_prompt(cls, prompt: Any) -> str:
+        if not isinstance(prompt, Mapping):
+            return ""
+        for node in prompt.values():
+            if not isinstance(node, Mapping):
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, Mapping):
+                continue
+            ckpt_name = str(inputs.get("ckpt_name", "") or "").strip()
+            if ckpt_name:
+                return ckpt_name
+        return ""
+
+    @classmethod
+    def _resolve_a1111_model_fields(cls, metadata: BubbaMetadata, prompt: Any) -> tuple[str, str]:
+        checkpoint_name = cls._find_checkpoint_name_in_prompt(prompt)
+        model_name = metadata.model_name or checkpoint_display_name(checkpoint_name)
+        model_hash = ""
+        if checkpoint_name and folder_paths is not None and hasattr(folder_paths, "get_full_path_or_raise"):
+            try:
+                checkpoint_path = folder_paths.get_full_path_or_raise("checkpoints", checkpoint_name)
+                model_hash = checkpoint_short_hash(checkpoint_path)
+            except Exception:
+                model_hash = ""
+        return model_name, model_hash
+
+    @classmethod
+    def _build_a1111_parameters(cls, metadata: BubbaMetadata, prompt: Any) -> str:
+        if not cls._has_generation_metadata(metadata):
+            return ""
+
+        lines = [metadata.positive_prompt]
+        if metadata.negative_prompt:
+            lines.append(f"Negative prompt: {metadata.negative_prompt}")
+
+        fields: list[str] = []
+        if metadata.steps > 0:
+            fields.append(f"Steps: {metadata.steps}")
+        sampler = cls._format_a1111_sampler(metadata)
+        if sampler:
+            fields.append(f"Sampler: {sampler}")
+        if metadata.cfg > 0:
+            fields.append(f"CFG scale: {metadata.cfg:g}")
+        if metadata.seed > 0:
+            fields.append(f"Seed: {metadata.seed}")
+        model_name, model_hash = cls._resolve_a1111_model_fields(metadata, prompt)
+        if model_hash:
+            fields.append(f"Model hash: {model_hash}")
+        if model_name:
+            fields.append(f"Model: {model_name}")
+        if metadata.clip_skip > 0:
+            fields.append(f"Clip skip: {metadata.clip_skip}")
+
+        if fields:
+            lines.append(", ".join(fields))
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _png_text_entry_matches(existing_value: str | None, expected_value: str) -> bool:
@@ -185,12 +276,24 @@ class BubbaSaveImage:
                 failed_paths.append(str(path))
         return failed_paths
 
-    def save_images(self, images, filepath, preview_only, save_workflow_metadata, metadata=None, prompt=None, extra_pnginfo=None):
+    def save_images(
+        self,
+        images,
+        save_prefix="",
+        preview_only=False,
+        save_workflow_metadata=True,
+        save_a1111_metadata=False,
+        metadata=None,
+        filepath=None,
+        prompt=None,
+        extra_pnginfo=None,
+    ):
         input_metadata = BubbaMetadata.coerce(metadata)
         metadata_warnings = self._metadata_input_warnings(metadata is not None, input_metadata)
         normalized_metadata = input_metadata
-        resolved_filepath = (filepath or "").strip() or normalized_metadata.filepath or "Character/Scene"
-        normalized_metadata = normalized_metadata.updated(filepath=resolved_filepath)
+        raw_save_prefix = (save_prefix or "").strip() or (filepath or "").strip() or normalized_metadata.save_prefix or "Character/Scene"
+        resolved_save_prefix = sanitize_relative_save_prefix(raw_save_prefix)
+        normalized_metadata = normalized_metadata.updated(save_prefix=resolved_save_prefix)
         has_metadata = not self._is_default_metadata(normalized_metadata)
         metadata_json_compact = normalized_metadata.to_json(pretty=False) if has_metadata else None
         metadata_json_pretty = normalized_metadata.to_json(pretty=True) if has_metadata else None
@@ -205,12 +308,14 @@ class BubbaSaveImage:
 
         result = UI.ImageSaveHelper.get_save_images_ui(
             images=images,
-            filename_prefix=resolved_filepath,
+            filename_prefix=resolved_save_prefix,
             cls=cast(Any, None),
         ).as_dict()
         png_text_entries = self._build_png_text_entries(
             metadata_json_compact,
             save_workflow_metadata,
+            save_a1111_metadata,
+            normalized_metadata,
             prompt,
             extra_pnginfo,
         )

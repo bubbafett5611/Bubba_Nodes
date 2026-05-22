@@ -1,72 +1,75 @@
-# TODO(new-feature): Add optional auto-discovery registration so new node modules can be added without manual map edits.
-# TODO(new-node): Keep this mapping in sync when introducing new nodes (metadata merge, preset manager, manifest saver).
+from __future__ import annotations
 
-from .filename import BubbaFilename
-from .empty_latent_by_size import BubbaEmptyLatentBySize
-from .load_image_with_metadata import BubbaLoadImageWithMetadata
-from .checkpoint_loader import BubbaCheckpointLoader
-from .combo_loader import BubbaComboLoader
-from .lora_loader import BubbaLoraLoader
-from .upscaler import BubbaUpscaler
-from .image_compare import BubbaImageCompare
-from .k_sampler import BubbaKSampler
-from .save_image import BubbaSaveImage
-from .overlay_from_metadata import BubbaOverlayFromMetadata
-from .watermark import BubbaWatermark
-from .metadata_debug import BubbaMetadataDebug
-from .character_prompt_builder import (
-    BubbaCharacterPromptBuilder,
+import importlib
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+
+logger = logging.getLogger("bubba_nodes")
+
+
+@dataclass(frozen=True)
+class NodeSpec:
+    module_name: str
+    class_name: str
+    display_name: str
+
+
+_NODE_SPECS = (
+    # Workflow
+    NodeSpec("filename", "BubbaFilename", "Bubba Filename Builder"),
+    # Generation
+    NodeSpec("empty_latent_by_size", "BubbaEmptyLatentBySize", "Bubba Empty Latent (Preset Sizes)"),
+    NodeSpec("checkpoint_loader", "BubbaCheckpointLoader", "Bubba Checkpoint Loader"),
+    NodeSpec("combo_loader", "BubbaComboLoader", "Bubba Combo Loader"),
+    NodeSpec("lora_loader", "BubbaLoraLoader", "Bubba LoRA Loader"),
+    NodeSpec("k_sampler", "BubbaKSampler", "Bubba KSampler"),
+    NodeSpec("detailer", "BubbaDetailer", "Bubba Detailer"),
+    # Prompt
+    NodeSpec("character_prompt_builder", "BubbaCharacterPromptBuilder", "Bubba Character Prompt Builder"),
+    NodeSpec("simple_prompt_builder", "BubbaSimplePromptBuilder", "Bubba Simple Prompt Builder"),
+    NodeSpec("prompt_randomizer", "BubbaPromptRandomizer", "Bubba Prompt Randomizer"),
+    NodeSpec("prompt_cleaner", "BubbaPromptCleaner", "Bubba Prompt Cleaner"),
+    NodeSpec("prompt_inspector", "BubbaPromptInspector", "Bubba Prompt Inspector"),
+    # Metadata
+    NodeSpec("metadata_debug", "BubbaMetadataDebug", "Bubba Metadata Debug"),
+    # Image IO + overlays
+    NodeSpec("upscaler", "BubbaUpscaler", "Bubba Upscaler (ESRGAN)"),
+    NodeSpec("image_compare", "BubbaImageCompare", "Bubba Image Compare"),
+    NodeSpec("load_image_with_metadata", "BubbaLoadImageWithMetadata", "Bubba Load Image (With Metadata)"),
+    NodeSpec("save_image", "BubbaSaveImage", "Bubba Save Image"),
+    NodeSpec("overlay_from_metadata", "BubbaOverlayFromMetadata", "Bubba Add Text Overlay (Metadata)"),
+    NodeSpec("watermark", "BubbaWatermark", "Bubba Watermark Overlay"),
 )
-from .simple_prompt_builder import BubbaSimplePromptBuilder
-from .prompt_cleaner import BubbaPromptCleaner
-from .prompt_inspector import BubbaPromptInspector
 
-NODE_CLASS_MAPPINGS = {
-    # Workflow
-    "BubbaFilename": BubbaFilename,
-    # Generation
-    "BubbaEmptyLatentBySize": BubbaEmptyLatentBySize,
-    "BubbaCheckpointLoader": BubbaCheckpointLoader,
-    "BubbaComboLoader": BubbaComboLoader,
-    "BubbaLoraLoader": BubbaLoraLoader,
-    "BubbaKSampler": BubbaKSampler,
-    # Prompt
-    "BubbaCharacterPromptBuilder": BubbaCharacterPromptBuilder,
-    "BubbaSimplePromptBuilder": BubbaSimplePromptBuilder,
-    "BubbaPromptCleaner": BubbaPromptCleaner,
-    "BubbaPromptInspector": BubbaPromptInspector,
-    # Metadata
-    "BubbaMetadataDebug": BubbaMetadataDebug,
-    # Image IO + overlays
-    "BubbaUpscaler": BubbaUpscaler,
-    "BubbaImageCompare": BubbaImageCompare,
-    "BubbaLoadImageWithMetadata": BubbaLoadImageWithMetadata,
-    "BubbaSaveImage": BubbaSaveImage,
-    "BubbaOverlayFromMetadata": BubbaOverlayFromMetadata,
-    "BubbaWatermark": BubbaWatermark,
-}
 
-NODE_DISPLAY_NAME_MAPPINGS = {
-    # Workflow
-    "BubbaFilename": "Bubba Filename Builder",
-    # Generation
-    "BubbaEmptyLatentBySize": "Bubba Empty Latent (Preset Sizes)",
-    "BubbaCheckpointLoader": "Bubba Checkpoint Loader",
-    "BubbaComboLoader": "Bubba Combo Loader",
-    "BubbaLoraLoader": "Bubba LoRA Loader",
-    "BubbaKSampler": "Bubba KSampler",
-    # Prompt
-    "BubbaCharacterPromptBuilder": "Bubba Character Prompt Builder",
-    "BubbaSimplePromptBuilder": "Bubba Simple Prompt Builder",
-    "BubbaPromptCleaner": "Bubba Prompt Cleaner",
-    "BubbaPromptInspector": "Bubba Prompt Inspector",
-    # Metadata
-    "BubbaMetadataDebug": "Bubba Metadata Debug",
-    # Image IO + overlays
-    "BubbaUpscaler": "Bubba Upscaler (ESRGAN)",
-    "BubbaImageCompare": "Bubba Image Compare",
-    "BubbaLoadImageWithMetadata": "Bubba Load Image (With Metadata)",
-    "BubbaSaveImage": "Bubba Save Image",
-    "BubbaOverlayFromMetadata": "Bubba Add Text Overlay (Metadata)",
-    "BubbaWatermark": "Bubba Watermark Overlay",
-}
+NODE_CLASS_MAPPINGS: dict[str, type[Any]] = {}
+NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {}
+UNAVAILABLE_NODE_MAPPINGS: dict[str, str] = {}
+
+
+def _register_node(spec: NodeSpec) -> None:
+    try:
+        module = importlib.import_module(f".{spec.module_name}", __name__)
+        node_class = getattr(module, spec.class_name)
+    except Exception as error:
+        UNAVAILABLE_NODE_MAPPINGS[spec.class_name] = str(error)
+        logger.warning("Bubba node %s unavailable: %s", spec.class_name, error)
+        return
+
+    globals()[spec.class_name] = node_class
+    NODE_CLASS_MAPPINGS[spec.class_name] = node_class
+    NODE_DISPLAY_NAME_MAPPINGS[spec.class_name] = spec.display_name
+
+
+for _spec in _NODE_SPECS:
+    _register_node(_spec)
+
+
+__all__ = [
+    "NODE_CLASS_MAPPINGS",
+    "NODE_DISPLAY_NAME_MAPPINGS",
+    "UNAVAILABLE_NODE_MAPPINGS",
+    *(spec.class_name for spec in _NODE_SPECS if spec.class_name in globals()),
+]

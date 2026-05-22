@@ -1,3 +1,5 @@
+import logging
+
 from nodes import CheckpointLoaderSimple, VAELoader, CLIPLoader
 import folder_paths
 
@@ -28,6 +30,7 @@ _CLIP_TYPES = [
 ]
 
 _NONE_SENTINEL = "None (use checkpoint CLIP/VAE)"
+logger = logging.getLogger("bubba_nodes")
 
 
 def _vae_choices():
@@ -87,7 +90,7 @@ class BubbaComboLoader:
     CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = (
         "Loads a checkpoint and optionally overrides its baked-in VAE and CLIP with "
-        "external files — useful for models like Anima/WAI-Anima that ship without "
+        "external files - useful for models like Anima/WAI-Anima that ship without "
         "an embedded text encoder or VAE. Applies optional CLIP skip. "
         "Set vae_name or clip_name to 'None' to use the checkpoint's built-in version."
     )
@@ -115,7 +118,7 @@ class BubbaComboLoader:
                 clip = clip.clone()
                 clip.clip_layer(-applied_clip_skip)
             except Exception as exc:
-                print(f"[Bubba] WARNING: Failed to apply CLIP skip={applied_clip_skip}. Using unmodified CLIP. Error: {exc}")
+                logger.warning("Failed to apply CLIP skip=%s. Using unmodified CLIP. Error: %s", applied_clip_skip, exc)
                 applied_clip_skip = 0
 
         # --- Metadata -----------------------------------------------------------

@@ -1,5 +1,7 @@
 import hashlib
 import os
+from typing import Any
+
 import numpy as np
 from PIL import Image, ImageOps, ImageSequence
 import torch
@@ -66,7 +68,7 @@ class BubbaLoadImageWithMetadata:
     )
 
     @staticmethod
-    def _call_pillow(func, *args):
+    def _call_pillow(func, *args) -> Any:
         if node_helpers is not None and hasattr(node_helpers, "pillow"):
             return node_helpers.pillow(func, *args)
         return func(*args)
@@ -100,13 +102,11 @@ class BubbaLoadImageWithMetadata:
         metadata = BubbaMetadata.from_json(raw_json)
         return (metadata, metadata.to_json(pretty=True))
 
-    def load_image(self, image):
-        image_path = self._resolve_image_path(image)
-        img = self._call_pillow(Image.open, image_path)
+    def _load_open_image(self, img):
         metadata, metadata_text = self._extract_bubba_metadata(getattr(img, "info", {}))
 
-        output_images = []
-        output_masks = []
+        output_images: list[torch.Tensor] = []
+        output_masks: list[torch.Tensor] = []
         width = None
         height = None
         dtype = self._intermediate_dtype()
@@ -130,19 +130,22 @@ class BubbaLoadImageWithMetadata:
             image_tensor = torch.from_numpy(image_np)[None,].to(device=device, dtype=dtype)
 
             if "A" in frame.getbands():
-                mask = np.asarray(frame.getchannel("A")).astype(np.float32) / 255.0
-                mask = 1.0 - torch.from_numpy(mask)
+                alpha_np = np.asarray(frame.getchannel("A")).astype(np.float32) / 255.0
+                mask_tensor = 1.0 - torch.from_numpy(alpha_np)
             elif frame.mode == "P" and "transparency" in frame.info:
-                mask = np.asarray(frame.convert("RGBA").getchannel("A")).astype(np.float32) / 255.0
-                mask = 1.0 - torch.from_numpy(mask)
+                alpha_np = np.asarray(frame.convert("RGBA").getchannel("A")).astype(np.float32) / 255.0
+                mask_tensor = 1.0 - torch.from_numpy(alpha_np)
             else:
-                mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
+                mask_tensor = torch.zeros((rgb.size[1], rgb.size[0]), dtype=torch.float32, device="cpu")
 
             output_images.append(image_tensor)
-            output_masks.append(mask.unsqueeze(0).to(device=device, dtype=dtype))
+            output_masks.append(mask_tensor.unsqueeze(0).to(device=device, dtype=dtype))
 
             if img.format == "MPO":
                 break
+
+        if not output_images:
+            raise ValueError("Bubba Load Image could not read any compatible image frames.")
 
         if len(output_images) > 1:
             output_image = torch.cat(output_images, dim=0)
@@ -152,6 +155,16 @@ class BubbaLoadImageWithMetadata:
             output_mask = output_masks[0]
 
         return (output_image, output_mask, metadata, metadata_text)
+
+    def load_image(self, image):
+        image_path = self._resolve_image_path(image)
+        try:
+            with self._call_pillow(Image.open, image_path) as img:
+                return self._load_open_image(img)
+        except ValueError:
+            raise
+        except Exception as error:
+            raise ValueError(f"Bubba Load Image could not read image '{image}': {error}") from error
 
     @classmethod
     def IS_CHANGED(cls, image):

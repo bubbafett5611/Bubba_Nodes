@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bubba_nodes"
 version = "2.0.1"
-description = "A set of custom nodes for ComfyUI that tansfers metadata from part to part building it along the way."
+description = "Custom ComfyUI nodes for metadata-first prompt, generation, image, and save workflows."
 authors = [
   {name = "bubbafett5611", email = "metalgfx@gmail.com"}
 ]
@@ -21,6 +21,9 @@ dependencies = [
 
 
 [project.optional-dependencies]
+detailer = [
+    "ultralytics>=8.0,<9",
+]
 dev = [
     "bump-my-version",
     "coverage",  # testing
@@ -31,9 +34,9 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/bubbafett5611/bubba_nodes"
-BugTracker = "https://github.com/bubbafett5611/bubba_nodes/issues"
-Documentation = "https://github.com/bubbafett5611/bubba_nodes/wiki"
+Repository = "https://github.com/bubbafett5611/Bubba_Nodes"
+BugTracker = "https://github.com/bubbafett5611/Bubba_Nodes/issues"
+Documentation = "https://github.com/bubbafett5611/Bubba_Nodes/wiki"
 
 
 [tool.comfy]
@@ -41,7 +44,7 @@ PublisherId = "bubbafett5611"
 DisplayName = "Bubba Nodes"
 Icon = ""
 Tags = []
-Repository = "https://github.com/bubbafett5611/bubba_nodes"
+Repository = "https://github.com/bubbafett5611/Bubba_Nodes"
 
 includes = []
 
@@ -55,10 +58,14 @@ testpaths = [
 ]
 
 [tool.mypy]
-files = "."
-
-# Use strict defaults
-strict = true
+files = ["src", "tests"]
+explicit_package_bases = true
+python_version = "3.10"
+check_untyped_defs = true
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+warn_return_any = false
+warn_unused_ignores = false
 warn_unreachable = true
 warn_no_return = true
 
@@ -68,11 +75,27 @@ module = "tests.*"
 allow_untyped_defs = true
 disable_error_code = "attr-defined"
 
+[[tool.mypy.overrides]]
+module = [
+    "comfy",
+    "comfy.*",
+    "comfy_api",
+    "comfy_api.*",
+    "comfy_extras",
+    "comfy_extras.*",
+    "folder_paths",
+    "node_helpers",
+    "nodes",
+    "server",
+    "ultralytics",
+]
+ignore_missing_imports = true
+
 [tool.ruff]
 # extend-exclude = ["static", "ci/templates"]
 line-length = 140
 src = ["src", "tests"]
-target-version = "py39"
+target-version = "py310"
 
 # Add rules to ban exec/eval
 [tool.ruff.lint]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ _DEFAULT_E621_CSV_URL = f"{_ARCHIVE_RAW_BASE_URL}/e621/e621_2026-04-01_pt20-ia-e
 _DEFAULT_LEGACY_MERGED_CSV_URL = (
     "https://raw.githubusercontent.com/DraconicDragon1/" "danbooru-e621-autocomplete/main/danbooru_e621_merged.csv"
 )
+_MAX_CSV_DOWNLOAD_BYTES = 100 * 1024 * 1024
+_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -56,18 +59,45 @@ def _download_upstream_csv(url: str) -> bytes:
         url,
         headers={"User-Agent": "bubba-nodes/1.0"},
     )
+    chunks: list[bytes] = []
+    total_bytes = 0
     with urllib.request.urlopen(request, timeout=30) as response:
-        payload = response.read()
+        while True:
+            chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > _MAX_CSV_DOWNLOAD_BYTES:
+                raise ValueError(f"Downloaded CSV exceeds {_MAX_CSV_DOWNLOAD_BYTES // (1024 * 1024)} MB limit.")
+            chunks.append(chunk)
+    payload = b"".join(chunks)
     if not payload:
         raise ValueError("Downloaded CSV is empty.")
+    if b"\n" not in payload[:4096]:
+        raise ValueError("Downloaded CSV does not look like a tag CSV file.")
     return payload
 
 
 def _save_bytes_atomic(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_bytes(data)
-    temp_path.replace(path)
+    temp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            delete=False,
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        ) as handle:
+            temp_name = handle.name
+            handle.write(data)
+        Path(temp_name).replace(path)
+    finally:
+        if temp_name:
+            try:
+                Path(temp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _embedding_entry(raw_name: str) -> dict[str, object]:

@@ -40,7 +40,7 @@ This extension registers 17 nodes:
 - Compare two image batches in the frontend with an A/B splitter.
 - Add text overlays from metadata fields.
 - Add watermark overlays with anchor, scale, opacity, offsets, and optional mask support.
-- Save images normally or as previews, with optional ComfyUI workflow metadata and Bubba PNG metadata.
+- Save images normally or as previews, with optional ComfyUI workflow metadata, optional A1111/Civitai-compatible `parameters` metadata, and Bubba PNG metadata.
 - Use in-node autocomplete for Bubba multiline prompt fields, backed by local CSV tag data and embedding names.
 
 ## Installation
@@ -71,6 +71,17 @@ python -m pip install -r requirements.txt
 
 If you use a dedicated ComfyUI venv/conda env, run that command from inside the active ComfyUI environment.
 
+### Optional Detailer Dependency
+
+Bubba Detailer uses Ultralytics detector models from `models/ultralytics/bbox` or `models/ultralytics/segm`.
+If the Detailer node reports that `ultralytics` is missing, install it into the same Python environment that runs ComfyUI:
+
+```bash
+python -m pip install "ultralytics>=8.0,<9"
+```
+
+Then restart ComfyUI.
+
 ## Quick Workflow Example
 
 1. Use Bubba Combo Loader or Bubba Checkpoint Loader to load the model stack.
@@ -86,10 +97,12 @@ If you use a dedicated ComfyUI venv/conda env, run that command from inside the 
 ## Metadata Notes
 
 - Metadata is represented by the typed `BUBBA_METADATA` object.
-- Metadata currently includes `model_name`, `clip_skip`, `sampler_time_seconds`, `steps`, `cfg`, `sampler_name`, `scheduler`, `denoise`, `seed`, `positive_prompt`, `negative_prompt`, `loras`, and `filepath`.
+- Metadata currently includes `schema_version`, `model_name`, `clip_skip`, `sampler_time_seconds`, `steps`, `cfg`, `sampler_name`, `scheduler`, `denoise`, `seed`, `positive_prompt`, `negative_prompt`, `loras`, and `save_prefix`.
+- Older saved metadata that uses `filepath` is still accepted and migrated to `save_prefix`.
 - Bubba Metadata Debug displays pretty JSON directly on the node and still outputs the same text for wiring.
 - Bubba Save Image embeds metadata into PNG text under `bubba_metadata`.
 - Bubba Save Image can also embed ComfyUI `prompt` and `workflow` metadata when `save_workflow_metadata` is enabled.
+- Bubba Save Image can also embed an A1111/Civitai-compatible `parameters` text block when `save_a1111_metadata` is enabled.
 - The Save Image node shows a frontend metadata warning when connected Bubba metadata is empty/default, or when PNG metadata embedding fails for one or more saved files.
 - Bubba Load Image (With Metadata) reads `bubba_metadata` from PNG text and reconstructs `BUBBA_METADATA`.
 

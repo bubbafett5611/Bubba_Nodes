@@ -756,6 +756,7 @@ function bindEntryPreviewButton(entryElement) {
 	button.className = "bubba-ckpt-preview-btn";
 	button.textContent = "Prev";
 	button.title = "Show preview";
+	button.setAttribute("aria-label", "Show checkpoint preview");
 	actions.appendChild(button);
 	ensureEntryStatusPill(entryElement);
 
@@ -789,6 +790,7 @@ function bindEntryCivitaiButton(entryElement) {
 	button.className = "bubba-ckpt-info-btn";
 	button.textContent = "i";
 	button.title = "Open CivitAI page";
+	button.setAttribute("aria-label", "Open checkpoint CivitAI page");
 	ensureEntryActionArea(entryElement).appendChild(button);
 
 	button.addEventListener("mousedown", (event) => {
@@ -829,10 +831,12 @@ function bindEntryFavoriteButton(entryElement) {
 	button.type = "button";
 	button.className = "bubba-ckpt-fav-btn";
 	button.title = "Toggle favorite";
+	button.setAttribute("aria-label", "Toggle checkpoint favorite");
 
 	const syncState = () => {
 		const on = isFavoritePath(entryElement.dataset?.bubbaCkptPath);
 		button.classList.toggle("is-on", on);
+		button.setAttribute("aria-pressed", String(on));
 		button.textContent = on ? "★" : "☆";
 	};
 
@@ -858,6 +862,7 @@ function bindEntryFavoriteButton(entryElement) {
 				if (path) {
 					const on = isFavoritePath(path);
 					btn.classList.toggle("is-on", on);
+					btn.setAttribute("aria-pressed", String(on));
 					btn.textContent = on ? "★" : "☆";
 				}
 			}
@@ -995,8 +1000,8 @@ function setupCheckpointKeyboardNavigation(menu) {
 		selectedSelector: ".litemenu-entry.bubba-ckpt-selected, .litemenu-entry.selected, .litemenu-entry[aria-selected='true'], .litemenu-entry[data-selected='true']",
 		folderClass: "bubba-ckpt-folder",
 		folderArrowSelector: ".bubba-ckpt-folder-arrow",
-		folderCollapsedGlyph: "â–¶",
-		folderExpandedGlyph: "â–¼",
+		folderCollapsedGlyph: "▶",
+		folderExpandedGlyph: "▼",
 	});
 }
 
@@ -1062,7 +1067,7 @@ function buildCheckpointTreeMenu(menu, selectedCheckpointValue = "", checkpointW
 		}
 
 		// Only set text content on the first build; on rebuilds the entry already has
-		// its label span + buttons in place — overwriting textContent would destroy them.
+		// its label span + buttons in place - overwriting textContent would destroy them.
 		if (!entry.dataset.bubbaContentSet) {
 			entry.textContent = displayNameWithoutExtension(pathParts[pathParts.length - 1]);
 			if (pathParts.length > 1) {

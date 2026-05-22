@@ -1,3 +1,4 @@
+import logging
 import re
 
 # TODO(new-feature): Support weighted tags syntax helpers (e.g., (tag:1.2)) with optional normalization rules.
@@ -6,6 +7,7 @@ import re
 
 _SPLIT_RE = re.compile(r"\s*,\s*")
 _MULTI_SPACE_RE = re.compile(r"\s+")
+logger = logging.getLogger("bubba_nodes")
 
 SECTION_KEYS: tuple[str, ...] = (
     "character",
@@ -181,9 +183,9 @@ def build_prompts_from_sections(
 
 def encode_conditioning(clip, text: str):
     if clip is None:
-        print(
-            "[Bubba] WARNING: CLIP is None — the loaded model may not include a CLIP encoder "
-            "(e.g. unet-only or distilled model). Returning empty conditioning."
+        logger.warning(
+            "CLIP is None; the loaded model may not include a CLIP encoder "
+            "(for example, a unet-only or distilled model). Returning empty conditioning."
         )
         return empty_conditioning()
 
@@ -207,13 +209,13 @@ def encode_conditioning(clip, text: str):
         simplified = _MULTI_SPACE_RE.sub(" ", simplified).strip()
         if simplified and simplified != source_text:
             try:
-                print("[Bubba] WARNING: CLIP encoding failed with weighted prompt syntax; " "retrying with simplified prompt text.")
+                logger.warning("CLIP encoding failed with weighted prompt syntax; retrying with simplified prompt text.")
                 return _encode_with_tokens(simplified)
             except TypeError as retry_exc:
-                print("[Bubba] WARNING: CLIP encoding failed after simplified retry; " f"returning empty conditioning. Error: {retry_exc}")
+                logger.warning("CLIP encoding failed after simplified retry; returning empty conditioning. Error: %s", retry_exc)
                 return empty_conditioning()
 
-        print("[Bubba] WARNING: CLIP encoding failed; returning empty conditioning. " f"Error: {exc}")
+        logger.warning("CLIP encoding failed; returning empty conditioning. Error: %s", exc)
         return empty_conditioning()
 
 

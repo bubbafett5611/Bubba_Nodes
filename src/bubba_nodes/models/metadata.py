@@ -1,14 +1,18 @@
 import json
 from typing import Any, Mapping
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-# TODO(new-feature): Introduce metadata schema_version with migration helpers for backward-compatible evolution.
 # TODO(optimize): Consider a lightweight validation cache for repeated coercions of identical metadata payloads.
+
+
+CURRENT_METADATA_SCHEMA_VERSION = 1
 
 
 class BubbaMetadata(BaseModel):
     """Metadata container for generation info, prompts, and workflow state."""
+
+    schema_version: int = Field(default=CURRENT_METADATA_SCHEMA_VERSION, ge=1, description="Bubba metadata schema version")
 
     # Generation info - populated by sampler
     model_name: str = Field(default="", description="Model/checkpoint name used for generation")
@@ -29,23 +33,46 @@ class BubbaMetadata(BaseModel):
     loras: list[str] = Field(default_factory=list, description="LoRA names applied during generation, in order")
 
     # Workflow info
-    filepath: str = Field(default="", description="Output filepath or path prefix")
+    save_prefix: str = Field(default="", description="Relative output folder/name prefix")
 
     model_config = {
         "str_strip_whitespace": True,
+        "extra": "ignore",
         "json_schema_extra": {
             "examples": [
                 {
+                    "schema_version": CURRENT_METADATA_SCHEMA_VERSION,
                     "model_name": "model.safetensors",
                     "seed": 42,
                     "steps": 20,
                     "cfg": 7.5,
                     "sampler_name": "euler",
                     "scheduler": "karras",
+                    "save_prefix": "Character/Scene",
                 }
             ]
         },
     }
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_fields(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(value)
+        if "save_prefix" not in data and "filepath" in data:
+            data["save_prefix"] = data.get("filepath")
+        data.pop("filepath", None)
+        return data
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def coerce_schema_version(cls, v: Any) -> int:
+        try:
+            parsed = int(v)
+            return parsed if parsed >= 1 else CURRENT_METADATA_SCHEMA_VERSION
+        except (ValueError, TypeError):
+            return CURRENT_METADATA_SCHEMA_VERSION
 
     @field_validator("steps", "seed", "clip_skip", mode="before")
     @classmethod
@@ -75,7 +102,15 @@ class BubbaMetadata(BaseModel):
             return [s.strip() for s in v.split(",") if s.strip()]
         return []
 
-    @field_validator("model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath", mode="before")
+    @field_validator(
+        "model_name",
+        "sampler_name",
+        "scheduler",
+        "positive_prompt",
+        "negative_prompt",
+        "save_prefix",
+        mode="before",
+    )
     @classmethod
     def coerce_text(cls, v: Any) -> str:
         return str(v or "").strip()
@@ -135,6 +170,13 @@ class BubbaMetadata(BaseModel):
 
     def updated(self, **changes: Any) -> "BubbaMetadata":
         """Return a new BubbaMetadata with specified fields updated."""
+        if "filepath" in changes and "save_prefix" not in changes:
+            changes["save_prefix"] = changes.pop("filepath")
         data = self.model_dump()
         data.update(changes)
         return BubbaMetadata.from_mapping(data)
+
+    @property
+    def filepath(self) -> str:
+        """Backward-compatible alias for old workflows and tests."""
+        return self.save_prefix

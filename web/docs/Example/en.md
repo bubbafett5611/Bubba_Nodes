@@ -30,7 +30,7 @@ Builds a sanitized relative path from character and scene names.
 
 | Output | Type | Description |
 |--------|------|-------------|
-| filepath | STRING | Relative path like `Character/Scene`. |
+| save_prefix | STRING | Relative save prefix like `Character/Scene`. Legacy `filepath` metadata is still accepted. |
 
 ## Bubba Empty Latent (Preset Sizes)
 
@@ -329,8 +329,8 @@ Saves images via ComfyUI UI helpers and embeds metadata into PNG text when metad
 
 ### Notes
 
-- Uses `metadata.filepath` when `filepath` input is blank.
-- Falls back to `Character/Scene` when no filepath is provided.
+- Uses `metadata.save_prefix` when `save_prefix` input is blank.
+- Falls back to `Character/Scene` when no save prefix is provided.
 - Supports `preview_only` mode.
 - Embeds Bubba metadata JSON under PNG text key `bubba_metadata`.
 - Embeds ComfyUI prompt/workflow metadata when `save_workflow_metadata` is enabled.
@@ -340,7 +340,7 @@ Saves images via ComfyUI UI helpers and embeds metadata into PNG text when metad
 
 | Output | Type | Description |
 |--------|------|-------------|
-| metadata | BUBBA_METADATA | Final metadata with resolved filepath. |
+| metadata | BUBBA_METADATA | Final metadata with resolved save prefix. |
 
 ## Suggested Flow
 
