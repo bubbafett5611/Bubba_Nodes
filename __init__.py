@@ -11,7 +11,7 @@ __all__ = [
 
 __author__ = """BubbaNodes"""
 __email__ = "metalgfx@gmail.com"
-__version__ = "1.0.0"
+__version__ = "2.0.2"
 
 logger = logging.getLogger("bubba_nodes")
 
