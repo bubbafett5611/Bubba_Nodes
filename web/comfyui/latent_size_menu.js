@@ -456,7 +456,7 @@ function parseGroupAndLabel(rawValue) {
 }
 
 function isHeadingValue(rawValue) {
-    // Kept for widget value guard — headings are no longer real list entries.
+    // Kept for widget value guard - headings are no longer real list entries.
     const text = String(rawValue || "").trim();
     return text.startsWith("---") && text.endsWith("---");
 }

@@ -17,6 +17,7 @@ from comfy_api.latest import UI
 
 import src.bubba_nodes.nodes.save_image as save_image_module
 import src.bubba_nodes.nodes.checkpoint_loader as checkpoint_module
+import src.bubba_nodes.nodes.prompt_randomizer as prompt_randomizer_module
 import src.bubba_nodes.server.autocomplete as autocomplete_server
 
 from src.bubba_nodes.nodes import (
@@ -29,18 +30,29 @@ from src.bubba_nodes.nodes import (
     BubbaUpscaler,
     BubbaImageCompare,
     BubbaKSampler,
+    BubbaDetailer,
     BubbaSaveImage,
     BubbaOverlayFromMetadata,
     BubbaWatermark,
     BubbaMetadataDebug,
     BubbaCharacterPromptBuilder,
     BubbaSimplePromptBuilder,
+    BubbaPromptRandomizer,
     BubbaPromptCleaner,
     BubbaPromptInspector,
     NODE_CLASS_MAPPINGS,
     NODE_DISPLAY_NAME_MAPPINGS,
 )
 from src.bubba_nodes.models import BubbaMetadata
+from src.bubba_nodes.utils.detailer_masks import (
+    bbox_to_mask,
+    parse_label_filter,
+    plan_crop,
+    postprocess_mask,
+)
+from src.bubba_nodes.utils.detailer_models import discover_detector_models, resolve_detector_model_path
+from src.bubba_nodes.utils.detailer_types import DetailerDetection
+from src.bubba_nodes.utils.paths import sanitize_relative_save_prefix
 
 
 class _DummyClip:
@@ -79,8 +91,20 @@ class TestBubbaFilename:
 
     def test_metadata(self):
         assert BubbaFilename.RETURN_TYPES == ("STRING",)
+        assert BubbaFilename.RETURN_NAMES == ("save_prefix",)
         assert BubbaFilename.FUNCTION == "build_path"
         assert BubbaFilename.CATEGORY == "Bubba Nodes/Workflow"
+
+
+class TestPathUtilities:
+    def test_sanitize_relative_save_prefix_keeps_normal_prefix(self):
+        assert sanitize_relative_save_prefix("Hero/Scene_01") == "Hero/Scene_01"
+
+    def test_sanitize_relative_save_prefix_removes_unsafe_path_parts(self):
+        assert sanitize_relative_save_prefix("../CON/C:/bad*name/Scene.") == "_CON/C/badname/Scene"
+
+    def test_sanitize_relative_save_prefix_handles_empty_input(self):
+        assert sanitize_relative_save_prefix("") == "Character/Scene"
 
 
 class TestBubbaEmptyLatentBySize:
@@ -133,6 +157,16 @@ class TestBubbaLoadImageWithMetadata:
         assert metadata.seed == 0
         assert '"model_name": ""' in metadata_text
 
+    def test_load_rgb_image_returns_image_sized_mask(self, tmp_path):
+        image_path = tmp_path / "rgb.png"
+        Image.new("RGB", (17, 11), color=(10, 20, 30)).save(image_path)
+
+        image, mask, _, _ = BubbaLoadImageWithMetadata().load_image(str(image_path))
+
+        assert tuple(image.shape[1:3]) == (11, 17)
+        assert tuple(mask.shape[-2:]) == (11, 17)
+        assert mask.sum().item() == 0
+
     def test_metadata(self):
         assert BubbaLoadImageWithMetadata.RETURN_TYPES == ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
         assert BubbaLoadImageWithMetadata.FUNCTION == "load_image"
@@ -162,6 +196,271 @@ class TestBubbaKSampler:
         assert BubbaKSampler.RETURN_TYPES == ("LATENT", "STRING", "BUBBA_METADATA", "IMAGE")
         assert BubbaKSampler.FUNCTION == "sample"
         assert BubbaKSampler.CATEGORY == "Bubba Nodes/Generation"
+
+
+class TestBubbaDetailerUtilities:
+    def test_discover_detector_models_combines_bbox_and_segm_pt_files(self, tmp_path):
+        bbox_dir = tmp_path / "bbox"
+        segm_dir = tmp_path / "segm"
+        bbox_dir.mkdir()
+        segm_dir.mkdir()
+        (bbox_dir / "face.pt").write_text("model")
+        (bbox_dir / "face.json").write_text("{}")
+        (segm_dir / "person.pt").write_text("model")
+
+        assert discover_detector_models(tmp_path) == ["bbox/face.pt", "segm/person.pt"]
+
+    def test_resolve_detector_model_path_validates_prefix_and_file(self, tmp_path):
+        bbox_dir = tmp_path / "bbox"
+        bbox_dir.mkdir()
+        model_path = bbox_dir / "face.pt"
+        model_path.write_text("model")
+
+        mode, resolved = resolve_detector_model_path("bbox/face.pt", tmp_path)
+
+        assert mode == "bbox"
+        assert resolved == model_path
+        with pytest.raises(ValueError, match="Invalid detector model mode"):
+            resolve_detector_model_path("other/face.pt", tmp_path)
+
+    def test_discovery_checks_registered_ultralytics_roots_after_models_dir(self, tmp_path, monkeypatch):
+        import folder_paths
+        import src.bubba_nodes.utils.detailer_models as detailer_models
+
+        empty_models_dir = tmp_path / "empty_models"
+        shared_models_root = tmp_path / "shared_models" / "Ultralytics"
+        (empty_models_dir / "ultralytics").mkdir(parents=True)
+        (shared_models_root / "bbox").mkdir(parents=True)
+        model_path = shared_models_root / "bbox" / "face.pt"
+        model_path.write_text("model")
+
+        monkeypatch.setattr(folder_paths, "models_dir", str(empty_models_dir), raising=False)
+        monkeypatch.setattr(folder_paths, "get_folder_paths", lambda kind: [str(shared_models_root)] if kind == "ultralytics" else [])
+
+        assert detailer_models.discover_detector_models() == ["bbox/face.pt"]
+        assert detailer_models.resolve_detector_model_path("bbox/face.pt")[1] == model_path
+
+    def test_discovery_supports_registered_bbox_folder_with_case_variation(self, tmp_path, monkeypatch):
+        import folder_paths
+        import src.bubba_nodes.utils.detailer_models as detailer_models
+
+        bbox_dir = tmp_path / "Models" / "Ultralytics" / "BBOX"
+        bbox_dir.mkdir(parents=True)
+        model_path = bbox_dir / "face.pt"
+        model_path.write_text("model")
+
+        monkeypatch.delattr(folder_paths, "models_dir", raising=False)
+        monkeypatch.setattr(folder_paths, "get_folder_paths", lambda kind: [str(bbox_dir)] if kind == "ultralytics_bbox" else [])
+
+        assert detailer_models.discover_detector_models() == ["bbox/face.pt"]
+        assert detailer_models.resolve_detector_model_path("bbox/face.pt")[1] == model_path
+
+    def test_discovery_supports_default_comfy_models_registration(self, tmp_path, monkeypatch):
+        import folder_paths
+        import src.bubba_nodes.utils.detailer_models as detailer_models
+
+        default_models_dir = tmp_path / "ComfyUI" / "models"
+        bbox_dir = default_models_dir / "ultralytics" / "bbox"
+        bbox_dir.mkdir(parents=True)
+        model_path = bbox_dir / "hand.pt"
+        model_path.write_text("model")
+
+        monkeypatch.delattr(folder_paths, "models_dir", raising=False)
+        monkeypatch.setattr(folder_paths, "get_folder_paths", lambda kind: [str(default_models_dir)] if kind == "models" else [])
+
+        assert detailer_models.discover_detector_models() == ["bbox/hand.pt"]
+        assert detailer_models.resolve_detector_model_path("bbox/hand.pt")[1] == model_path
+
+    def test_label_filter_and_bbox_mask(self):
+        assert parse_label_filter(" face, HAND ,,") == {"face", "hand"}
+        mask = bbox_to_mask((1, 2, 4, 5), 8, 8)
+        assert mask.sum().item() == 9
+        assert mask[2:5, 1:4].sum().item() == 9
+
+    def test_postprocess_mask_supports_dilation_and_erosion(self):
+        import torch
+
+        mask = torch.zeros((9, 9), dtype=torch.float32)
+        mask[4, 4] = 1.0
+
+        dilated = postprocess_mask(mask, 1, 0)
+        eroded = postprocess_mask(dilated, -1, 0)
+
+        assert dilated.sum().item() == 9
+        assert eroded.sum().item() == 1
+
+    def test_plan_crop_clamps_and_aligns_to_multiple(self):
+        import torch
+
+        mask = torch.zeros((32, 32), dtype=torch.float32)
+        mask[1:5, 1:5] = 1.0
+
+        crop = plan_crop(mask, padding=2, force_square=False)
+
+        assert crop is not None
+        assert crop.x1 == 0
+        assert crop.y1 == 0
+        assert crop.width % 8 == 0
+        assert crop.height % 8 == 0
+
+
+class TestBubbaDetailer:
+    def test_metadata(self):
+        assert BubbaDetailer.RETURN_TYPES == ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
+        assert BubbaDetailer.FUNCTION == "detail"
+        assert BubbaDetailer.CATEGORY == "Bubba Nodes/Generation"
+
+    def test_override_prompts_require_clip(self):
+        with pytest.raises(ValueError, match="overrides require"):
+            BubbaDetailer._resolve_conditioning("pos", "neg", None, "detail", "")
+
+    def test_missing_conditioning_requires_prompt_text_and_clip(self):
+        with pytest.raises(ValueError, match="needs conditioning"):
+            BubbaDetailer._resolve_conditioning(None, None, None, "", "")
+
+    def test_prompt_text_can_replace_missing_conditioning(self):
+        positive, negative = BubbaDetailer._resolve_conditioning(None, None, _DummyClip(), "face detail", "")
+
+        assert positive[0][0] == "COND:face detail"
+        assert negative[0][0] == "COND:"
+
+    def test_input_types_make_conditioning_optional(self):
+        input_types = BubbaDetailer.INPUT_TYPES()
+
+        assert "positive" not in input_types["required"]
+        assert "negative" not in input_types["required"]
+        assert "positive" in input_types["optional"]
+        assert "negative" in input_types["optional"]
+
+    def test_detect_sample_converts_bbox_result(self):
+        import torch
+
+        class _Boxes:
+            xyxy = torch.tensor([[1.0, 2.0, 4.0, 5.0]])
+            conf = torch.tensor([0.9])
+            cls = torch.tensor([0])
+
+        result = types.SimpleNamespace(boxes=_Boxes(), names={0: "face"})
+
+        class _Detector:
+            def __call__(self, image, conf, verbose):
+                return [result]
+
+        image = torch.zeros((1, 8, 8, 3), dtype=torch.float32)
+        detections, fallbacks = BubbaDetailer._detect_sample(_Detector(), image, "bbox", 0.3, "", "")
+
+        assert fallbacks == 0
+        assert len(detections) == 1
+        assert isinstance(detections[0], DetailerDetection)
+        assert detections[0].label == "face"
+        assert detections[0].area == 9
+
+    def test_no_detection_path_returns_original_and_zero_mask(self, monkeypatch):
+        import torch
+        import src.bubba_nodes.nodes.detailer as detailer_module
+
+        class _Detector:
+            pass
+
+        monkeypatch.setattr(detailer_module, "load_detector", lambda name: ("bbox", "face.pt", _Detector()))
+        monkeypatch.setattr(
+            BubbaDetailer,
+            "_detect_sample",
+            classmethod(lambda cls, detector, image, mode, confidence, include_labels, exclude_labels: ([], 0)),
+        )
+
+        image = torch.ones((1, 8, 8, 3), dtype=torch.float32)
+        source_metadata = BubbaMetadata(model_name="nova", seed=9)
+        result_image, result_mask, metadata, info = BubbaDetailer().detail(
+            image,
+            model=object(),
+            vae=object(),
+            positive=[],
+            negative=[],
+            detector_model_name="bbox/face.pt",
+            confidence=0.3,
+            mask_dilation=4,
+            mask_blur=4,
+            inpaint_padding=32,
+            force_square_crop=False,
+            guide_size=512,
+            guide_size_for=True,
+            max_size=1024,
+            seed=1,
+            steps=1,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="normal",
+            denoise=0.45,
+            max_detections=10,
+            inpaint_model=False,
+            metadata=source_metadata,
+        )
+
+        assert torch.equal(result_image, image)
+        assert result_mask.sum().item() == 0
+        assert metadata == source_metadata
+        assert "Processed: 0" in info
+
+    def test_inpaint_crop_uses_inpaint_model_conditioning(self, monkeypatch):
+        import torch
+        import nodes
+
+        class _FakeVae:
+            def decode(self, samples):
+                return samples
+
+        conditioning = nodes.InpaintModelConditioning.return_value
+        conditioning.encode.return_value = ("INPAINT_POS", "INPAINT_NEG", {"samples": torch.zeros((1, 4, 2, 2))})
+        nodes.common_ksampler.return_value = ({"samples": torch.ones((1, 8, 8, 3))},)
+
+        image = torch.zeros((1, 8, 8, 3), dtype=torch.float32)
+        mask = torch.ones((1, 8, 8), dtype=torch.float32)
+
+        refined = BubbaDetailer._inpaint_crop(
+            image,
+            mask,
+            (0, 0, 8, 8),
+            model="MODEL",
+            vae=_FakeVae(),
+            positive="POS",
+            negative="NEG",
+            seed=1,
+            steps=2,
+            cfg=3.0,
+            sampler_name="euler",
+            scheduler="normal",
+            denoise=0.45,
+            guide_size=512,
+            guide_size_for_bbox=True,
+            max_size=1024,
+            inpaint_model=True,
+        )
+
+        conditioning.encode.assert_called_once()
+        nodes.common_ksampler.assert_called_once()
+        call_args = nodes.common_ksampler.call_args.args
+        assert call_args[6] == "INPAINT_POS"
+        assert call_args[7] == "INPAINT_NEG"
+        assert torch.equal(refined, torch.ones((1, 8, 8, 3)))
+
+    def test_prepare_guided_crop_upscales_small_bbox_to_guide_size(self):
+        import torch
+
+        image = torch.zeros((1, 128, 128, 3), dtype=torch.float32)
+        mask = torch.ones((1, 128, 128), dtype=torch.float32)
+
+        upscaled_image, upscaled_mask = BubbaDetailer._prepare_guided_crop(
+            image,
+            mask,
+            crop_bbox=(48, 48, 80, 80),
+            guide_size=512,
+            guide_size_for_bbox=True,
+            max_size=1024,
+        )
+
+        assert upscaled_image.shape[1:3] == (1024, 1024)
+        assert upscaled_mask.shape[-2:] == (1024, 1024)
 
 
 class TestBubbaOverlayFromMetadata:
@@ -228,6 +527,8 @@ class TestBubbaSaveImage:
         assert BubbaSaveImage.RETURN_NAMES == ("metadata",)
         assert "save_workflow_metadata" in input_types["required"]
         assert input_types["required"]["save_workflow_metadata"][1]["default"] is True
+        assert "save_a1111_metadata" in input_types["required"]
+        assert input_types["required"]["save_a1111_metadata"][1]["default"] is False
         assert input_types["hidden"] == {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"}
 
     def test_save_images_embeds_comfy_workflow_metadata_when_enabled(self, tmp_path, monkeypatch):
@@ -283,7 +584,7 @@ class TestBubbaSaveImage:
         }
 
         node = BubbaSaveImage()
-        metadata = BubbaMetadata(model_name="nova", seed=9, filepath="Hero/shot")
+        metadata = BubbaMetadata.from_mapping({"model_name": "nova", "seed": 9, "filepath": "Hero/shot"})
 
         node.save_images(
             images=[object()],
@@ -299,6 +600,56 @@ class TestBubbaSaveImage:
             assert "prompt" not in saved.info
             assert "workflow" not in saved.info
             assert json.loads(saved.info["bubba_metadata"])["model_name"] == "nova"
+
+    def test_save_images_embeds_a1111_parameters_when_enabled(self, tmp_path, monkeypatch):
+        class _FolderPathsStub:
+            @staticmethod
+            def get_output_directory():
+                return str(tmp_path)
+
+            @staticmethod
+            def get_full_path_or_raise(kind, name):
+                assert kind == "checkpoints"
+                return str(tmp_path / name)
+
+        monkeypatch.setattr(save_image_module, "folder_paths", _FolderPathsStub)
+        monkeypatch.setattr(save_image_module, "checkpoint_short_hash", lambda path: "51dc941b55")
+
+        image_path = tmp_path / "Hero" / "civitai_00001_.png"
+        image_path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color=(1, 2, 3)).save(image_path)
+        UI.ImageSaveHelper.get_save_images_ui.return_value.as_dict.return_value = {
+            "images": [{"filename": image_path.name, "subfolder": "Hero", "type": "output"}],
+        }
+
+        metadata = BubbaMetadata(
+            model_name="NovaFurryAM",
+            positive_prompt="masterpiece, lucario",
+            negative_prompt="blurry",
+            steps=30,
+            sampler_name="euler",
+            scheduler="normal",
+            cfg=5,
+            seed=2934057377,
+        )
+        prompt = {"1": {"class_type": "BubbaCheckpointLoader", "inputs": {"ckpt_name": "models/NovaFurryAM.safetensors"}}}
+
+        BubbaSaveImage().save_images(
+            images=[object()],
+            filepath="Hero/civitai",
+            save_workflow_metadata=False,
+            save_a1111_metadata=True,
+            metadata=metadata,
+            prompt=prompt,
+        )
+
+        with Image.open(image_path) as saved:
+            assert saved.info["parameters"] == (
+                "masterpiece, lucario\n"
+                "Negative prompt: blurry\n"
+                "Steps: 30, Sampler: euler, CFG scale: 5, Seed: 2934057377, "
+                "Model hash: 51dc941b55, Model: NovaFurryAM"
+            )
 
     def test_save_images_warns_when_connected_metadata_is_empty(self, tmp_path, monkeypatch):
         class _FolderPathsStub:
@@ -380,7 +731,7 @@ class TestBubbaSaveImage:
             positive_prompt="hero portrait",
             negative_prompt="blurry",
             seed=77,
-            filepath="Hero/batch",
+            save_prefix="Hero/batch",
         )
 
         node.save_images(
@@ -410,7 +761,7 @@ class TestBubbaMetadataDebug:
             positive_prompt="hero",
             negative_prompt="blurry",
             seed=9,
-            filepath="Character/Scene",
+            save_prefix="Character/Scene",
         )
         result = node.debug_metadata(metadata)
         (metadata_text,) = result["result"]
@@ -445,6 +796,7 @@ class TestBubbaMetadataModel:
         assert metadata.positive_prompt == "pos"
         assert metadata.negative_prompt == "neg"
         assert metadata.seed == 123
+        assert metadata.save_prefix == "folder/file"
         assert metadata.filepath == "folder/file"
 
     def test_from_json_invalid_payload_falls_back(self):
@@ -455,7 +807,7 @@ class TestBubbaMetadataModel:
         assert metadata.positive_prompt == ""
         assert metadata.negative_prompt == ""
         assert metadata.seed == 0
-        assert metadata.filepath == ""
+        assert metadata.save_prefix == ""
 
     def test_to_json_round_trip(self):
         metadata = BubbaMetadata(
@@ -469,7 +821,7 @@ class TestBubbaMetadataModel:
             positive_prompt="hero",
             negative_prompt="blurry",
             seed=7,
-            filepath="Character/Scene",
+            save_prefix="Character/Scene",
         )
         payload = json.loads(metadata.to_json())
 
@@ -483,7 +835,7 @@ class TestBubbaMetadataModel:
         assert payload["positive_prompt"] == "hero"
         assert payload["negative_prompt"] == "blurry"
         assert payload["seed"] == 7
-        assert payload["filepath"] == "Character/Scene"
+        assert payload["save_prefix"] == "Character/Scene"
         assert "sampler_info" not in payload
         assert "prompt_sections" not in payload
 
@@ -584,7 +936,7 @@ class TestBubbaLoraLoader:
     def test_load_lora_preserves_other_metadata_fields(self):
         node = BubbaLoraLoader()
         node._loader = self._make_mock_loader()
-        existing = BubbaMetadata(model_name="myModel", seed=42, filepath="hero/shot")
+        existing = BubbaMetadata(model_name="myModel", seed=42, save_prefix="hero/shot")
 
         _, _, _, metadata = node.load_lora(
             "MODEL",
@@ -597,7 +949,7 @@ class TestBubbaLoraLoader:
 
         assert metadata.model_name == "myModel"
         assert metadata.seed == 42
-        assert metadata.filepath == "hero/shot"
+        assert metadata.save_prefix == "hero/shot"
         assert metadata.loras == ["detail"]
 
     def test_class_attributes(self):
@@ -718,7 +1070,7 @@ class TestBubbaUpscaler:
         mock_loader.execute.return_value = MagicMock(__getitem__=lambda self, i: fake_model)
 
         def fake_upscale_execute(upscale_model, image):
-            # Simulate ESRGAN 4× output
+            # Simulate ESRGAN 4x output
             b, h, w, c = image.shape
             upscaled = torch.zeros(b, h * scale_factor, w * scale_factor, c)
             result = MagicMock()
@@ -737,7 +1089,7 @@ class TestBubbaUpscaler:
         node = BubbaUpscaler()
         result_image, result_metadata = node.upscale(image, "4x_model.pth", scale_by=1.0, resize_method="lanczos")
 
-        # With scale_by=1.0, should be unchanged from ESRGAN output (256×256)
+        # With scale_by=1.0, should be unchanged from ESRGAN output (256x256)
         assert result_image.shape[1] == 256  # H
         assert result_image.shape[2] == 256  # W
         assert isinstance(result_metadata, BubbaMetadata)
@@ -953,6 +1305,122 @@ class TestBubbaSimplePromptBuilder:
         assert "BubbaSimplePromptBuilder" in NODE_DISPLAY_NAME_MAPPINGS
 
 
+class TestBubbaPromptRandomizer:
+    def test_load_categories_from_json_files(self, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library", "forest trail", "library", "", "random"]), encoding="utf-8")
+        (tmp_path / "camera-angle.json").write_text(json.dumps(["front view"]), encoding="utf-8")
+        (tmp_path / "invalid.json").write_text("{", encoding="utf-8")
+        (tmp_path / "empty.json").write_text(json.dumps([]), encoding="utf-8")
+
+        categories = prompt_randomizer_module.load_prompt_randomizer_categories(tmp_path)
+
+        assert categories == {
+            "background": ["library", "forest trail"],
+            "camera_angle": ["front view"],
+        }
+
+    def test_input_types_adds_dropdown_for_each_json_category(self, monkeypatch, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library"]), encoding="utf-8")
+        (tmp_path / "clothing.json").write_text(json.dumps(["hoodie"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        required = BubbaPromptRandomizer.INPUT_TYPES()["required"]
+
+        assert required["background"][0] == ["disabled", "random", "library"]
+        assert required["clothing"][0] == ["disabled", "random", "hoodie"]
+
+    def test_randomize_prompt_uses_seeded_json_categories(self, monkeypatch, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library", "forest trail"]), encoding="utf-8")
+        (tmp_path / "subject.json").write_text(json.dumps(["1girl", "moth_girl"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        first = BubbaPromptRandomizer().randomize_prompt(
+            seed=11,
+            prefix_text="masterpiece, best quality",
+            extra_positive="cinematic lighting",
+            negative_prompt="blurry, blurry",
+            cleanup=True,
+            dedupe=True,
+            background="random",
+            subject="random",
+            clip=_DummyClip(),
+        )
+        second = BubbaPromptRandomizer().randomize_prompt(
+            seed=11,
+            prefix_text="masterpiece, best quality",
+            extra_positive="cinematic lighting",
+            negative_prompt="blurry, blurry",
+            cleanup=True,
+            dedupe=True,
+            background="random",
+            subject="random",
+            clip=_DummyClip(),
+        )
+
+        positive, negative, positive_cond, negative_cond, chosen_values, metadata = first
+        assert first[:2] == second[:2]
+        assert "masterpiece, best quality" in positive
+        assert "cinematic lighting" in positive
+        assert negative == "blurry"
+        assert "background:" in chosen_values
+        assert "subject:" in chosen_values
+        assert positive_cond[0][0].startswith("COND:")
+        assert negative_cond[0][0].startswith("COND:")
+        assert metadata.positive_prompt == positive
+        assert metadata.negative_prompt == negative
+
+    def test_randomize_prompt_supports_disabled_and_explicit_values_without_clip(self, monkeypatch, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library"]), encoding="utf-8")
+        (tmp_path / "subject.json").write_text(json.dumps(["1girl"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        positive, negative, positive_cond, negative_cond, chosen_values, _ = BubbaPromptRandomizer().randomize_prompt(
+            seed=0,
+            prefix_text="hero",
+            extra_positive="hero, smile",
+            negative_prompt="lowres",
+            cleanup=True,
+            dedupe=True,
+            background="library",
+            subject="disabled",
+        )
+
+        assert positive == "hero, library, smile"
+        assert negative == "lowres"
+        assert positive_cond == [[None, {}]]
+        assert negative_cond == [[None, {}]]
+        assert chosen_values == "background: library"
+
+    def test_remove_category_underscores_does_not_change_prefix_or_negative(self, monkeypatch, tmp_path):
+        (tmp_path / "face_features.json").write_text(json.dumps(["blue_eyes"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        positive, negative, _, _, chosen_values, _ = BubbaPromptRandomizer().randomize_prompt(
+            seed=0,
+            prefix_text="masterpiece, best quality, score_9, score_8, score_7",
+            extra_positive="",
+            negative_prompt="bad_hands, low_quality",
+            cleanup=True,
+            dedupe=True,
+            remove_category_underscores=True,
+            face_features="blue_eyes",
+        )
+
+        assert positive == "masterpiece, best quality, score_9, score_8, score_7, blue eyes"
+        assert negative == "bad_hands, low_quality"
+        assert chosen_values == "face_features: blue eyes"
+
+    def test_metadata_node_attrs(self):
+        assert BubbaPromptRandomizer.RETURN_TYPES == ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "STRING", "BUBBA_METADATA")
+        assert BubbaPromptRandomizer.FUNCTION == "randomize_prompt"
+        assert BubbaPromptRandomizer.CATEGORY == "Bubba Nodes/Prompt"
+
+    def test_registered_in_node_mappings(self):
+        assert "BubbaPromptRandomizer" in NODE_CLASS_MAPPINGS
+        assert NODE_CLASS_MAPPINGS["BubbaPromptRandomizer"] is BubbaPromptRandomizer
+        assert "BubbaPromptRandomizer" in NODE_DISPLAY_NAME_MAPPINGS
+
+
 class TestBubbaPromptCleaner:
     def test_clean_prompt_cleanup_and_dedupe(self):
         node = BubbaPromptCleaner()
@@ -1014,11 +1482,13 @@ class TestMappings:
         assert "BubbaLoadImageWithMetadata" in NODE_CLASS_MAPPINGS
         assert "BubbaCheckpointLoader" in NODE_CLASS_MAPPINGS
         assert "BubbaKSampler" in NODE_CLASS_MAPPINGS
+        assert "BubbaDetailer" in NODE_CLASS_MAPPINGS
         assert "BubbaSaveImage" in NODE_CLASS_MAPPINGS
         assert "BubbaOverlayFromMetadata" in NODE_CLASS_MAPPINGS
         assert "BubbaWatermark" in NODE_CLASS_MAPPINGS
         assert "BubbaMetadataDebug" in NODE_CLASS_MAPPINGS
         assert "BubbaCharacterPromptBuilder" in NODE_CLASS_MAPPINGS
+        assert "BubbaPromptRandomizer" in NODE_CLASS_MAPPINGS
         assert "BubbaPromptCleaner" in NODE_CLASS_MAPPINGS
         assert "BubbaPromptInspector" in NODE_CLASS_MAPPINGS
 
@@ -1030,9 +1500,11 @@ class TestMappings:
         assert NODE_CLASS_MAPPINGS["BubbaEmptyLatentBySize"] is BubbaEmptyLatentBySize
         assert NODE_CLASS_MAPPINGS["BubbaLoadImageWithMetadata"] is BubbaLoadImageWithMetadata
         assert NODE_CLASS_MAPPINGS["BubbaCheckpointLoader"] is BubbaCheckpointLoader
+        assert NODE_CLASS_MAPPINGS["BubbaDetailer"] is BubbaDetailer
         assert NODE_CLASS_MAPPINGS["BubbaOverlayFromMetadata"] is BubbaOverlayFromMetadata
         assert NODE_CLASS_MAPPINGS["BubbaMetadataDebug"] is BubbaMetadataDebug
         assert NODE_CLASS_MAPPINGS["BubbaCharacterPromptBuilder"] is BubbaCharacterPromptBuilder
+        assert NODE_CLASS_MAPPINGS["BubbaPromptRandomizer"] is BubbaPromptRandomizer
         assert NODE_CLASS_MAPPINGS["BubbaPromptCleaner"] is BubbaPromptCleaner
         assert NODE_CLASS_MAPPINGS["BubbaPromptInspector"] is BubbaPromptInspector
 

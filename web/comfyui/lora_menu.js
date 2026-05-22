@@ -651,6 +651,7 @@ function bindEntryPreviewButton(entryElement) {
 	button.className = "bubba-lora-preview-btn";
 	button.textContent = "Prev";
 	button.title = "Show preview";
+	button.setAttribute("aria-label", "Show LoRA preview");
 	actions.appendChild(button);
 	ensureEntryStatusPill(entryElement);
 	button.addEventListener("mousedown", (event) => { event.preventDefault(); event.stopPropagation(); });
@@ -674,6 +675,7 @@ function bindEntryCivitaiButton(entryElement) {
 	button.className = "bubba-lora-info-btn";
 	button.textContent = "i";
 	button.title = "Open CivitAI page";
+	button.setAttribute("aria-label", "Open LoRA CivitAI page");
 	ensureEntryActionArea(entryElement).appendChild(button);
 
 	button.addEventListener("mousedown", (event) => { event.preventDefault(); event.stopPropagation(); });
@@ -703,10 +705,12 @@ function bindEntryFavoriteButton(entryElement) {
 	button.type = "button";
 	button.className = "bubba-lora-fav-btn";
 	button.title = "Toggle favorite";
+	button.setAttribute("aria-label", "Toggle LoRA favorite");
 
 	const syncState = () => {
 		const on = isFavoritePath(entryElement.dataset?.bubbaLorPath);
 		button.classList.toggle("is-on", on);
+		button.setAttribute("aria-pressed", String(on));
 		button.textContent = on ? "★" : "☆";
 	};
 	syncState();
@@ -724,6 +728,7 @@ function bindEntryFavoriteButton(entryElement) {
 				if (path) {
 					const on = isFavoritePath(path);
 					btn.classList.toggle("is-on", on);
+					btn.setAttribute("aria-pressed", String(on));
 					btn.textContent = on ? "★" : "☆";
 				}
 			}

@@ -8,11 +8,33 @@ from ..models import BubbaMetadata
 _UPSCALE_METHODS = ["lanczos", "bicubic", "bilinear", "nearest-exact", "area"]
 
 
+def _load_upscale_model(upscale_model_name):
+    if hasattr(UpscaleModelLoader, "execute"):
+        return UpscaleModelLoader.execute(upscale_model_name)[0]
+    loader = UpscaleModelLoader()
+    if hasattr(loader, "load_model"):
+        return loader.load_model(upscale_model_name)[0]
+    if hasattr(loader, "execute"):
+        return loader.execute(upscale_model_name)[0]
+    raise AttributeError("UpscaleModelLoader does not expose execute or load_model")
+
+
+def _upscale_with_model(upscale_model, image):
+    if hasattr(ImageUpscaleWithModel, "execute"):
+        return ImageUpscaleWithModel.execute(upscale_model, image)[0]
+    node = ImageUpscaleWithModel()
+    if hasattr(node, "upscale"):
+        return node.upscale(upscale_model, image)[0]
+    if hasattr(node, "execute"):
+        return node.execute(upscale_model, image)[0]
+    raise AttributeError("ImageUpscaleWithModel does not expose execute or upscale")
+
+
 class BubbaUpscaler:
     """Upscales an image using an ESRGAN/spandrel model, with an optional resize step
     to scale back down to a target size after upscaling.
 
-    Typical hi-res workflow: 4x ESRGAN model → scale_by 0.5 → 2× the original resolution."""
+    Typical hi-res workflow: 4x ESRGAN model -> scale_by 0.5 -> 2x the original resolution."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -33,7 +55,7 @@ class BubbaUpscaler:
                         "tooltip": (
                             "Scale applied to the ESRGAN output. "
                             "1.0 = keep ESRGAN output as-is. "
-                            "0.5 on a 4x model → 2× original resolution."
+                            "0.5 on a 4x model -> 2x original resolution."
                         ),
                     },
                 ),
@@ -56,17 +78,17 @@ class BubbaUpscaler:
     CATEGORY = "Bubba Nodes/Image"
     DESCRIPTION = (
         "Upscales an image using an ESRGAN/spandrel model. "
-        "Use scale_by to resize the result after upscaling — e.g. 0.5 on a 4x model "
-        "gives you 2× the original resolution at high quality. "
+        "Use scale_by to resize the result after upscaling. For example, 0.5 on a 4x model "
+        "gives you 2x the original resolution at high quality. "
         "Metadata is passed through unchanged."
     )
 
     def upscale(self, image, upscale_model_name, scale_by, resize_method, metadata=None):
         # Load the upscale model
-        upscale_model = UpscaleModelLoader.execute(upscale_model_name)[0]
+        upscale_model = _load_upscale_model(upscale_model_name)
 
         # Apply ESRGAN upscale
-        upscaled = ImageUpscaleWithModel.execute(upscale_model, image)[0]
+        upscaled = _upscale_with_model(upscale_model, image)
 
         # Optional post-upscale resize
         if abs(scale_by - 1.0) > 1e-4:
