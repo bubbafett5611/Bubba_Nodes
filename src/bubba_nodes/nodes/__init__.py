@@ -29,6 +29,7 @@ _NODE_SPECS = (
     # Prompt
     NodeSpec("character_prompt_builder", "BubbaCharacterPromptBuilder", "Bubba Character Prompt Builder"),
     NodeSpec("simple_prompt_builder", "BubbaSimplePromptBuilder", "Bubba Simple Prompt Builder"),
+    NodeSpec("prompt_randomizer", "BubbaPromptRandomizer", "Bubba Prompt Randomizer"),
     NodeSpec("prompt_cleaner", "BubbaPromptCleaner", "Bubba Prompt Cleaner"),
     NodeSpec("prompt_inspector", "BubbaPromptInspector", "Bubba Prompt Inspector"),
     # Metadata

@@ -17,6 +17,7 @@ from comfy_api.latest import UI
 
 import src.bubba_nodes.nodes.save_image as save_image_module
 import src.bubba_nodes.nodes.checkpoint_loader as checkpoint_module
+import src.bubba_nodes.nodes.prompt_randomizer as prompt_randomizer_module
 import src.bubba_nodes.server.autocomplete as autocomplete_server
 
 from src.bubba_nodes.nodes import (
@@ -36,6 +37,7 @@ from src.bubba_nodes.nodes import (
     BubbaMetadataDebug,
     BubbaCharacterPromptBuilder,
     BubbaSimplePromptBuilder,
+    BubbaPromptRandomizer,
     BubbaPromptCleaner,
     BubbaPromptInspector,
     NODE_CLASS_MAPPINGS,
@@ -1303,6 +1305,122 @@ class TestBubbaSimplePromptBuilder:
         assert "BubbaSimplePromptBuilder" in NODE_DISPLAY_NAME_MAPPINGS
 
 
+class TestBubbaPromptRandomizer:
+    def test_load_categories_from_json_files(self, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library", "forest trail", "library", "", "random"]), encoding="utf-8")
+        (tmp_path / "camera-angle.json").write_text(json.dumps(["front view"]), encoding="utf-8")
+        (tmp_path / "invalid.json").write_text("{", encoding="utf-8")
+        (tmp_path / "empty.json").write_text(json.dumps([]), encoding="utf-8")
+
+        categories = prompt_randomizer_module.load_prompt_randomizer_categories(tmp_path)
+
+        assert categories == {
+            "background": ["library", "forest trail"],
+            "camera_angle": ["front view"],
+        }
+
+    def test_input_types_adds_dropdown_for_each_json_category(self, monkeypatch, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library"]), encoding="utf-8")
+        (tmp_path / "clothing.json").write_text(json.dumps(["hoodie"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        required = BubbaPromptRandomizer.INPUT_TYPES()["required"]
+
+        assert required["background"][0] == ["disabled", "random", "library"]
+        assert required["clothing"][0] == ["disabled", "random", "hoodie"]
+
+    def test_randomize_prompt_uses_seeded_json_categories(self, monkeypatch, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library", "forest trail"]), encoding="utf-8")
+        (tmp_path / "subject.json").write_text(json.dumps(["1girl", "moth_girl"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        first = BubbaPromptRandomizer().randomize_prompt(
+            seed=11,
+            prefix_text="masterpiece, best quality",
+            extra_positive="cinematic lighting",
+            negative_prompt="blurry, blurry",
+            cleanup=True,
+            dedupe=True,
+            background="random",
+            subject="random",
+            clip=_DummyClip(),
+        )
+        second = BubbaPromptRandomizer().randomize_prompt(
+            seed=11,
+            prefix_text="masterpiece, best quality",
+            extra_positive="cinematic lighting",
+            negative_prompt="blurry, blurry",
+            cleanup=True,
+            dedupe=True,
+            background="random",
+            subject="random",
+            clip=_DummyClip(),
+        )
+
+        positive, negative, positive_cond, negative_cond, chosen_values, metadata = first
+        assert first[:2] == second[:2]
+        assert "masterpiece, best quality" in positive
+        assert "cinematic lighting" in positive
+        assert negative == "blurry"
+        assert "background:" in chosen_values
+        assert "subject:" in chosen_values
+        assert positive_cond[0][0].startswith("COND:")
+        assert negative_cond[0][0].startswith("COND:")
+        assert metadata.positive_prompt == positive
+        assert metadata.negative_prompt == negative
+
+    def test_randomize_prompt_supports_disabled_and_explicit_values_without_clip(self, monkeypatch, tmp_path):
+        (tmp_path / "background.json").write_text(json.dumps(["library"]), encoding="utf-8")
+        (tmp_path / "subject.json").write_text(json.dumps(["1girl"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        positive, negative, positive_cond, negative_cond, chosen_values, _ = BubbaPromptRandomizer().randomize_prompt(
+            seed=0,
+            prefix_text="hero",
+            extra_positive="hero, smile",
+            negative_prompt="lowres",
+            cleanup=True,
+            dedupe=True,
+            background="library",
+            subject="disabled",
+        )
+
+        assert positive == "hero, library, smile"
+        assert negative == "lowres"
+        assert positive_cond == [[None, {}]]
+        assert negative_cond == [[None, {}]]
+        assert chosen_values == "background: library"
+
+    def test_remove_category_underscores_does_not_change_prefix_or_negative(self, monkeypatch, tmp_path):
+        (tmp_path / "face_features.json").write_text(json.dumps(["blue_eyes"]), encoding="utf-8")
+        monkeypatch.setattr(prompt_randomizer_module, "_DATA_DIR", tmp_path)
+
+        positive, negative, _, _, chosen_values, _ = BubbaPromptRandomizer().randomize_prompt(
+            seed=0,
+            prefix_text="masterpiece, best quality, score_9, score_8, score_7",
+            extra_positive="",
+            negative_prompt="bad_hands, low_quality",
+            cleanup=True,
+            dedupe=True,
+            remove_category_underscores=True,
+            face_features="blue_eyes",
+        )
+
+        assert positive == "masterpiece, best quality, score_9, score_8, score_7, blue eyes"
+        assert negative == "bad_hands, low_quality"
+        assert chosen_values == "face_features: blue eyes"
+
+    def test_metadata_node_attrs(self):
+        assert BubbaPromptRandomizer.RETURN_TYPES == ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "STRING", "BUBBA_METADATA")
+        assert BubbaPromptRandomizer.FUNCTION == "randomize_prompt"
+        assert BubbaPromptRandomizer.CATEGORY == "Bubba Nodes/Prompt"
+
+    def test_registered_in_node_mappings(self):
+        assert "BubbaPromptRandomizer" in NODE_CLASS_MAPPINGS
+        assert NODE_CLASS_MAPPINGS["BubbaPromptRandomizer"] is BubbaPromptRandomizer
+        assert "BubbaPromptRandomizer" in NODE_DISPLAY_NAME_MAPPINGS
+
+
 class TestBubbaPromptCleaner:
     def test_clean_prompt_cleanup_and_dedupe(self):
         node = BubbaPromptCleaner()
@@ -1370,6 +1488,7 @@ class TestMappings:
         assert "BubbaWatermark" in NODE_CLASS_MAPPINGS
         assert "BubbaMetadataDebug" in NODE_CLASS_MAPPINGS
         assert "BubbaCharacterPromptBuilder" in NODE_CLASS_MAPPINGS
+        assert "BubbaPromptRandomizer" in NODE_CLASS_MAPPINGS
         assert "BubbaPromptCleaner" in NODE_CLASS_MAPPINGS
         assert "BubbaPromptInspector" in NODE_CLASS_MAPPINGS
 
@@ -1385,6 +1504,7 @@ class TestMappings:
         assert NODE_CLASS_MAPPINGS["BubbaOverlayFromMetadata"] is BubbaOverlayFromMetadata
         assert NODE_CLASS_MAPPINGS["BubbaMetadataDebug"] is BubbaMetadataDebug
         assert NODE_CLASS_MAPPINGS["BubbaCharacterPromptBuilder"] is BubbaCharacterPromptBuilder
+        assert NODE_CLASS_MAPPINGS["BubbaPromptRandomizer"] is BubbaPromptRandomizer
         assert NODE_CLASS_MAPPINGS["BubbaPromptCleaner"] is BubbaPromptCleaner
         assert NODE_CLASS_MAPPINGS["BubbaPromptInspector"] is BubbaPromptInspector
 

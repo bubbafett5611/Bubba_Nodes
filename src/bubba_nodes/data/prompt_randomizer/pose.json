@@ -1,0 +1,16 @@
+[
+  "standing",
+  "sitting",
+  "lying",
+  "kneeling",
+  "squatting",
+  "leaning",
+  "walking",
+  "running",
+  "jumping",
+  "dancing",
+  "front_view",
+  "from_behind",
+  "looking_at_viewer",
+  "paw_pose"
+]
