@@ -10,7 +10,8 @@ import torch.nn.functional as F
 
 import comfy.samplers
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.detailer_core import composite_crop, crop_conditioning, crop_image
 from ..utils.detailer_masks import (
     bbox_to_mask,
@@ -30,9 +31,6 @@ class BubbaDetailer:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE", {"tooltip": "Image or image batch to refine."}),
-                "model": ("MODEL", {"tooltip": "Model used for localized inpaint sampling."}),
-                "vae": ("VAE", {"tooltip": "VAE used to encode/decode each inpaint crop."}),
                 "detector_model_name": (
                     detector_dropdown_values(),
                     {"tooltip": "Ultralytics detector model from models/ultralytics/bbox or models/ultralytics/segm."},
@@ -104,15 +102,20 @@ class BubbaDetailer:
                 ),
             },
             "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing image, model, VAE, and conditioning."}),
+                "image": ("IMAGE", {"tooltip": "Optional image override. Overrides pipe.image when connected."}),
+                "metadata": ("BUBBA_METADATA", {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."}),
+                "model": ("MODEL", {"tooltip": "Optional model override. Overrides pipe.model when connected."}),
+                "clip": ("CLIP", {"tooltip": "Optional CLIP override. Overrides pipe.clip when connected."}),
+                "vae": ("VAE", {"tooltip": "Optional VAE override. Overrides pipe.vae when connected."}),
                 "positive": (
                     "CONDITIONING",
-                    {"tooltip": "Optional positive conditioning. If omitted, provide clip and detail_positive text."},
+                    {"tooltip": "Optional positive conditioning override. Overrides pipe.positive when connected."},
                 ),
                 "negative": (
                     "CONDITIONING",
-                    {"tooltip": "Optional negative conditioning. If omitted, provide clip; detail_negative may be empty."},
+                    {"tooltip": "Optional negative conditioning override. Overrides pipe.negative when connected."},
                 ),
-                "clip": ("CLIP", {"tooltip": "Required only when detail prompt override text is provided."}),
                 "detail_positive": (
                     "STRING",
                     {
@@ -146,21 +149,17 @@ class BubbaDetailer:
                         "tooltip": "Use ComfyUI inpaint-model conditioning. Leave disabled for normal img2img checkpoints.",
                     },
                 ),
-                "metadata": ("BUBBA_METADATA", {"tooltip": "Optional metadata object to pass through unchanged."}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
-    RETURN_NAMES = ("image", "mask", "metadata", "info")
+    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "MASK", "BUBBA_METADATA", "STRING")
+    RETURN_NAMES = ("pipe", "image", "mask", "metadata", "info")
     FUNCTION = "detail"
     CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = "Detects bbox/segm regions with Ultralytics and performs localized inpaint refinement on each crop."
 
     def detail(
         self,
-        image,
-        model,
-        vae,
         detector_model_name,
         confidence,
         mask_dilation,
@@ -177,22 +176,31 @@ class BubbaDetailer:
         scheduler,
         denoise,
         max_detections,
+        pipe=None,
+        image=None,
+        metadata=None,
+        model=None,
+        clip=None,
+        vae=None,
         positive=None,
         negative=None,
-        clip=None,
         detail_positive="",
         detail_negative="",
         include_labels="",
         exclude_labels="",
         inpaint_model=False,
-        metadata=None,
     ):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_image = resolve_pipe_value(image, source_pipe.image, "image")
+        resolved_model = resolve_pipe_value(model, source_pipe.model, "model")
+        resolved_vae = resolve_pipe_value(vae, source_pipe.vae, "vae")
+        resolved_clip = clip if clip is not None else source_pipe.clip
         start_time = time.perf_counter()
         mode, detector_path, detector = load_detector(detector_model_name)
         resolved_positive, resolved_negative = self._resolve_conditioning(
-            positive,
-            negative,
-            clip,
+            positive if positive is not None else source_pipe.positive,
+            negative if negative is not None else source_pipe.negative,
+            resolved_clip,
             detail_positive,
             detail_negative,
         )
@@ -204,7 +212,7 @@ class BubbaDetailer:
         fallback_count = 0
         label_counter: Counter[str] = Counter()
 
-        for batch_index, sample in enumerate(image):
+        for batch_index, sample in enumerate(resolved_image):
             working = sample.unsqueeze(0).clone()
             detections, fallbacks = self._detect_sample(detector, working, mode, confidence, include_labels, exclude_labels)
             fallback_count += fallbacks
@@ -217,8 +225,8 @@ class BubbaDetailer:
                 processed = self._process_detection(
                     working,
                     detection,
-                    model,
-                    vae,
+                    resolved_model,
+                    resolved_vae,
                     resolved_positive,
                     resolved_negative,
                     int(seed) + batch_index + detection_index,
@@ -251,9 +259,19 @@ class BubbaDetailer:
         result_image = torch.cat(output_images, dim=0)
         result_mask = torch.cat(output_masks, dim=0)
         elapsed = time.perf_counter() - start_time
-        updated_metadata = BubbaMetadata.coerce(metadata)
+        updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
         info = self._format_info(detector_model_name, mode, total_matched, total_processed, elapsed, label_counter, fallback_count)
-        return (result_image, result_mask, updated_metadata, info)
+        updated_pipe = source_pipe.updated(
+            image=result_image,
+            mask=result_mask,
+            model=resolved_model,
+            clip=resolved_clip,
+            vae=resolved_vae,
+            positive=resolved_positive,
+            negative=resolved_negative,
+            metadata=updated_metadata,
+        )
+        return (updated_pipe, result_image, result_mask, updated_metadata, info)
 
     @staticmethod
     def _resolve_conditioning(positive, negative, clip, detail_positive: str, detail_negative: str):

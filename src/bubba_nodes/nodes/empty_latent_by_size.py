@@ -3,6 +3,8 @@ import re
 
 import torch
 
+from ..models import BubbaPipe
+
 # TODO(new-feature): Allow user-defined size presets loaded from a JSON file so artists can share profile packs.
 # TODO(new-node): Add a companion latent size recommender node that suggests dimensions from target aspect ratio + VRAM budget.
 
@@ -148,10 +150,18 @@ class BubbaEmptyLatentBySize:
                     },
                 ),
             },
+            "optional": {
+                "pipe": (
+                    "BUBBA_PIPE",
+                    {
+                        "tooltip": "Optional incoming pipe to update with the generated latent.",
+                    },
+                ),
+            },
         }
 
-    RETURN_TYPES = ("LATENT", "INT", "INT")
-    RETURN_NAMES = ("latent", "width", "height")
+    RETURN_TYPES = ("BUBBA_PIPE", "LATENT", "INT", "INT")
+    RETURN_NAMES = ("pipe", "latent", "width", "height")
     FUNCTION = "build_empty_latent"
     CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = "Creates an empty latent from a baked-in preset size list with optional aspect-ratio inversion."
@@ -171,8 +181,10 @@ class BubbaEmptyLatentBySize:
             width, height = height, width
         return (width, height)
 
-    def build_empty_latent(self, size, invert_aspect_ratio, batch_size):
+    def build_empty_latent(self, size, invert_aspect_ratio, batch_size, pipe=None):
         # TODO(optimize): Reuse a cached zero-latent buffer for repeated shape requests to reduce allocator churn.
+        source_pipe = BubbaPipe.coerce(pipe)
         width, height = self._resolve_dimensions(size, invert_aspect_ratio)
         latent = torch.zeros([batch_size, 4, height // 8, width // 8], device="cpu")
-        return ({"samples": latent}, width, height)
+        latent_payload = {"samples": latent}
+        return (source_pipe.updated(latent=latent_payload), latent_payload, width, height)

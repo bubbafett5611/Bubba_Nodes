@@ -3,7 +3,8 @@ from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFont
 import torch
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.image_ops import pil_to_tensor_like, tensor_sample_to_pil
 
 
@@ -188,8 +189,6 @@ class BubbaOverlayFromMetadata:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",),
-                "metadata": ("BUBBA_METADATA",),
                 "show_model": (
                     "BOOLEAN",
                     {
@@ -261,10 +260,15 @@ class BubbaOverlayFromMetadata:
                     },
                 ),
             },
+            "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing image and metadata."}),
+                "image": ("IMAGE", {"tooltip": "Optional image override. Overrides pipe.image when connected."}),
+                "metadata": ("BUBBA_METADATA", {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."}),
+            },
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
+    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "BUBBA_METADATA")
+    RETURN_NAMES = ("pipe", "image", "metadata")
     FUNCTION = "add_metadata_overlay"
     CATEGORY = "Bubba Nodes/Image/Overlay"
     DESCRIPTION = "Adds text overlay using fields extracted from Bubba Metadata Bundle object."
@@ -281,8 +285,6 @@ class BubbaOverlayFromMetadata:
 
     def add_metadata_overlay(
         self,
-        image,
-        metadata,
         show_model,
         model_position,
         show_info,
@@ -294,10 +296,16 @@ class BubbaOverlayFromMetadata:
         background_color,
         font_size,
         overlay_mode,
+        pipe=None,
+        metadata=None,
+        image=None,
     ):
-        model_text, info_text, positive_text, negative_text = self._extract_fields(metadata)
-        return _render_overlay_image_batch(
-            image,
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_image = resolve_pipe_value(image, source_pipe.image, "image")
+        resolved_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
+        model_text, info_text, positive_text, negative_text = self._extract_fields(resolved_metadata)
+        (output_image,) = _render_overlay_image_batch(
+            resolved_image,
             model_text,
             info_text,
             positive_text,
@@ -314,3 +322,4 @@ class BubbaOverlayFromMetadata:
             font_size,
             overlay_mode,
         )
+        return (source_pipe.updated(image=output_image, metadata=resolved_metadata), output_image, resolved_metadata)

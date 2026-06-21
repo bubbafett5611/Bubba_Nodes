@@ -3,7 +3,8 @@ import time
 import comfy.samplers
 from nodes import common_ksampler
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 
 # TODO(new-node): Add an advanced sampler node with optional highres-fix two-pass sampling and per-pass metadata.
 # TODO(optimize): Capture and emit sampler timing breakdown (prep vs denoise) for performance profiling.
@@ -14,10 +15,6 @@ class BubbaKSampler:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": (
-                    "MODEL",
-                    {"tooltip": "The model used for denoising the input latent."},
-                ),
                 "seed": (
                     "INT",
                     {
@@ -60,22 +57,6 @@ class BubbaKSampler:
                         "tooltip": "The scheduler controls how noise is removed across steps.",
                     },
                 ),
-                "positive": (
-                    "CONDITIONING",
-                    {
-                        "tooltip": "The conditioning describing the attributes you want to include in the image.",
-                    },
-                ),
-                "negative": (
-                    "CONDITIONING",
-                    {
-                        "tooltip": "The conditioning describing the attributes you want to exclude from the image.",
-                    },
-                ),
-                "latent_image": (
-                    "LATENT",
-                    {"tooltip": "The latent image to denoise."},
-                ),
                 "denoise": (
                     "FLOAT",
                     {
@@ -88,23 +69,44 @@ class BubbaKSampler:
                 ),
             },
             "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing model, conditioning, VAE, and latent."}),
+                "latent_image": (
+                    "LATENT",
+                    {"tooltip": "Optional latent override. Overrides pipe.latent when connected."},
+                ),
                 "metadata": (
                     "BUBBA_METADATA",
                     {
-                        "tooltip": "Optional metadata object to update with sampler info and seed.",
+                        "tooltip": "Optional metadata override. Overrides pipe.metadata when connected.",
                     },
+                ),
+                "model": (
+                    "MODEL",
+                    {"tooltip": "Optional model override. Overrides pipe.model when connected."},
                 ),
                 "vae": (
                     "VAE",
                     {
-                        "tooltip": "Optional VAE used to decode the latent into an image output.",
+                        "tooltip": "Optional VAE override. Overrides pipe.vae when connected.",
+                    },
+                ),
+                "positive": (
+                    "CONDITIONING",
+                    {
+                        "tooltip": "Optional positive conditioning override. Overrides pipe.positive when connected.",
+                    },
+                ),
+                "negative": (
+                    "CONDITIONING",
+                    {
+                        "tooltip": "Optional negative conditioning override. Overrides pipe.negative when connected.",
                     },
                 ),
             },
         }
 
-    RETURN_TYPES = ("LATENT", "STRING", "BUBBA_METADATA", "IMAGE")
-    RETURN_NAMES = ("LATENT", "INFO", "metadata", "image")
+    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "LATENT", "BUBBA_METADATA", "STRING")
+    RETURN_NAMES = ("pipe", "image", "latent", "metadata", "info")
     FUNCTION = "sample"
     CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = "Runs KSampler, outputs latent+info, and updates metadata when provided."
@@ -118,30 +120,37 @@ class BubbaKSampler:
 
     def sample(
         self,
-        model,
         seed,
         steps,
         cfg,
         sampler_name,
         scheduler,
-        positive,
-        negative,
-        latent_image,
         denoise=1.0,
+        pipe=None,
+        latent_image=None,
         metadata=None,
+        model=None,
         vae=None,
+        positive=None,
+        negative=None,
     ):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_model = resolve_pipe_value(model, source_pipe.model, "model")
+        resolved_latent = resolve_pipe_value(latent_image, source_pipe.latent, "latent")
+        resolved_positive = resolve_pipe_value(positive, source_pipe.positive, "positive conditioning")
+        resolved_negative = resolve_pipe_value(negative, source_pipe.negative, "negative conditioning")
+        resolved_vae = vae if vae is not None else source_pipe.vae
         start_time = time.perf_counter()
         latent = common_ksampler(
-            model,
+            resolved_model,
             seed,
             steps,
             cfg,
             sampler_name,
             scheduler,
-            positive,
-            negative,
-            latent_image,
+            resolved_positive,
+            resolved_negative,
+            resolved_latent,
             denoise=denoise,
         )[0]
         elapsed_seconds = time.perf_counter() - start_time
@@ -154,7 +163,7 @@ class BubbaKSampler:
             scheduler,
             denoise,
         )
-        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+        updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata).updated(
             sampler_time_seconds=elapsed_seconds,
             seed=seed,
             steps=steps,
@@ -164,11 +173,20 @@ class BubbaKSampler:
             denoise=denoise,
         )
         image = None
-        if vae is not None:
+        if resolved_vae is not None:
             latent_samples = latent["samples"]
             if getattr(latent_samples, "is_nested", False):
                 latent_samples = latent_samples.unbind()[0]
-            image = vae.decode(latent_samples)
+            image = resolved_vae.decode(latent_samples)
             if len(image.shape) == 5:
                 image = image.reshape(-1, image.shape[-3], image.shape[-2], image.shape[-1])
-        return (latent, info, updated_metadata, image)
+        updated_pipe = source_pipe.updated(
+            model=resolved_model,
+            vae=resolved_vae,
+            positive=resolved_positive,
+            negative=resolved_negative,
+            image=image if image is not None else source_pipe.image,
+            latent=latent,
+            metadata=updated_metadata,
+        )
+        return (updated_pipe, image, latent, updated_metadata, info)

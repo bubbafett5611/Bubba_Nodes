@@ -1,7 +1,8 @@
 import folder_paths
 from nodes import LoraLoader
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.checkpointing import checkpoint_display_name
 
 
@@ -16,8 +17,6 @@ class BubbaLoraLoader:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": ("MODEL", {"tooltip": "Diffusion model to apply the LoRA to."}),
-                "clip": ("CLIP", {"tooltip": "CLIP model to apply the LoRA to."}),
                 "lora_name": (
                     folder_paths.get_filename_list("loras"),
                     {"tooltip": "The LoRA file to load."},
@@ -44,15 +43,18 @@ class BubbaLoraLoader:
                 ),
             },
             "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing the model and CLIP to update."}),
                 "metadata": (
                     "BUBBA_METADATA",
-                    {"tooltip": "Optional metadata object to update with this LoRA's name."},
+                    {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."},
                 ),
+                "model": ("MODEL", {"tooltip": "Optional model override. Overrides pipe.model when connected."}),
+                "clip": ("CLIP", {"tooltip": "Optional CLIP override. Overrides pipe.clip when connected."}),
             },
         }
 
-    RETURN_TYPES = ("MODEL", "CLIP", "STRING", "BUBBA_METADATA")
-    RETURN_NAMES = ("model", "clip", "lora_name", "metadata")
+    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "MODEL", "CLIP", "STRING")
+    RETURN_NAMES = ("pipe", "metadata", "model", "clip", "lora_name")
     FUNCTION = "load_lora"
     CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = (
@@ -61,12 +63,16 @@ class BubbaLoraLoader:
         "Chain multiple nodes to stack LoRAs - each appends to the metadata LoRA list."
     )
 
-    def load_lora(self, model, clip, lora_name, strength_model, strength_clip, metadata=None):
-        model_out, clip_out = self._loader.load_lora(model, clip, lora_name, strength_model, strength_clip)
+    def load_lora(self, lora_name, strength_model, strength_clip, pipe=None, metadata=None, model=None, clip=None):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_model = resolve_pipe_value(model, source_pipe.model, "model")
+        resolved_clip = resolve_pipe_value(clip, source_pipe.clip, "clip")
+        model_out, clip_out = self._loader.load_lora(resolved_model, resolved_clip, lora_name, strength_model, strength_clip)
 
         display_name = checkpoint_display_name(lora_name)
-        existing = BubbaMetadata.coerce(metadata)
+        existing = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
         updated_loras = list(existing.loras) + [display_name]
         updated_metadata = existing.updated(loras=updated_loras)
+        updated_pipe = source_pipe.updated(model=model_out, clip=clip_out, metadata=updated_metadata)
 
-        return (model_out, clip_out, display_name, updated_metadata)
+        return (updated_pipe, updated_metadata, model_out, clip_out, display_name)

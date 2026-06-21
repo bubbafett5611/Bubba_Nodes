@@ -24,7 +24,7 @@ try:
 except Exception:  # pragma: no cover - only used inside Comfy runtime
     comfy = None
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
 
 
 class BubbaLoadImageWithMetadata:
@@ -59,8 +59,8 @@ class BubbaLoadImageWithMetadata:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
-    RETURN_NAMES = ("image", "mask", "metadata", "metadata_text")
+    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "MASK", "BUBBA_METADATA", "STRING")
+    RETURN_NAMES = ("pipe", "image", "mask", "metadata", "metadata_text")
     FUNCTION = "load_image"
     CATEGORY = "Bubba Nodes/Image/Load"
     DESCRIPTION = (
@@ -154,7 +154,8 @@ class BubbaLoadImageWithMetadata:
             output_image = output_images[0]
             output_mask = output_masks[0]
 
-        return (output_image, output_mask, metadata, metadata_text)
+        pipe = BubbaPipe(image=output_image, mask=output_mask, metadata=metadata)
+        return (pipe, output_image, output_mask, metadata, metadata_text)
 
     def load_image(self, image):
         image_path = self._resolve_image_path(image)

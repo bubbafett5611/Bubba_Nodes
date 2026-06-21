@@ -1,6 +1,8 @@
 import base64
 import io
 
+from ..models import BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.image_ops import tensor_sample_to_pil
 
 
@@ -18,9 +20,11 @@ class BubbaImageCompare:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {
-                "image_a": ("IMAGE", {"tooltip": "First image (A-side)."}),
-                "image_b": ("IMAGE", {"tooltip": "Second image (B-side)."}),
+            "optional": {
+                "pipe_a": ("BUBBA_PIPE", {"tooltip": "Optional pipe containing the first image (A-side)."}),
+                "pipe_b": ("BUBBA_PIPE", {"tooltip": "Optional pipe containing the second image (B-side)."}),
+                "image_a": ("IMAGE", {"tooltip": "Optional A-side image override. Overrides pipe_a.image when connected."}),
+                "image_b": ("IMAGE", {"tooltip": "Optional B-side image override. Overrides pipe_b.image when connected."}),
             },
         }
 
@@ -35,7 +39,11 @@ class BubbaImageCompare:
         "Uses the first frame from each input batch."
     )
 
-    def compare(self, image_a, image_b):
+    def compare(self, pipe_a=None, pipe_b=None, image_a=None, image_b=None):
+        source_pipe_a = BubbaPipe.coerce(pipe_a)
+        source_pipe_b = BubbaPipe.coerce(pipe_b)
+        image_a = resolve_pipe_value(image_a, source_pipe_a.image, "image_a")
+        image_b = resolve_pipe_value(image_b, source_pipe_b.image, "image_b")
         if image_a is None or image_b is None or len(image_a) == 0 or len(image_b) == 0:
             return {"ui": {"b64_a": [], "b64_b": []}}
 

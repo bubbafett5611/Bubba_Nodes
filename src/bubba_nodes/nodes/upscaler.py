@@ -2,7 +2,8 @@ import folder_paths
 from comfy_extras.nodes_upscale_model import UpscaleModelLoader, ImageUpscaleWithModel
 import comfy.utils
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 
 
 _UPSCALE_METHODS = ["lanczos", "bicubic", "bilinear", "nearest-exact", "area"]
@@ -40,7 +41,6 @@ class BubbaUpscaler:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE", {"tooltip": "Image to upscale."}),
                 "upscale_model_name": (
                     folder_paths.get_filename_list("upscale_models"),
                     {"tooltip": "ESRGAN or other spandrel-compatible upscale model."},
@@ -65,15 +65,17 @@ class BubbaUpscaler:
                 ),
             },
             "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing the image to upscale."}),
+                "image": ("IMAGE", {"tooltip": "Optional image override. Overrides pipe.image when connected."}),
                 "metadata": (
                     "BUBBA_METADATA",
-                    {"tooltip": "Optional metadata to pass through unchanged."},
+                    {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."},
                 ),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "BUBBA_METADATA")
-    RETURN_NAMES = ("image", "metadata")
+    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "BUBBA_METADATA")
+    RETURN_NAMES = ("pipe", "image", "metadata")
     FUNCTION = "upscale"
     CATEGORY = "Bubba Nodes/Image"
     DESCRIPTION = (
@@ -83,12 +85,14 @@ class BubbaUpscaler:
         "Metadata is passed through unchanged."
     )
 
-    def upscale(self, image, upscale_model_name, scale_by, resize_method, metadata=None):
+    def upscale(self, upscale_model_name, scale_by, resize_method, pipe=None, image=None, metadata=None):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_image = resolve_pipe_value(image, source_pipe.image, "image")
         # Load the upscale model
         upscale_model = _load_upscale_model(upscale_model_name)
 
         # Apply ESRGAN upscale
-        upscaled = _upscale_with_model(upscale_model, image)
+        upscaled = _upscale_with_model(upscale_model, resolved_image)
 
         # Optional post-upscale resize
         if abs(scale_by - 1.0) > 1e-4:
@@ -105,4 +109,6 @@ class BubbaUpscaler:
             )
             upscaled = resized.movedim(-3, -1)
 
-        return (upscaled, BubbaMetadata.coerce(metadata))
+        updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
+        updated_pipe = source_pipe.updated(image=upscaled, metadata=updated_metadata)
+        return (updated_pipe, upscaled, updated_metadata)

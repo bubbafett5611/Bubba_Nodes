@@ -3,7 +3,7 @@ import logging
 from nodes import CheckpointLoaderSimple, VAELoader, CLIPLoader
 import folder_paths
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
 from ..utils.checkpointing import checkpoint_display_name
 
 
@@ -54,8 +54,8 @@ class BubbaComboLoader:
         return {
             "required": {
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"),),
-                "vae_name": (_vae_choices(),),
                 "clip_name": (_clip_choices(),),
+                "vae_name": (_vae_choices(),),
                 "clip_type": (_CLIP_TYPES,),
                 "clip_skip": (
                     "INT",
@@ -69,6 +69,16 @@ class BubbaComboLoader:
                 ),
             },
             "optional": {
+                "pipe": (
+                    "BUBBA_PIPE",
+                    {
+                        "tooltip": "Optional incoming pipe. Keeps non-model context while replacing model, CLIP, VAE, and model metadata.",
+                    },
+                ),
+                "metadata": (
+                    "BUBBA_METADATA",
+                    {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."},
+                ),
                 "clip_device": (
                     ["default", "cpu"],
                     {
@@ -77,15 +87,11 @@ class BubbaComboLoader:
                         "tooltip": "Load external CLIP/text encoder on the default device or CPU. CPU can avoid DynamicVRAM text-encoder crashes.",
                     },
                 ),
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {"tooltip": "Optional metadata object to update with model name."},
-                ),
             },
         }
 
-    RETURN_TYPES = ("MODEL", "CLIP", "VAE", "STRING", "BUBBA_METADATA")
-    RETURN_NAMES = ("model", "clip", "vae", "checkpoint_name", "metadata")
+    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "MODEL", "CLIP", "VAE", "STRING")
+    RETURN_NAMES = ("pipe", "metadata", "model", "clip", "vae", "checkpoint_name")
     FUNCTION = "load"
     CATEGORY = "Bubba Nodes/Generation"
     DESCRIPTION = (
@@ -95,7 +101,8 @@ class BubbaComboLoader:
         "Set vae_name or clip_name to 'None' to use the checkpoint's built-in version."
     )
 
-    def load(self, ckpt_name, vae_name, clip_name, clip_type, clip_skip, metadata=None, clip_device="default"):
+    def load(self, ckpt_name, clip_name, vae_name, clip_type, clip_skip, pipe=None, metadata=None, clip_device="default"):
+        source_pipe = BubbaPipe.coerce(pipe)
         # --- Checkpoint ---------------------------------------------------------
         model, ckpt_clip, ckpt_vae = CheckpointLoaderSimple().load_checkpoint(ckpt_name)
 
@@ -122,9 +129,17 @@ class BubbaComboLoader:
                 applied_clip_skip = 0
 
         # --- Metadata -----------------------------------------------------------
-        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+        updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata).updated(
             model_name=checkpoint_display_name(ckpt_name),
             clip_skip=applied_clip_skip,
         )
+        updated_pipe = source_pipe.updated(
+            model=model,
+            clip=clip,
+            vae=vae,
+            positive=None,
+            negative=None,
+            metadata=updated_metadata,
+        )
 
-        return (model, clip, vae, str(ckpt_name), updated_metadata)
+        return (updated_pipe, updated_metadata, model, clip, vae, str(ckpt_name))

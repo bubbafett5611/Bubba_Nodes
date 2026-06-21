@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
 from ..utils.prompting import (
     clean_prompt_value,
     dedupe_prompt_tokens,
@@ -151,29 +151,34 @@ class BubbaPromptRandomizer:
         return {
             "required": required,
             "optional": {
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "Optional CLIP to encode positive and negative conditioning outputs.",
-                    },
+                "pipe": (
+                    "BUBBA_PIPE",
+                    {"tooltip": "Optional incoming pipe containing the CLIP to use when encoding randomized prompts."},
                 ),
                 "metadata": (
                     "BUBBA_METADATA",
                     {
-                        "tooltip": "Optional metadata object to update with randomized prompts.",
+                        "tooltip": "Optional metadata override. Overrides pipe.metadata when connected.",
+                    },
+                ),
+                "clip": (
+                    "CLIP",
+                    {
+                        "tooltip": "Optional CLIP override. Overrides pipe.clip when connected.",
                     },
                 ),
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "STRING", "BUBBA_METADATA")
+    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "CONDITIONING", "CONDITIONING", "STRING", "STRING", "STRING")
     RETURN_NAMES = (
+        "pipe",
+        "metadata",
+        "positive",
+        "negative",
         "positive_prompt",
         "negative_prompt",
-        "positive_conditioning",
-        "negative_conditioning",
         "chosen_values",
-        "metadata",
     )
     FUNCTION = "randomize_prompt"
     CATEGORY = "Bubba Nodes/Prompt"
@@ -184,7 +189,8 @@ class BubbaPromptRandomizer:
         cleanup = bool(kwargs.get("cleanup", True))
         dedupe = bool(kwargs.get("dedupe", True))
         remove_category_underscores = bool(kwargs.get("remove_category_underscores", False))
-        clip = kwargs.get("clip")
+        source_pipe = BubbaPipe.coerce(kwargs.get("pipe"))
+        clip = kwargs.get("clip") if kwargs.get("clip") is not None else source_pipe.clip
         metadata = kwargs.get("metadata")
 
         categories = load_prompt_randomizer_categories()
@@ -229,19 +235,28 @@ class BubbaPromptRandomizer:
             positive_conditioning = encode_conditioning(clip, positive_prompt)
             negative_conditioning = encode_conditioning(clip, negative_prompt)
 
-        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+        updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata).updated(
             positive_prompt=positive_prompt,
             negative_prompt=negative_prompt,
+        )
+        updated_pipe = source_pipe.updated(
+            clip=clip,
+            positive=positive_conditioning,
+            negative=negative_conditioning,
+            positive_prompt=positive_prompt,
+            negative_prompt=negative_prompt,
+            metadata=updated_metadata,
         )
         chosen_values = "\n".join(chosen_lines) if chosen_lines else "none"
 
         return (
-            positive_prompt,
-            negative_prompt,
+            updated_pipe,
+            updated_metadata,
             positive_conditioning,
             negative_conditioning,
+            positive_prompt,
+            negative_prompt,
             chosen_values,
-            updated_metadata,
         )
 
     @staticmethod

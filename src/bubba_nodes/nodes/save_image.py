@@ -11,7 +11,8 @@ try:
 except Exception:  # pragma: no cover - only used inside Comfy runtime
     folder_paths = None
 
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.checkpointing import checkpoint_display_name, checkpoint_short_hash
 from ..utils.paths import sanitize_relative_save_prefix
 
@@ -28,7 +29,6 @@ class BubbaSaveImage:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
                 "save_prefix": (
                     "STRING",
                     {
@@ -59,18 +59,11 @@ class BubbaSaveImage:
                 ),
             },
             "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing the image and metadata to save."}),
+                "images": ("IMAGE", {"tooltip": "Optional image override. Overrides pipe.image when connected."}),
                 "metadata": (
                     "BUBBA_METADATA",
-                    {
-                        "tooltip": "Optional metadata object. When save_prefix is blank, metadata.save_prefix is used.",
-                    },
-                ),
-                "filepath": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Deprecated compatibility input. Use save_prefix instead.",
-                    },
+                    {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."},
                 ),
             },
             "hidden": {
@@ -79,8 +72,8 @@ class BubbaSaveImage:
             },
         }
 
-    RETURN_TYPES = ("BUBBA_METADATA",)
-    RETURN_NAMES = ("metadata",)
+    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA")
+    RETURN_NAMES = ("pipe", "metadata")
     FUNCTION = "save_images"
     OUTPUT_NODE = True
     CATEGORY = "Bubba Nodes/Image/Save"
@@ -278,36 +271,39 @@ class BubbaSaveImage:
 
     def save_images(
         self,
-        images,
         save_prefix="",
         preview_only=False,
         save_workflow_metadata=True,
         save_a1111_metadata=False,
+        pipe=None,
+        images=None,
         metadata=None,
-        filepath=None,
         prompt=None,
         extra_pnginfo=None,
     ):
-        input_metadata = BubbaMetadata.coerce(metadata)
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_images = resolve_pipe_value(images, source_pipe.image, "image")
+        input_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
         metadata_warnings = self._metadata_input_warnings(metadata is not None, input_metadata)
         normalized_metadata = input_metadata
-        raw_save_prefix = (save_prefix or "").strip() or (filepath or "").strip() or normalized_metadata.save_prefix or "Character/Scene"
+        raw_save_prefix = (save_prefix or "").strip() or normalized_metadata.save_prefix or "Character/Scene"
         resolved_save_prefix = sanitize_relative_save_prefix(raw_save_prefix)
         normalized_metadata = normalized_metadata.updated(save_prefix=resolved_save_prefix)
+        updated_pipe = source_pipe.updated(image=resolved_images, metadata=normalized_metadata)
         has_metadata = not self._is_default_metadata(normalized_metadata)
         metadata_json_compact = normalized_metadata.to_json(pretty=False) if has_metadata else None
         metadata_json_pretty = normalized_metadata.to_json(pretty=True) if has_metadata else None
 
         if preview_only:
-            result = UI.PreviewImage(images, cls=cast(Any, None)).as_dict()
+            result = UI.PreviewImage(resolved_images, cls=cast(Any, None)).as_dict()
             if metadata_warnings:
                 result["metadata_warnings"] = metadata_warnings
             if metadata_json_pretty is not None:
                 result["metadata_text"] = metadata_json_pretty
-            return {"ui": result, "result": (normalized_metadata,)}
+            return {"ui": result, "result": (updated_pipe, normalized_metadata)}
 
         result = UI.ImageSaveHelper.get_save_images_ui(
-            images=images,
+            images=resolved_images,
             filename_prefix=resolved_save_prefix,
             cls=cast(Any, None),
         ).as_dict()
@@ -327,4 +323,4 @@ class BubbaSaveImage:
             result["metadata_warnings"] = metadata_warnings
         if metadata_json_pretty is not None:
             result["metadata_text"] = metadata_json_pretty
-        return {"ui": result, "result": (normalized_metadata,)}
+        return {"ui": result, "result": (updated_pipe, normalized_metadata)}

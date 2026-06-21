@@ -1,3 +1,4 @@
+from ..models import BubbaMetadata, BubbaPipe
 from ..utils.paths import sanitize_path_component
 
 # TODO(new-node): Add a template-based filename node with date, seed, and model placeholders.
@@ -32,16 +33,22 @@ class BubbaFilename:
                     },
                 ),
             },
+            "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe to update with the save prefix."}),
+                "metadata": ("BUBBA_METADATA", {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."}),
+            },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("save_prefix",)
+    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "STRING")
+    RETURN_NAMES = ("pipe", "metadata", "save_prefix")
     FUNCTION = "build_path"
     CATEGORY = "Bubba Nodes/Workflow"
     DESCRIPTION = "Combines a character name (folder) and scene name (filename) into a relative save prefix."
 
-    def build_path(self, character_name, scene_name):
+    def build_path(self, character_name, scene_name, pipe=None, metadata=None):
+        source_pipe = BubbaPipe.coerce(pipe)
         folder = sanitize_path_component(character_name, "Character")
         filename = sanitize_path_component(scene_name, "Scene")
         save_prefix = f"{folder}/{filename}"
-        return (save_prefix,)
+        updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata).updated(save_prefix=save_prefix)
+        return (source_pipe.updated(metadata=updated_metadata), updated_metadata, save_prefix)

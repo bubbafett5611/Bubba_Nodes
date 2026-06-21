@@ -2,6 +2,8 @@ import numpy as np
 from PIL import Image
 import torch
 
+from ..models import BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.image_ops import pil_to_tensor_like, tensor_sample_to_pil
 
 
@@ -87,7 +89,6 @@ class BubbaWatermark:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",),
                 "watermark": ("IMAGE",),
                 "enabled": (
                     "BOOLEAN",
@@ -143,6 +144,8 @@ class BubbaWatermark:
                 ),
             },
             "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing the base image."}),
+                "image": ("IMAGE", {"tooltip": "Optional image override. Overrides pipe.image when connected."}),
                 "watermark_mask": (
                     "MASK",
                     {
@@ -152,23 +155,27 @@ class BubbaWatermark:
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
+    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE")
+    RETURN_NAMES = ("pipe", "image")
     FUNCTION = "add_watermark"
     CATEGORY = "Bubba Nodes/Image/Overlay"
-    DESCRIPTION = "Adds a watermark image using anchor position, scale, opacity, and XY offsets. Connect Load Image MASK to preserve transparency."
+    DESCRIPTION = (
+        "Adds a watermark image using anchor position, scale, opacity, and XY offsets. Connect Load Image MASK to preserve transparency."
+    )
 
     @staticmethod
     def _resolve_anchor_position(anchor: str, base_w: int, base_h: int, mark_w: int, mark_h: int) -> tuple[int, int]:
         return _resolve_anchor_position(anchor, base_w, base_h, mark_w, mark_h)
 
-    def add_watermark(self, image, watermark, enabled, anchor, image_scale, alpha, x_offset, y_offset, watermark_mask=None):
+    def add_watermark(self, watermark, enabled, anchor, image_scale, alpha, x_offset, y_offset, pipe=None, image=None, watermark_mask=None):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_image = resolve_pipe_value(image, source_pipe.image, "image")
         if not enabled:
-            return (image,)
+            return (source_pipe.updated(image=resolved_image), resolved_image)
 
         mark_pil = _build_watermark_rgba(watermark, watermark_mask=watermark_mask)
         if mark_pil is None:
-            return (image,)
+            return (source_pipe.updated(image=resolved_image), resolved_image)
 
         scale = max(0.01, float(image_scale))
         scaled_w = max(1, int(round(mark_pil.width * scale)))
@@ -178,7 +185,7 @@ class BubbaWatermark:
         mark_pil = _apply_alpha(mark_pil, alpha)
 
         output = []
-        for sample in image:
+        for sample in resolved_image:
             src_pil = tensor_sample_to_pil(sample)
             base_w, base_h = src_pil.size
 
@@ -192,9 +199,10 @@ class BubbaWatermark:
                 pil_to_tensor_like(
                     composed,
                     sample,
-                    device=image.device,
-                    dtype=image.dtype,
+                    device=resolved_image.device,
+                    dtype=resolved_image.dtype,
                 )
             )
 
-        return (torch.stack(output, dim=0),)
+        output_image = torch.stack(output, dim=0)
+        return (source_pipe.updated(image=output_image), output_image)

@@ -1,4 +1,5 @@
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.prompting import (
     assemble_prompt_sections,
     build_prompts_from_sections,
@@ -15,12 +16,6 @@ class BubbaCharacterPromptBuilder:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "CLIP used to encode positive and negative conditioning outputs.",
-                    },
-                ),
                 "appearance": (
                     "STRING",
                     {
@@ -125,24 +120,30 @@ class BubbaCharacterPromptBuilder:
                 ),
             },
             "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing the CLIP to use."}),
                 "metadata": (
                     "BUBBA_METADATA",
                     {
-                        "tooltip": "Optional metadata object to update with prompt sections and prompts.",
+                        "tooltip": "Optional metadata override. Overrides pipe.metadata when connected.",
+                    },
+                ),
+                "clip": (
+                    "CLIP",
+                    {
+                        "tooltip": "Optional CLIP override. Overrides pipe.clip when connected.",
                     },
                 ),
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt", "positive_conditioning", "negative_conditioning", "metadata")
+    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "CONDITIONING", "CONDITIONING", "STRING", "STRING")
+    RETURN_NAMES = ("pipe", "metadata", "positive", "negative", "positive_prompt", "negative_prompt")
     FUNCTION = "build_prompt"
     CATEGORY = "Bubba Nodes/Prompt"
     DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP. Returns metadata with prompts and sections."
 
     def build_prompt(
         self,
-        clip,
         appearance,
         body,
         clothing,
@@ -155,8 +156,12 @@ class BubbaCharacterPromptBuilder:
         format_mode,
         cleanup,
         dedupe,
+        pipe=None,
         metadata=None,
+        clip=None,
     ):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_clip = resolve_pipe_value(clip, source_pipe.clip, "clip")
         sections = assemble_prompt_sections(
             appearance=appearance,
             body=body,
@@ -175,13 +180,21 @@ class BubbaCharacterPromptBuilder:
             dedupe=dedupe,
             include_character_in_positive=False,
         )
-        positive_conditioning = encode_conditioning(clip, positive_prompt)
-        negative_conditioning = encode_conditioning(clip, negative_prompt)
+        positive_conditioning = encode_conditioning(resolved_clip, positive_prompt)
+        negative_conditioning = encode_conditioning(resolved_clip, negative_prompt)
 
         # Update metadata with prompts and sections
-        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+        updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata).updated(
             positive_prompt=positive_prompt,
             negative_prompt=negative_prompt,
         )
+        updated_pipe = source_pipe.updated(
+            clip=resolved_clip,
+            positive=positive_conditioning,
+            negative=negative_conditioning,
+            positive_prompt=positive_prompt,
+            negative_prompt=negative_prompt,
+            metadata=updated_metadata,
+        )
 
-        return (positive_prompt, negative_prompt, positive_conditioning, negative_conditioning, updated_metadata)
+        return (updated_pipe, updated_metadata, positive_conditioning, negative_conditioning, positive_prompt, negative_prompt)

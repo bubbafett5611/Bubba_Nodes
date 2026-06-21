@@ -1,3 +1,4 @@
+from ..models import BubbaPipe
 from ..utils.prompting import clean_prompt_value, dedupe_prompt_tokens, split_prompt_tokens
 from ..utils.prompt_analysis import find_duplicate_prompt_tokens, find_pair_conflicts
 
@@ -6,7 +7,8 @@ class BubbaPromptInspector:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {
+            "optional": {
+                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing prompt text to inspect."}),
                 "positive_prompt": (
                     "STRING",
                     {
@@ -40,10 +42,13 @@ class BubbaPromptInspector:
         cleaned = [clean_prompt_value(part) for part in parts]
         return [part for part in cleaned if part]
 
-    def inspect_prompt(self, positive_prompt, negative_prompt):
+    def inspect_prompt(self, pipe=None, positive_prompt=None, negative_prompt=None):
         # TODO(optimize): Add optional fast-path mode that skips duplicate and conflict checks for very long prompts.
-        positive_parts = self._clean_parts(positive_prompt)
-        negative_parts = self._clean_parts(negative_prompt)
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_positive = positive_prompt if positive_prompt is not None else source_pipe.positive_prompt
+        resolved_negative = negative_prompt if negative_prompt is not None else source_pipe.negative_prompt
+        positive_parts = self._clean_parts(resolved_positive)
+        negative_parts = self._clean_parts(resolved_negative)
 
         token_count = len(positive_parts) + len(negative_parts)
 
