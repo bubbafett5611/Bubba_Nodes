@@ -18,12 +18,21 @@ class NodeSpec:
 
 _NODE_SPECS = (
     # Workflow
+    NodeSpec("pipe_in", "BubbaPipeIn", "Bubba Pipe In"),
+    NodeSpec("pipe_out", "BubbaPipeOut", "Bubba Pipe Out"),
     NodeSpec("filename", "BubbaFilename", "Bubba Filename Builder"),
     # Generation
     NodeSpec("empty_latent_by_size", "BubbaEmptyLatentBySize", "Bubba Empty Latent (Preset Sizes)"),
     NodeSpec("checkpoint_loader", "BubbaCheckpointLoader", "Bubba Checkpoint Loader"),
     NodeSpec("combo_loader", "BubbaComboLoader", "Bubba Combo Loader"),
+    NodeSpec("checkpoint_merge", "BubbaCheckpointMerge", "Bubba Checkpoint Merge"),
+    NodeSpec("checkpoint_merge", "BubbaTripleCheckpointMerge", "Bubba Triple Checkpoint Merge"),
+    NodeSpec("checkpoint_save", "BubbaSaveCheckpoint", "Bubba Save Checkpoint"),
+    NodeSpec("checkpoint_save", "BubbaMergeNamingHelper", "Bubba Merge Naming Helper"),
+    NodeSpec("checkpoint_merge", "BubbaCheckpointFingerprint", "Bubba Checkpoint Fingerprint"),
+    NodeSpec("merge_preview_prompt_runner", "BubbaMergePreviewPromptRunner", "Bubba Merge Preview Prompt Runner"),
     NodeSpec("lora_loader", "BubbaLoraLoader", "Bubba LoRA Loader"),
+    NodeSpec("lora_stack", "BubbaLoraStack", "Bubba LoRA Stack"),
     NodeSpec("k_sampler", "BubbaKSampler", "Bubba KSampler"),
     NodeSpec("detailer", "BubbaDetailer", "Bubba Detailer"),
     # Prompt
@@ -34,6 +43,8 @@ _NODE_SPECS = (
     NodeSpec("prompt_inspector", "BubbaPromptInspector", "Bubba Prompt Inspector"),
     # Metadata
     NodeSpec("metadata_debug", "BubbaMetadataDebug", "Bubba Metadata Debug"),
+    # Utilities
+    NodeSpec("view_text", "BubbaViewText", "Bubba View Text"),
     # Image IO + overlays
     NodeSpec("upscaler", "BubbaUpscaler", "Bubba Upscaler (ESRGAN)"),
     NodeSpec("image_compare", "BubbaImageCompare", "Bubba Image Compare"),
