@@ -1,23 +1,35 @@
 # Bubba Nodes
 
-Custom ComfyUI nodes for prompt authoring, checkpoint/LoRA loading, metadata-first image workflows, overlays, upscaling, and save/load helpers.
+Custom ComfyUI nodes for prompt authoring, checkpoint/LoRA loading, pipe-based generation workflows, metadata-aware overlays, upscaling, and save/load helpers.
 
 ## What Is Included
 
-This extension registers 17 nodes:
+This extension registers 29 nodes:
 
+- Bubba Pipe In
+- Bubba Pipe Out
 - Bubba Filename Builder
 - Bubba Empty Latent (Preset Sizes)
 - Bubba Load Image (With Metadata)
 - Bubba Checkpoint Loader
 - Bubba Combo Loader
+- Bubba Checkpoint Merge
+- Bubba Triple Checkpoint Merge
+- Bubba Save Checkpoint
+- Bubba Merge Naming Helper
+- Bubba Checkpoint Fingerprint
+- Bubba Merge Preview Prompt Runner
 - Bubba LoRA Loader
+- Bubba LoRA Stack
 - Bubba KSampler
+- Bubba Detailer
 - Bubba Simple Prompt Builder
 - Bubba Character Prompt Builder
+- Bubba Prompt Randomizer
 - Bubba Prompt Cleaner
 - Bubba Prompt Inspector
 - Bubba Metadata Debug
+- Bubba View Text
 - Bubba Upscaler (ESRGAN)
 - Bubba Image Compare
 - Bubba Add Text Overlay (Metadata)
@@ -27,15 +39,18 @@ This extension registers 17 nodes:
 ## Features
 
 - Build clean relative file paths from character and scene names.
-- Generate empty latents from preset dimensions with optional orientation swap.
-- Load images and extract embedded Bubba metadata from PNG text.
-- Load checkpoints while recording the selected checkpoint name in metadata.
+- Build and unpack `BUBBA_PIPE` objects for advanced graph wiring.
+- Generate empty latents from preset dimensions with optional orientation swap, and store them in the pipe.
+- Carry generation state through a `BUBBA_PIPE` object for cleaner graphs.
+- Load images and extract embedded Bubba metadata from PNG text into a pipe.
+- Load checkpoints while recording the selected checkpoint name in pipe metadata.
 - Load checkpoint, optional external VAE, optional external CLIP/text encoder, and optional CLIP skip in one node.
-- Apply LoRAs while appending each LoRA name to metadata.
-- Build positive and negative prompts from simple text inputs or structured character sections.
+- Merge checkpoint files with weighted or A + (B - C) recipes, fingerprint source checkpoints, name merge outputs, save merged safetensors files, and preview merges with repeatable prompt cases.
+- Apply one LoRA or a six-slot LoRA stack while appending each applied LoRA name to pipe metadata.
+- Build positive and negative prompts from simple text inputs, structured character sections, or JSON-backed randomizer categories.
 - Normalize and dedupe prompt tags while preserving first occurrence order.
 - Inspect prompts for token count, duplicate tags, shared positive/negative tags, and simple conflicts.
-- Run KSampler, measure sampling time, update metadata, and optionally decode an image when a VAE is connected.
+- Run KSampler, measure sampling time, update pipe metadata, and optionally decode an image into the pipe when a VAE is available.
 - Upscale with ESRGAN/spandrel models and optionally resize the upscaled result.
 - Compare two image batches in the frontend with an A/B splitter.
 - Add text overlays from metadata fields.
@@ -84,22 +99,26 @@ Then restart ComfyUI.
 
 ## Quick Workflow Example
 
-1. Use Bubba Combo Loader or Bubba Checkpoint Loader to load the model stack.
-2. Apply one or more Bubba LoRA Loader nodes if needed.
-3. Use Bubba Simple Prompt Builder or Bubba Character Prompt Builder to create prompts, conditioning, and metadata.
+1. Use Bubba Combo Loader or Bubba Checkpoint Loader to create a pipe with the model stack.
+2. Apply one or more Bubba LoRA Loader nodes, or use Bubba LoRA Stack for a compact multi-LoRA setup.
+3. Use Bubba Simple Prompt Builder, Bubba Character Prompt Builder, or Bubba Prompt Randomizer to update pipe prompts and conditioning.
 4. Optionally run Bubba Prompt Cleaner and Bubba Prompt Inspector before sampling.
-5. Generate a latent with Bubba Empty Latent (Preset Sizes).
-6. Sample with Bubba KSampler so sampler settings, seed, and timing are written to metadata.
-7. Decode through the KSampler VAE input or your usual VAE Decode node.
-8. Optionally use Bubba Upscaler, Bubba Add Text Overlay (Metadata), or Bubba Watermark Overlay.
-9. Save with Bubba Save Image and reload later with Bubba Load Image (With Metadata).
+5. Generate a latent with Bubba Empty Latent (Preset Sizes), which writes the latent back to the pipe.
+6. Sample with Bubba KSampler using the pipe latent, so sampler settings, seed, timing, and optional decoded image are written back to the pipe.
+7. Optionally use Bubba Detailer, Bubba Upscaler, Bubba Add Text Overlay (Metadata), or Bubba Watermark Overlay.
+8. Save with Bubba Save Image using the pipe image and embedded metadata.
+9. Reload later with Bubba Load Image (With Metadata), which recreates a pipe from embedded metadata.
 
 ## Metadata Notes
 
-- Metadata is represented by the typed `BUBBA_METADATA` object.
+- Workflow state is represented by the typed `BUBBA_PIPE` object.
+- Serialized provenance is represented by the typed `BUBBA_METADATA` object inside the pipe.
+- Pipe-aware nodes use explicit socket overrides first, then pipe values, then node defaults or clear errors.
+- Pipe inputs are optional on nodes that can create a fresh pipe or use explicit overrides. Bubba Pipe Out requires a pipe because its only job is unpacking one.
 - Metadata currently includes `schema_version`, `model_name`, `clip_skip`, `sampler_time_seconds`, `steps`, `cfg`, `sampler_name`, `scheduler`, `denoise`, `seed`, `positive_prompt`, `negative_prompt`, `loras`, and `save_prefix`.
 - Older saved metadata that uses `filepath` is still accepted and migrated to `save_prefix`.
 - Bubba Metadata Debug displays pretty JSON directly on the node and still outputs the same text for wiring.
+- Bubba View Text displays connected multiline strings directly on the node and passes the text through unchanged.
 - Bubba Save Image embeds metadata into PNG text under `bubba_metadata`.
 - Bubba Save Image can also embed ComfyUI `prompt` and `workflow` metadata when `save_workflow_metadata` is enabled.
 - Bubba Save Image can also embed an A1111/Civitai-compatible `parameters` text block when `save_a1111_metadata` is enabled.
@@ -109,6 +128,12 @@ Then restart ComfyUI.
 ## Prompt Notes
 
 - Supported `format_mode` values are `booru`, `prose`, and `hybrid`.
+- Bubba Simple Prompt Builder supports deterministic inline choices such as `{red|blue|green}`.
+- It also expands file wildcards such as `__lighting__` and `__locations/nightclub__` from `src/bubba_nodes/data/wildcards`.
+- Wildcard files contain one choice per line; blank lines and lines beginning with `#` are ignored.
+- A `prompt_seed` of `-1` inherits `metadata.seed`, then falls back to `0`. Non-negative values explicitly control prompt expansion, and the after-generate control can keep, increment, decrement, or randomize it.
+- Escape prompt syntax with a backslash, for example `\{red|blue\}` or `\__lighting__`.
+- Wildcards and inline choices can expand recursively up to a safe depth. Missing files and recursive cycles are reported without executing arbitrary code.
 - `cleanup` normalizes whitespace and separators before prompt output.
 - `dedupe` removes duplicate tags case-insensitively while preserving the first spelling/order.
 - Prompt Inspector outputs:
@@ -129,13 +154,14 @@ Then restart ComfyUI.
 
 - The frontend extension is loaded from [web/comfyui/autocomplete.js](web/comfyui/autocomplete.js).
 - Autocomplete is active on Bubba multiline prompt inputs such as positive, negative, appearance, style tags, quality tags, and negative tags.
+- Type `__` to browse wildcard files recursively; continuing to type filters the list, and selection inserts the complete token such as `__locations/nightclub__`.
 - Type part of a tag to open suggestions.
 - Use arrow keys to select, then press Tab or Enter to insert.
 - Add custom words from ComfyUI settings using local storage.
 - Enable or disable local-tag suggestions with `Bubba: Include Local CSV Tags`.
+- Tune checkpoint, empty latent size, and LoRA menus separately with hover preview, dense rows, font scale, icon scale, and max recent-count settings.
 - Tag data is read from source-specific CSV files in `web/comfyui/tags/` when available, currently `danbooru.csv` and `e621.csv`.
 - If source-specific CSV files are unavailable, autocomplete falls back to the bundled legacy `web/comfyui/danbooru_e621_merged.csv`.
-- Use `Bubba: Local CSV Source` to open the current local CSV.
 - Use `Bubba: Local CSV Sync + Cache` and `Download Sources + Rebuild Cache` to download the newest configured source CSVs and rebuild browser cache from local files.
 - Suggestions are ranked by canonical and alias prefix match, then post count.
 - `Bubba: Prompt Tag Chips + Hints` toggles the inline prompt assistant independently from autocomplete.
