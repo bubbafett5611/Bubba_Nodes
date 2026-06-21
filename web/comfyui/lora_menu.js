@@ -12,7 +12,7 @@ import {
 import { readBooleanSetting, readNumberSetting, readStringArray, writeStringArray } from "./storage.js";
 
 const EXTENSION_NAME = "bubba.LoraTreeMenu";
-const TARGET_NODE_CLASSES = new Set(["BubbaLoraLoader"]);
+const TARGET_NODE_CLASSES = new Set(["BubbaLoraLoader", "BubbaLoraStack"]);
 const MENU_EXTRA_WIDTH_PX = 20;
 const PREVIEW_PANEL_WIDTH_PX = 280;
 const PREVIEW_IMAGE_EXTENSIONS = ["jpeg", "jpg", "png", "webp"];
@@ -366,19 +366,23 @@ function _normalizedPath(value) {
 	return String(value || "").replace(/\\/g, "/").trim();
 }
 
+function isBypassLoraPath(value) {
+	return _normalizedPath(value).toLowerCase() === "none";
+}
+
 function getFavoritePaths() {
 	return readStringArray(LORA_MENU_FAVORITES_KEY);
 }
 
 function isFavoritePath(path) {
 	const target = _normalizedPath(path);
-	if (!target) return false;
+	if (!target || isBypassLoraPath(target)) return false;
 	return getFavoritePaths().includes(target);
 }
 
 function toggleFavoritePath(path) {
 	const target = _normalizedPath(path);
-	if (!target) return false;
+	if (!target || isBypassLoraPath(target)) return false;
 	const current = getFavoritePaths();
 	const index = current.indexOf(target);
 	if (index >= 0) {
@@ -397,7 +401,7 @@ function getRecentPaths() {
 
 function pushRecentPath(path) {
 	const target = _normalizedPath(path);
-	if (!target) return;
+	if (!target || isBypassLoraPath(target)) return;
 	const next = getRecentPaths().filter((item) => item !== target);
 	next.unshift(target);
 	const limit = readNumberSetting(LORA_MENU_RECENTS_LIMIT_KEY, LORA_MENU_RECENTS_LIMIT_DEFAULT, 0, 50);
@@ -494,7 +498,7 @@ function createCivitaiLookupUrl(loraPath) {
 
 async function getCivitaiUrl(loraPath) {
 	const key = String(loraPath || "").trim();
-	if (!key) return null;
+	if (!key || isBypassLoraPath(key)) return null;
 	if (civitaiLinkCache.has(key)) return rewriteCivitaiUrl(civitaiLinkCache.get(key));
 	try {
 		const response = await fetch(createCivitaiLookupUrl(key));
@@ -542,7 +546,7 @@ function resolveFirstExistingPreview(loraPath, candidates) {
 
 async function getResolvedPreviewUrl(loraPath) {
 	const key = normalizeSlashes(loraPath);
-	if (!key) return null;
+	if (!key || isBypassLoraPath(key)) return null;
 	if (previewUrlCache.has(key)) return previewUrlCache.get(key);
 	const preview = await resolveFirstExistingPreview(key, buildPreviewCandidates(key));
 	const url = preview?.url || null;
@@ -556,6 +560,7 @@ async function showPreviewForEntry(entryElement) {
 	if (!previewPanel || !previewImage || !previewLabel) return;
 
 	const loraPath = entryElement?.dataset?.bubbaLorPath;
+	if (isBypassLoraPath(loraPath)) { hidePreviewPanel(); return; }
 	const candidates = buildPreviewCandidates(loraPath);
 	if (!candidates.length) { hidePreviewPanel(); return; }
 
@@ -581,6 +586,7 @@ async function showPreviewForEntry(entryElement) {
 
 function bindEntryPreview(entryElement) {
 	if (!entryElement || entryElement.dataset?.bubbaLoraPreviewBound === "1") return;
+	if (isBypassLoraPath(entryElement.dataset?.bubbaLorPath || entryElement.getAttribute("data-value"))) return;
 	entryElement.dataset.bubbaLoraPreviewBound = "1";
 	entryElement.addEventListener("mouseenter", () => showPreviewForEntry(entryElement));
 	entryElement.addEventListener("mouseleave", () => hidePreviewPanel());
@@ -622,6 +628,7 @@ function markEntryPreviewState(entryElement, hasPreview) {
 
 function bindEntrySelectionTracking(entryElement) {
 	if (!entryElement || entryElement.dataset?.bubbaLoraSelectionTracked === "1") return;
+	if (isBypassLoraPath(entryElement.dataset?.bubbaLorPath || entryElement.getAttribute("data-value"))) return;
 	entryElement.dataset.bubbaLoraSelectionTracked = "1";
 	entryElement.addEventListener("click", () => {
 		pushRecentPath(entryElement.dataset?.bubbaLorPath);
@@ -643,6 +650,7 @@ function ensureFileEntryLayout(entryElement) {
 
 function bindEntryPreviewButton(entryElement) {
 	if (!entryElement || entryElement.dataset?.bubbaLoraPreviewButtonBound === "1") return;
+	if (isBypassLoraPath(entryElement.dataset?.bubbaLorPath || entryElement.getAttribute("data-value"))) return;
 	entryElement.dataset.bubbaLoraPreviewButtonBound = "1";
 	ensureFileEntryLayout(entryElement);
 	const actions = ensureEntryActionArea(entryElement);
@@ -667,6 +675,7 @@ function bindEntryPreviewButton(entryElement) {
 
 function bindEntryCivitaiButton(entryElement) {
 	if (!entryElement || entryElement.dataset?.bubbaLoraCivitaiBound === "1") return;
+	if (isBypassLoraPath(entryElement.dataset?.bubbaLorPath || entryElement.getAttribute("data-value"))) return;
 	entryElement.dataset.bubbaLoraCivitaiBound = "1";
 	ensureFileEntryLayout(entryElement);
 
@@ -698,6 +707,7 @@ function bindEntryCivitaiButton(entryElement) {
 
 function bindEntryFavoriteButton(entryElement) {
 	if (!entryElement || entryElement.dataset?.bubbaLoraFavoriteBound === "1") return;
+	if (isBypassLoraPath(entryElement.dataset?.bubbaLorPath || entryElement.getAttribute("data-value"))) return;
 	entryElement.dataset.bubbaLoraFavoriteBound = "1";
 	ensureFileEntryLayout(entryElement);
 
@@ -821,8 +831,12 @@ function setupKeyboardNavigation(menu) {
 	chooseInitialFocus();
 }
 
+function isLoraNameWidget(widget) {
+	return widget?.name === "lora_name" || /^lora_\d+_name$/.test(String(widget?.name || ""));
+}
+
 function isLoraWidget(node, widget) {
-	return !!node && TARGET_NODE_CLASSES.has(node.comfyClass) && widget?.name === "lora_name";
+	return !!node && TARGET_NODE_CLASSES.has(node.comfyClass) && isLoraNameWidget(widget);
 }
 
 function setupLoraKeyboardNavigation(menu) {
