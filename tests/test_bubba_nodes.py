@@ -40,6 +40,7 @@ from src.bubba_nodes.nodes import (
     BubbaPromptRandomizer,
     BubbaPromptCleaner,
     BubbaPromptInspector,
+    BubbaMergePreviewPromptRunner,
     NODE_CLASS_MAPPINGS,
     NODE_DISPLAY_NAME_MAPPINGS,
 )
@@ -1305,6 +1306,48 @@ class TestBubbaSimplePromptBuilder:
         assert "BubbaSimplePromptBuilder" in NODE_DISPLAY_NAME_MAPPINGS
 
 
+class TestBubbaMergePreviewPromptRunner:
+    def test_clip_input_encodes_conditioning_and_updates_pipe(self):
+        node = BubbaMergePreviewPromptRunner()
+
+        pipe, metadata, positive, negative, positive_prompt, negative_prompt, test_name, info = node.build_preview_prompt(
+            "portrait_detail",
+            "",
+            "",
+            False,
+            True,
+            clip=_DummyClip(),
+        )
+
+        assert positive[0][0].startswith("COND:")
+        assert negative[0][0].startswith("COND:")
+        assert pipe.positive == positive
+        assert pipe.negative == negative
+        assert pipe.positive_prompt == positive_prompt
+        assert pipe.negative_prompt == negative_prompt
+        assert metadata.positive_prompt == positive_prompt
+        assert metadata.negative_prompt == negative_prompt
+        assert test_name == "Portrait Detail"
+        assert "Portrait Detail" in info
+
+    def test_metadata_node_attrs(self):
+        optional = BubbaMergePreviewPromptRunner.INPUT_TYPES()["optional"]
+
+        assert "clip" in optional
+        assert BubbaMergePreviewPromptRunner.RETURN_TYPES == (
+            "BUBBA_PIPE",
+            "BUBBA_METADATA",
+            "CONDITIONING",
+            "CONDITIONING",
+            "STRING",
+            "STRING",
+            "STRING",
+            "STRING",
+        )
+        assert BubbaMergePreviewPromptRunner.FUNCTION == "build_preview_prompt"
+        assert BubbaMergePreviewPromptRunner.CATEGORY == "Bubba Nodes/Merge"
+
+
 class TestBubbaPromptRandomizer:
     def test_load_categories_from_json_files(self, tmp_path):
         (tmp_path / "background.json").write_text(json.dumps(["library", "forest trail", "library", "", "random"]), encoding="utf-8")
@@ -1529,6 +1572,17 @@ class TestAutocompleteServerRoutes:
         autocomplete_server._save_bytes_atomic(target, b"tag,count\nfoo,1\n")
         assert target.read_bytes() == b"tag,count\nfoo,1\n"
 
+    def test_wildcard_entries_discovers_nested_text_files(self, tmp_path):
+        (tmp_path / "locations").mkdir()
+        (tmp_path / "lighting.txt").write_text("soft light\n", encoding="utf-8")
+        (tmp_path / "locations" / "nightclub.txt").write_text("club\n", encoding="utf-8")
+        (tmp_path / "ignored.json").write_text("[]", encoding="utf-8")
+
+        assert autocomplete_server._wildcard_entries(tmp_path) == [
+            {"text": "lighting", "insert_text": "__lighting__"},
+            {"text": "locations/nightclub", "insert_text": "__locations/nightclub__"},
+        ]
+
     def test_register_routes_and_handlers_work(self, monkeypatch, tmp_path):
         class _FakeRoutes:
             def __init__(self):
@@ -1567,6 +1621,11 @@ class TestAutocompleteServerRoutes:
 
         monkeypatch.setattr(autocomplete_server, "_route_registered", False)
         monkeypatch.setattr(autocomplete_server, "_local_tags_dir", lambda: tmp_path / "tags")
+        wildcard_dir = tmp_path / "wildcards"
+        (wildcard_dir / "nested").mkdir(parents=True)
+        (wildcard_dir / "lighting.txt").write_text("soft light\n", encoding="utf-8")
+        (wildcard_dir / "nested" / "scene.txt").write_text("city\n", encoding="utf-8")
+        monkeypatch.setattr(autocomplete_server, "_wildcards_dir", lambda: wildcard_dir)
         monkeypatch.setattr(
             autocomplete_server,
             "_tag_sources",
@@ -1580,11 +1639,17 @@ class TestAutocompleteServerRoutes:
         autocomplete_server.register_autocomplete_routes()
 
         assert "/bubba/autocomplete/embeddings" in fake_routes.get_handlers
+        assert "/bubba/autocomplete/wildcards" in fake_routes.get_handlers
         assert "/bubba/sync_upstream_cache" in fake_routes.post_handlers
 
         embeddings_result = asyncio.run(fake_routes.get_handlers["/bubba/autocomplete/embeddings"](None))
         assert embeddings_result["status"] == 200
         assert embeddings_result["payload"]["count"] == 2
+
+        wildcards_result = asyncio.run(fake_routes.get_handlers["/bubba/autocomplete/wildcards"](None))
+        assert wildcards_result["status"] == 200
+        assert wildcards_result["payload"]["count"] == 2
+        assert wildcards_result["payload"]["wildcards"][1]["insert_text"] == "__nested/scene__"
 
         sync_result = asyncio.run(fake_routes.post_handlers["/bubba/sync_upstream_cache"](None))
         assert sync_result["status"] == 200
