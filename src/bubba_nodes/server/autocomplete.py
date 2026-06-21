@@ -43,6 +43,34 @@ def _local_tags_dir() -> Path:
     return _repo_root() / "web" / "comfyui" / "tags"
 
 
+def _wildcards_dir() -> Path:
+    return _repo_root() / "src" / "bubba_nodes" / "data" / "wildcards"
+
+
+def _wildcard_entries(wildcards_dir: Path | None = None) -> list[dict[str, str]]:
+    root = (wildcards_dir or _wildcards_dir()).resolve()
+    if not root.is_dir():
+        return []
+
+    entries: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*.txt"), key=lambda item: item.as_posix().lower()):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.resolve().relative_to(root).with_suffix("").as_posix()
+        except ValueError:
+            continue
+        if not relative:
+            continue
+        entries.append(
+            {
+                "text": relative,
+                "insert_text": f"__{relative}__",
+            }
+        )
+    return entries
+
+
 def _tag_sources() -> list[TagSource]:
     return [
         TagSource("danbooru", "danbooru.csv", "BUBBA_DANBOORU_CSV_URL", _DEFAULT_DANBOORU_CSV_URL),
@@ -157,6 +185,17 @@ def register_autocomplete_routes() -> None:
             {
                 "status": "ok",
                 "embeddings": entries,
+                "count": len(entries),
+            }
+        )
+
+    @routes.get("/bubba/autocomplete/wildcards")
+    async def bubba_autocomplete_wildcards(_request):
+        entries = _wildcard_entries()
+        return web.json_response(
+            {
+                "status": "ok",
+                "wildcards": entries,
                 "count": len(entries),
             }
         )

@@ -5,15 +5,21 @@ import { invalidateSearchIndexCache } from './search.js';
 import { loadDanbooruTagsFromIndexedDb, saveDanbooruTagsToIndexedDb, clearDanbooruTagsFromIndexedDb } from './idb.js';
 
 const customWordsStorageKey = "bubba.Autocomplete.CustomWords";
+const includeLocalCsvTagsStorageKey = "bubba.Autocomplete.IncludeLocalCsvTags";
 const danbooruTagsStorageKey = "bubba.Autocomplete.DanbooruTags";
 const danbooruMetaStorageKey = "bubba.Autocomplete.DanbooruMeta";
 const embeddingsStorageKey = "bubba.Autocomplete.Embeddings";
 const embeddingsMetaStorageKey = "bubba.Autocomplete.EmbeddingsMeta";
+const wildcardsStorageKey = "bubba.Autocomplete.Wildcards";
+const wildcardsMetaStorageKey = "bubba.Autocomplete.WildcardsMeta";
 
 let danbooruTagsMemoryCache = [];
 let danbooruTagsVersion = 0;
 let embeddingsMemoryCache = [];
 let embeddingsVersion = 0;
+let wildcardsMemoryCache = [];
+let wildcardRefreshPromise = null;
+let wildcardRefreshAttempted = false;
 let danbooruHydrationPromise = null;
 let mergedWordListCache = {
 	key: null,
@@ -212,9 +218,107 @@ export async function ensureEmbeddingCacheSeeded() {
 	}
 }
 
+function normalizeWildcardEntry(entry) {
+	const path = String(entry?.text || entry?.name || "").trim().replace(/^__|__$/g, "");
+	if (!path) {
+		return null;
+	}
+	return {
+		kind: "wildcard",
+		text: `__${path}__`,
+		insertText: String(entry?.insert_text || `__${path}__`),
+		path,
+		source: "wildcard",
+	};
+}
+
+export function getWildcardEntries() {
+	if (wildcardsMemoryCache.length > 0) {
+		return wildcardsMemoryCache;
+	}
+	const parsed = parseJsonStorage(wildcardsStorageKey, []);
+	if (!Array.isArray(parsed)) {
+		return [];
+	}
+	wildcardsMemoryCache = parsed.map(normalizeWildcardEntry).filter(Boolean);
+	return wildcardsMemoryCache;
+}
+
+export function setWildcardEntries(entries) {
+	const normalized = (entries || []).map(normalizeWildcardEntry).filter(Boolean);
+	const deduped = new Map();
+	for (const entry of normalized) {
+		deduped.set(entry.path.toLowerCase(), entry);
+	}
+	wildcardsMemoryCache = [...deduped.values()].sort((left, right) => left.path.localeCompare(right.path));
+	localStorage.setItem(wildcardsStorageKey, JSON.stringify(wildcardsMemoryCache));
+}
+
+export async function refreshWildcardCacheFromServer() {
+	const response = await fetch("/bubba/autocomplete/wildcards", {
+		cache: "no-store",
+		headers: {
+			"Accept": "application/json",
+		},
+	});
+	if (!response.ok) {
+		throw new Error(`Unable to load wildcards (${response.status}).`);
+	}
+	const payload = await response.json();
+	const wildcards = Array.isArray(payload?.wildcards) ? payload.wildcards : [];
+	setWildcardEntries(wildcards);
+	localStorage.setItem(wildcardsMetaStorageKey, JSON.stringify({
+		updatedAt: new Date().toISOString(),
+		count: wildcards.length,
+		status: String(payload?.status || "ok"),
+	}));
+}
+
+export async function ensureWildcardCacheSeeded() {
+	if (wildcardRefreshPromise) {
+		return wildcardRefreshPromise;
+	}
+	if (wildcardRefreshAttempted) {
+		return false;
+	}
+	wildcardRefreshAttempted = true;
+	wildcardRefreshPromise = refreshWildcardCacheFromServer()
+		.then(() => true)
+		.catch((error) => {
+			console.warn("Bubba Autocomplete: failed to load wildcards for autocomplete", error);
+			return false;
+		})
+		.finally(() => {
+			wildcardRefreshPromise = null;
+		});
+	return wildcardRefreshPromise;
+}
+
+export function findWildcardMatches(query, limit = 20) {
+	const normalizedQuery = String(query || "").trim().toLowerCase().replace(/^__/, "").replace(/__$/, "");
+	const matches = getWildcardEntries().filter((entry) => {
+		if (!normalizedQuery) {
+			return true;
+		}
+		return entry.path.toLowerCase().includes(normalizedQuery);
+	});
+	matches.sort((left, right) => {
+		const leftPath = left.path.toLowerCase();
+		const rightPath = right.path.toLowerCase();
+		const leftPrefix = normalizedQuery && leftPath.startsWith(normalizedQuery) ? 0 : 1;
+		const rightPrefix = normalizedQuery && rightPath.startsWith(normalizedQuery) ? 0 : 1;
+		if (leftPrefix !== rightPrefix) {
+			return leftPrefix - rightPrefix;
+		}
+		return leftPath.localeCompare(rightPath);
+	});
+	return matches.slice(0, Math.max(1, Number(limit) || 20));
+}
+
 export function getWordList() {
 	const customRaw = localStorage.getItem(customWordsStorageKey) || "";
-	const cacheKey = `1|${danbooruTagsVersion}|${embeddingsVersion}|${customRaw}`;
+	const includeLocalCsvTags = localStorage.getItem(includeLocalCsvTagsStorageKey) !== "false";
+	const cacheKey = `1|${danbooruTagsVersion}|${embeddingsVersion}|${includeLocalCsvTags}|${customRaw}`;
 	if (mergedWordListCache.key === cacheKey && Array.isArray(mergedWordListCache.words)) {
 		return mergedWordListCache.words;
 	}
@@ -223,8 +327,10 @@ export function getWordList() {
 	for (const item of parseCustomWords(customRaw)) {
 		words.push(item);
 	}
-	for (const item of getDanbooruTags()) {
-		words.push(item);
+	if (includeLocalCsvTags) {
+		for (const item of getDanbooruTags()) {
+			words.push(item);
+		}
 	}
 	for (const item of getEmbeddingEntries()) {
 		words.push(item);
@@ -264,8 +370,11 @@ export function clearDanbooruPersistentCache() {
 
 export const cacheStorageKeys = {
 	customWords: customWordsStorageKey,
+	includeLocalCsvTags: includeLocalCsvTagsStorageKey,
 	danbooruTags: danbooruTagsStorageKey,
 	danbooruMeta: danbooruMetaStorageKey,
 	embeddings: embeddingsStorageKey,
 	embeddingsMeta: embeddingsMetaStorageKey,
+	wildcards: wildcardsStorageKey,
+	wildcardsMeta: wildcardsMetaStorageKey,
 };
