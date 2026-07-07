@@ -1,87 +1,91 @@
-from ..models import BubbaMetadata
+from comfy_api.latest import IO
+
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.prompting import (
     clean_prompt_value,
     split_prompt_tokens,
     dedupe_prompt_tokens,
     encode_conditioning,
 )
+from ..utils.prompt_expansion import PromptExpansionResult, expand_prompt_text
 
 
-class BubbaSimplePromptBuilder:
+class BubbaSimplePromptBuilder(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "CLIP used to encode positive and negative conditioning outputs.",
-                    },
-                ),
-                "positive": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {},
-                        "tooltip": "Positive prompt tags, comma-separated.",
-                    },
-                ),
-                "negative": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "negative"},
-                        "tooltip": "Negative prompt tags, comma-separated.",
-                    },
-                ),
-                "cleanup": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Normalize spacing and trim separators.",
-                    },
-                ),
-                "dedupe": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Remove duplicate tags while preserving first occurrence order.",
-                    },
-                ),
-            },
-            "optional": {
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {
-                        "tooltip": "Optional metadata object to update with the built prompts.",
-                    },
-                ),
-            },
-        }
+    def define_schema(cls):
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        return IO.Schema(
+            node_id="BubbaSimplePromptBuilder",
+            display_name="Bubba Simple Prompt Builder",
+            category="Bubba Nodes/Prompt",
+            description="Builds prompts with deterministic choices and wildcards, then cleans and encodes them.",
+            inputs=[
+                IO.String.Input("positive", default="", multiline=True, extra_dict={"bubba.autocomplete": {}}),
+                IO.String.Input("negative", default="", multiline=True, extra_dict={"bubba.autocomplete": {"group": "negative"}}),
+                IO.Boolean.Input("cleanup", default=True),
+                IO.Boolean.Input("dedupe", default=True),
+                IO.Int.Input("prompt_seed", default=-1, min=-1, max=2**32 - 1, control_after_generate=True),
+                pipe.Input("pipe", optional=True),
+                metadata.Input("metadata", optional=True),
+                IO.Clip.Input("clip", optional=True),
+            ],
+            outputs=[
+                pipe.Output("pipe"),
+                metadata.Output("metadata"),
+                IO.Conditioning.Output("positive"),
+                IO.Conditioning.Output("negative"),
+                IO.String.Output("positive_prompt"),
+                IO.String.Output("negative_prompt"),
+                IO.String.Output("expansion_report"),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING", "STRING", "CONDITIONING", "CONDITIONING", "BUBBA_METADATA")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt", "positive_conditioning", "negative_conditioning", "metadata")
-    FUNCTION = "build_prompt"
-    CATEGORY = "Bubba Nodes/Prompt"
-    DESCRIPTION = "Builds a positive/negative prompt from single text inputs with optional cleanup and deduplication."
+    @classmethod
+    def execute(cls, positive, negative, cleanup, dedupe, prompt_seed=-1, pipe=None, metadata=None, clip=None):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_clip = resolve_pipe_value(clip, source_pipe.clip, "clip")
+        source_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
+        expansion_seed = int(prompt_seed) if int(prompt_seed) >= 0 else int(source_metadata.seed or 0)
+        positive_expansion = expand_prompt_text(positive, seed=expansion_seed, field_name="positive")
+        negative_expansion = expand_prompt_text(negative, seed=expansion_seed, field_name="negative")
+        positive_prompt = cls._process(positive_expansion.resolved_text, cleanup, dedupe)
+        negative_prompt = cls._process(negative_expansion.resolved_text, cleanup, dedupe)
 
-    def build_prompt(self, clip, positive, negative, cleanup, dedupe, metadata=None):
-        positive_prompt = self._process(positive, cleanup, dedupe)
-        negative_prompt = self._process(negative, cleanup, dedupe)
+        positive_conditioning = encode_conditioning(resolved_clip, positive_prompt)
+        negative_conditioning = encode_conditioning(resolved_clip, negative_prompt)
 
-        positive_conditioning = encode_conditioning(clip, positive_prompt)
-        negative_conditioning = encode_conditioning(clip, negative_prompt)
-
-        updated_metadata = BubbaMetadata.coerce(metadata).updated(
+        updated_metadata = source_metadata.updated(
             positive_prompt=positive_prompt,
             negative_prompt=negative_prompt,
         )
+        updated_pipe = source_pipe.updated(
+            clip=resolved_clip,
+            positive=positive_conditioning,
+            negative=negative_conditioning,
+            positive_prompt=positive_prompt,
+            negative_prompt=negative_prompt,
+            metadata=updated_metadata,
+        )
 
-        return (positive_prompt, negative_prompt, positive_conditioning, negative_conditioning, updated_metadata)
+        expansion_report = cls._format_expansion_report(
+            positive_expansion,
+            negative_expansion,
+            positive_prompt,
+            negative_prompt,
+        )
+        return IO.NodeOutput(
+            updated_pipe,
+            updated_metadata,
+            positive_conditioning,
+            negative_conditioning,
+            positive_prompt,
+            negative_prompt,
+            expansion_report,
+        )
 
-    def _process(self, text: str, cleanup: bool, dedupe: bool) -> str:
+    @staticmethod
+    def _process(text: str, cleanup: bool, dedupe: bool) -> str:
         if cleanup:
             text = clean_prompt_value(text)
         if dedupe:
@@ -89,3 +93,18 @@ class BubbaSimplePromptBuilder:
             tokens = dedupe_prompt_tokens(tokens)
             text = ", ".join(tokens)
         return text
+
+    @staticmethod
+    def _format_expansion_report(
+        positive: PromptExpansionResult,
+        negative: PromptExpansionResult,
+        final_positive: str,
+        final_negative: str,
+    ) -> str:
+        sections = [
+            positive.format_report("Positive"),
+            f"Positive final: {final_positive}",
+            negative.format_report("Negative"),
+            f"Negative final: {final_negative}",
+        ]
+        return "\n\n".join(sections)

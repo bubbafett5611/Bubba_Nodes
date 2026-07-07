@@ -1,0 +1,8 @@
+# Canonical cryptid species from e621's fictional species tag group
+chupacabra
+jackalope
+loch_ness_monster
+mothman
+sasquatch
+tsuchinoko
+yeti

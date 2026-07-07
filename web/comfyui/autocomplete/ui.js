@@ -2,7 +2,7 @@
 
 import { getTagCategoryLabel, formatNumber, getSearchQueryVariations } from './utils.js';
 import { getSearchIndex, findMatchesFromIndex, findMatchMetadata } from './search.js';
-import { getWordList, ensureEmbeddingCacheSeeded } from './cache.js';
+import { getWordList, ensureEmbeddingCacheSeeded, ensureWildcardCacheSeeded, findWildcardMatches } from './cache.js';
 import { findPromptSnippetsByQuery, normalizeSnippetName, savePromptSnippet } from './snippets.js';
 
 const WORKER_RESPONSE_TIMEOUT_MS = 10000;
@@ -462,6 +462,7 @@ export class BubbaTextAutoComplete {
 		this.previousQuery = "";
 		this.previousMatchedPool = null;
 		this.embeddingWarmupInFlight = false;
+		this.wildcardWarmupInFlight = false;
 		this.searchInFlight = false;
 		this.currentSearchRevision = 0;
 		this.pendingSearchRevision = 0;
@@ -660,7 +661,13 @@ export class BubbaTextAutoComplete {
 	getQuery() {
 		const value = this.inputEl.value;
 		const caret = this.inputEl.selectionStart ?? value.length;
-		const tokenStart = this.getTokenStart(value, caret);
+		let tokenStart = this.getTokenStart(value, caret);
+		const tokenSegment = value.slice(tokenStart, caret);
+		const wildcardMarkers = [...tokenSegment.matchAll(/(?<!\\)__/g)];
+		const wildcardMode = wildcardMarkers.length % 2 === 1;
+		if (wildcardMode) {
+			tokenStart += wildcardMarkers[wildcardMarkers.length - 1].index;
+		}
 		const raw = value.slice(tokenStart, caret);
 		const trimmed = raw.trim().toLowerCase();
 		return {
@@ -670,6 +677,8 @@ export class BubbaTextAutoComplete {
 			query: trimmed,
 			snippetMode: trimmed.startsWith("@"),
 			snippetQuery: trimmed.startsWith("@") ? trimmed.slice(1) : "",
+			wildcardMode,
+			wildcardQuery: wildcardMode ? trimmed.slice(2) : "",
 		};
 	}
 
@@ -728,6 +737,12 @@ export class BubbaTextAutoComplete {
 					row.appendChild(previewSpan);
 				}
 			}
+			if (item.kind === "wildcard") {
+				const wildcardSpan = document.createElement("span");
+				wildcardSpan.classList.add("bubba-autocomplete-item-snippet");
+				wildcardSpan.textContent = "wildcard";
+				row.appendChild(wildcardSpan);
+			}
 			if (i === 0) {
 				row.classList.add("selected");
 			}
@@ -760,7 +775,7 @@ export class BubbaTextAutoComplete {
 		if (!item?.text) {
 			return;
 		}
-		const text = item.kind === "snippet"
+		const text = item.kind === "snippet" || item.kind === "wildcard"
 			? String(item.insertText || "")
 			: (BubbaTextAutoComplete.replaceUnderscores ? item.text.replaceAll("_", " ") : item.text);
 		const value = this.inputEl.value;
@@ -895,7 +910,25 @@ export class BubbaTextAutoComplete {
 				});
 		}
 
-		const { query, snippetMode, snippetQuery } = this.getQuery();
+		if (!this.wildcardWarmupInFlight) {
+			this.wildcardWarmupInFlight = true;
+			ensureWildcardCacheSeeded()
+				.then((loaded) => {
+					this.wildcardWarmupInFlight = false;
+					if (!loaded || document.activeElement !== this.inputEl) {
+						return;
+					}
+					if (!this.getQuery().wildcardMode) {
+						return;
+					}
+					this.onInputImmediate();
+				})
+				.catch(() => {
+					this.wildcardWarmupInFlight = false;
+				});
+		}
+
+		const { query, snippetMode, snippetQuery, wildcardMode, wildcardQuery } = this.getQuery();
 		if (!query) {
 			this.latestQuery = "";
 			this.previousQuery = "";
@@ -920,6 +953,14 @@ export class BubbaTextAutoComplete {
 				...item,
 				text: item.snippetName,
 			})));
+			return;
+		}
+
+		if (wildcardMode) {
+			this.latestQuery = query;
+			this.previousQuery = "";
+			this.previousMatchedPool = null;
+			this.show(findWildcardMatches(wildcardQuery, BubbaTextAutoComplete.suggestionLimit));
 			return;
 		}
 

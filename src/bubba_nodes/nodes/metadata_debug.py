@@ -1,25 +1,32 @@
-from ..models import BubbaMetadata
+from comfy_api.latest import IO, UI
+from ..models import BubbaMetadata, BubbaPipe
 
-METADATA_TYPE = "BUBBA_METADATA"
+BUBBA_PIPE = IO.Custom("BUBBA_PIPE")
+BUBBA_METADATA = IO.Custom("BUBBA_METADATA")
 
 
-class BubbaMetadataDebug:
+class BubbaMetadataDebug(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "metadata": (METADATA_TYPE,),
-            },
-        }
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BubbaMetadataDebug",
+            display_name="Bubba Metadata Debug",
+            category="Bubba Nodes/Metadata",
+            description="Converts Bubba metadata object to pretty JSON text and displays it on the node.",
+            inputs=[
+                BUBBA_PIPE.Input("pipe", optional=True, tooltip="Optional incoming pipe containing metadata to debug."),
+                BUBBA_METADATA.Input("metadata", optional=True),
+            ],
+            outputs=[IO.String.Output("metadata_text")],
+            is_output_node=True,
+        )
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("metadata_text",)
-    FUNCTION = "debug_metadata"
-    CATEGORY = "Bubba Nodes/Metadata"
-    OUTPUT_NODE = True
-    DESCRIPTION = "Converts Bubba metadata object to pretty JSON text and displays it on the node."
-
-    def debug_metadata(self, metadata):
-        normalized = BubbaMetadata.coerce(metadata)
+    @classmethod
+    def execute(cls, pipe=None, metadata=None):
+        source_pipe = BubbaPipe.coerce(pipe)
+        normalized = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
         metadata_text = normalized.to_json(pretty=True)
-        return {"ui": {"metadata_text": [metadata_text]}, "result": (metadata_text,)}
+        ui = UI.PreviewText(metadata_text).as_dict()
+        # Preserve the established frontend key while deriving the payload from the public PreviewText class.
+        ui["metadata_text"] = ui["text"]
+        return IO.NodeOutput(metadata_text, ui=ui)

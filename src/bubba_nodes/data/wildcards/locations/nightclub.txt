@@ -1,0 +1,5 @@
+# Sample locations/nightclub choices for __locations/nightclub__
+an elegant rooftop nightclub
+a crowded underground dance floor
+a neon-lit cyberpunk nightclub
+an intimate art-deco lounge

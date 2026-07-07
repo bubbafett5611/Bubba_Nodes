@@ -6,6 +6,8 @@ const PROMPT_ASSISTANT_ENABLED_KEY = "bubba.PromptAssistant.Enabled";
 const AUTOCOMPLETE_SUGGESTION_LIMIT_KEY = "bubba.Autocomplete.SuggestionLimit";
 const AUTOCOMPLETE_SUGGESTION_LIMIT_DEFAULT = 20;
 const AUTOCOMPLETE_REPLACE_UNDERSCORES_KEY = "bubba.Autocomplete.ReplaceUnderscores";
+const AUTOCOMPLETE_INCLUDE_LOCAL_CSV_TAGS_KEY = "bubba.Autocomplete.IncludeLocalCsvTags";
+const AUTOCOMPLETE_CUSTOM_WORDS_KEY = "bubba.Autocomplete.CustomWords";
 const MANUAL_SEED_AUTO_QUEUE_KEY = "bubba.KSampler.ManualSeed.AutoQueue";
 const CHECKPOINT_PREVIEW_ENABLED_KEY = "bubba.CheckpointPreview.Enabled";
 const CHECKPOINT_MENU_DENSE_KEY = "bubba.CheckpointMenu.Dense";
@@ -13,6 +15,17 @@ const CHECKPOINT_MENU_FONT_SCALE_KEY = "bubba.CheckpointMenu.FontScale";
 const CHECKPOINT_MENU_CONTRAST_KEY = "bubba.CheckpointMenu.Contrast";
 const CHECKPOINT_MENU_ICON_SCALE_KEY = "bubba.CheckpointMenu.IconScale";
 const CHECKPOINT_MENU_RECENTS_LIMIT_KEY = "bubba.CheckpointMenu.RecentsLimit";
+const LORA_PREVIEW_ENABLED_KEY = "bubba.LoraPreview.Enabled";
+const LORA_MENU_DENSE_KEY = "bubba.LoraMenu.Dense";
+const LORA_MENU_FONT_SCALE_KEY = "bubba.LoraMenu.FontScale";
+const LORA_MENU_CONTRAST_KEY = "bubba.LoraMenu.Contrast";
+const LORA_MENU_ICON_SCALE_KEY = "bubba.LoraMenu.IconScale";
+const LORA_MENU_RECENTS_LIMIT_KEY = "bubba.LoraMenu.RecentsLimit";
+const SIZE_MENU_PREVIEW_ENABLED_KEY = "bubba.SizeMenu.Preview.Enabled";
+const SIZE_MENU_DENSE_KEY = "bubba.SizeMenu.Dense";
+const SIZE_MENU_FONT_SCALE_KEY = "bubba.SizeMenu.FontScale";
+const SIZE_MENU_ICON_SCALE_KEY = "bubba.SizeMenu.IconScale";
+const SIZE_MENU_RECENTS_LIMIT_KEY = "bubba.SizeMenu.RecentsLimit";
 const CIVITAI_DOMAIN_OPTIONS = [
 	{ value: CIVITAI_DOMAIN_KEEP, label: "Keep original URL" },
 	{ value: "civitai.com", label: "civitai.com" },
@@ -26,6 +39,22 @@ function normalizeSuggestionLimit(value) {
 		return AUTOCOMPLETE_SUGGESTION_LIMIT_DEFAULT;
 	}
 	return Math.max(1, Math.min(100, n));
+}
+
+function normalizeNumberSetting(value, fallback, min, max) {
+	const n = Number.parseFloat(String(value));
+	if (!Number.isFinite(n)) {
+		return fallback;
+	}
+	return Math.max(min, Math.min(max, n));
+}
+
+function normalizeIntegerSetting(value, fallback, min, max) {
+	const n = Number.parseInt(String(value), 10);
+	if (!Number.isFinite(n)) {
+		return fallback;
+	}
+	return Math.max(min, Math.min(max, n));
 }
 
 console.log("[Bubba] Settings.js loaded");
@@ -142,11 +171,131 @@ function getStoredCivitaiDomain() {
 	return CIVITAI_DOMAIN_OPTIONS.some((option) => option.value === current) ? current : CIVITAI_DOMAIN_KEEP;
 }
 
+function createDiscordProfilesSetting() {
+	const container = createSettingPanel();
+	const hint = createText(
+		"Store Discord webhook credentials on the ComfyUI server. Workflows contain only the profile name, never the webhook URL.",
+		"12px",
+		0.75,
+		"0",
+	);
+	const status = createStatusText("Loading webhook profiles…");
+	const profileSelect = styleSettingSelect(document.createElement("select"));
+	const nameInput = styleSettingInput(document.createElement("input"));
+	nameInput.type = "text";
+	nameInput.placeholder = "profile name (for example: default)";
+	const urlInput = styleSettingInput(document.createElement("input"));
+	urlInput.type = "password";
+	urlInput.autocomplete = "off";
+	urlInput.placeholder = "https://discord.com/api/webhooks/…";
+	urlInput.style.maxWidth = "520px";
+	urlInput.style.flex = "1 1 360px";
+
+	const setStatus = (message, isError = false) => {
+		status.textContent = message;
+		status.style.color = isError ? "var(--error-text, #ff9b9b)" : "";
+	};
+
+	const refreshProfiles = async (selectedName = "") => {
+		try {
+			const response = await fetch("/bubba/discord/profiles");
+			const result = await response.json();
+			if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+			profileSelect.replaceChildren();
+			const placeholder = document.createElement("option");
+			placeholder.value = "";
+			placeholder.textContent = result.profiles?.length ? "Select a saved profile" : "No profiles configured";
+			profileSelect.appendChild(placeholder);
+			for (const name of result.profiles || []) {
+				const option = document.createElement("option");
+				option.value = name;
+				option.textContent = name;
+				profileSelect.appendChild(option);
+			}
+			profileSelect.value = selectedName && (result.profiles || []).includes(selectedName) ? selectedName : "";
+			setStatus(`${result.profiles?.length || 0} webhook profile(s) configured.`);
+		} catch (error) {
+			setStatus(`Could not load profiles: ${error.message || error}`, true);
+		}
+	};
+
+	profileSelect.onchange = () => {
+		nameInput.value = profileSelect.value;
+		urlInput.value = "";
+		if (profileSelect.value) {
+			setStatus(`Enter a new URL to replace “${profileSelect.value}”. Saved URLs are never displayed.`);
+		}
+	};
+
+	const saveButton = document.createElement("button");
+	saveButton.textContent = "Save / Replace Profile";
+	saveButton.onclick = async () => {
+		saveButton.disabled = true;
+		try {
+			const response = await fetch("/bubba/discord/profiles", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: nameInput.value, url: urlInput.value }),
+			});
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+			const savedName = nameInput.value.trim();
+			urlInput.value = "";
+			await refreshProfiles(savedName);
+			setStatus(`Saved webhook profile “${savedName}”.`);
+		} catch (error) {
+			setStatus(error.message || String(error), true);
+		} finally {
+			saveButton.disabled = false;
+		}
+	};
+
+	const deleteButton = document.createElement("button");
+	deleteButton.textContent = "Delete Selected Profile";
+	deleteButton.onclick = async () => {
+		const name = profileSelect.value;
+		if (!name) {
+			setStatus("Select a saved profile to delete.", true);
+			return;
+		}
+		deleteButton.disabled = true;
+		try {
+			const response = await fetch(`/bubba/discord/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+			nameInput.value = "";
+			urlInput.value = "";
+			await refreshProfiles();
+			setStatus(`Deleted webhook profile “${name}”.`);
+		} catch (error) {
+			setStatus(error.message || String(error), true);
+		} finally {
+			deleteButton.disabled = false;
+		}
+	};
+
+	const fields = createFieldRow();
+	fields.appendChild(nameInput);
+	fields.appendChild(urlInput);
+	container.appendChild(hint);
+	container.appendChild(profileSelect);
+	container.appendChild(fields);
+	container.appendChild(createButtonRow([saveButton, deleteButton]));
+	container.appendChild(status);
+	refreshProfiles();
+	return container;
+}
+
 app.registerExtension({
 	name: "bubba.core",
 	async init() {
 		try {
-			const { BubbaTextAutoComplete, ensureLocalCsvCacheSeeded, ensureEmbeddingCacheSeeded } = await import("./autocomplete.js");
+			const {
+				BubbaTextAutoComplete,
+				ensureLocalCsvCacheSeeded,
+				ensureEmbeddingCacheSeeded,
+				ensureWildcardCacheSeeded,
+			} = await import("./autocomplete.js");
 			const { installCheckpointTieredMenus } = await import("./checkpoint_menu.js");
 			const { installLoraTieredMenus } = await import("./lora_menu.js");
 			const { installEmptyLatentSizeMenu } = await import("./latent_size_menu.js");
@@ -154,6 +303,8 @@ app.registerExtension({
 			const { installImageCompareNode } = await import("./image_compare_node.js");
 			const { installSaveResultWarnings } = await import("./save_result_warnings.js");
 			const { installMetadataDebugNode } = await import("./metadata_debug_node.js");
+			const { installViewTextNode } = await import("./view_text_node.js");
+			const { installDiscordWebhookNode } = await import("./discord_webhook_node.js");
 
 			// installStringWidgetHook() is deferred to setup() where ComfyWidgets.STRING is ready
 			BubbaTextAutoComplete.enabled = localStorage.getItem(AUTOCOMPLETE_ENABLED_KEY) !== "false";
@@ -169,6 +320,8 @@ app.registerExtension({
 			installImageCompareNode();
 			installSaveResultWarnings();
 			installMetadataDebugNode();
+			installViewTextNode();
+			installDiscordWebhookNode();
 
 			// Seed caches in background without blocking init
 			try {
@@ -180,6 +333,11 @@ app.registerExtension({
 				await ensureEmbeddingCacheSeeded();
 			} catch (err) {
 				console.warn("[Bubba] Failed to seed embedding cache:", err);
+			}
+			try {
+				await ensureWildcardCacheSeeded();
+			} catch (err) {
+				console.warn("[Bubba] Failed to seed wildcard cache:", err);
 			}
 		} catch (error) {
 			console.error("[Bubba] Init error:", error);
@@ -240,6 +398,13 @@ app.registerExtension({
 			});
 
 			app.ui.settings.addSetting({
+				id: "bubba.Discord.WebhookProfiles",
+				name: "Bubba: Discord Webhook Profiles",
+				defaultValue: "",
+				type: createDiscordProfilesSetting,
+			});
+
+			app.ui.settings.addSetting({
 				id: CHECKPOINT_PREVIEW_ENABLED_KEY,
 				name: "Bubba: Checkpoint Hover Preview",
 				type: "boolean",
@@ -270,8 +435,7 @@ app.registerExtension({
 					step: 0.05,
 				},
 				onChange(value) {
-					const n = Number.parseFloat(String(value));
-					const next = Number.isFinite(n) ? Math.max(0.8, Math.min(1.4, n)) : 1;
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.4);
 					localStorage.setItem(CHECKPOINT_MENU_FONT_SCALE_KEY, String(next));
 				},
 			});
@@ -287,8 +451,7 @@ app.registerExtension({
 					step: 0.05,
 				},
 				onChange(value) {
-					const n = Number.parseFloat(String(value));
-					const next = Number.isFinite(n) ? Math.max(0.8, Math.min(1.5, n)) : 1;
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.5);
 					localStorage.setItem(CHECKPOINT_MENU_CONTRAST_KEY, String(next));
 				},
 			});
@@ -304,8 +467,7 @@ app.registerExtension({
 					step: 0.05,
 				},
 				onChange(value) {
-					const n = Number.parseFloat(String(value));
-					const next = Number.isFinite(n) ? Math.max(0.8, Math.min(1.6, n)) : 1;
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.6);
 					localStorage.setItem(CHECKPOINT_MENU_ICON_SCALE_KEY, String(next));
 				},
 			});
@@ -321,9 +483,160 @@ app.registerExtension({
 					step: 1,
 				},
 				onChange(value) {
-					const n = Number.parseInt(String(value), 10);
-					const next = Number.isFinite(n) ? Math.max(0, Math.min(50, n)) : 14;
+					const next = normalizeIntegerSetting(value, 14, 0, 50);
 					localStorage.setItem(CHECKPOINT_MENU_RECENTS_LIMIT_KEY, String(next));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: SIZE_MENU_PREVIEW_ENABLED_KEY,
+				name: "Bubba: Empty Latent Size Hover Preview",
+				type: "boolean",
+				defaultValue: true,
+				onChange(value) {
+					localStorage.setItem(SIZE_MENU_PREVIEW_ENABLED_KEY, String(!!value));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: SIZE_MENU_DENSE_KEY,
+				name: "Bubba: Empty Latent Size Menu Dense Rows",
+				type: "boolean",
+				defaultValue: false,
+				onChange(value) {
+					localStorage.setItem(SIZE_MENU_DENSE_KEY, String(!!value));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: SIZE_MENU_FONT_SCALE_KEY,
+				name: "Bubba: Empty Latent Size Menu Font Scale",
+				type: "number",
+				defaultValue: 1,
+				attrs: {
+					min: 0.8,
+					max: 1.4,
+					step: 0.05,
+				},
+				onChange(value) {
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.4);
+					localStorage.setItem(SIZE_MENU_FONT_SCALE_KEY, String(next));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: SIZE_MENU_ICON_SCALE_KEY,
+				name: "Bubba: Empty Latent Size Menu Icon Scale",
+				type: "number",
+				defaultValue: 1,
+				attrs: {
+					min: 0.8,
+					max: 1.6,
+					step: 0.05,
+				},
+				onChange(value) {
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.6);
+					localStorage.setItem(SIZE_MENU_ICON_SCALE_KEY, String(next));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: SIZE_MENU_RECENTS_LIMIT_KEY,
+				name: "Bubba: Empty Latent Size Menu Max Recents",
+				type: "number",
+				defaultValue: 12,
+				attrs: {
+					min: 0,
+					max: 50,
+					step: 1,
+				},
+				onChange(value) {
+					const next = normalizeIntegerSetting(value, 12, 0, 50);
+					localStorage.setItem(SIZE_MENU_RECENTS_LIMIT_KEY, String(next));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: LORA_PREVIEW_ENABLED_KEY,
+				name: "Bubba: LoRA Hover Preview",
+				type: "boolean",
+				defaultValue: true,
+				onChange(value) {
+					localStorage.setItem(LORA_PREVIEW_ENABLED_KEY, String(!!value));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: LORA_MENU_DENSE_KEY,
+				name: "Bubba: LoRA Menu Dense Rows",
+				type: "boolean",
+				defaultValue: false,
+				onChange(value) {
+					localStorage.setItem(LORA_MENU_DENSE_KEY, String(!!value));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: LORA_MENU_FONT_SCALE_KEY,
+				name: "Bubba: LoRA Menu Font Scale",
+				type: "number",
+				defaultValue: 1,
+				attrs: {
+					min: 0.8,
+					max: 1.4,
+					step: 0.05,
+				},
+				onChange(value) {
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.4);
+					localStorage.setItem(LORA_MENU_FONT_SCALE_KEY, String(next));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: LORA_MENU_CONTRAST_KEY,
+				name: "Bubba: LoRA Menu Contrast",
+				type: "number",
+				defaultValue: 1,
+				attrs: {
+					min: 0.8,
+					max: 1.5,
+					step: 0.05,
+				},
+				onChange(value) {
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.5);
+					localStorage.setItem(LORA_MENU_CONTRAST_KEY, String(next));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: LORA_MENU_ICON_SCALE_KEY,
+				name: "Bubba: LoRA Menu Icon Scale",
+				type: "number",
+				defaultValue: 1,
+				attrs: {
+					min: 0.8,
+					max: 1.6,
+					step: 0.05,
+				},
+				onChange(value) {
+					const next = normalizeNumberSetting(value, 1, 0.8, 1.6);
+					localStorage.setItem(LORA_MENU_ICON_SCALE_KEY, String(next));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: LORA_MENU_RECENTS_LIMIT_KEY,
+				name: "Bubba: LoRA Menu Max Recents",
+				type: "number",
+				defaultValue: 14,
+				attrs: {
+					min: 0,
+					max: 50,
+					step: 1,
+				},
+				onChange(value) {
+					const next = normalizeIntegerSetting(value, 14, 0, 50);
+					localStorage.setItem(LORA_MENU_RECENTS_LIMIT_KEY, String(next));
 				},
 			});
 
@@ -382,6 +695,43 @@ app.registerExtension({
 					const nextLimit = normalizeSuggestionLimit(value);
 					BubbaTextAutoComplete.suggestionLimit = nextLimit;
 					localStorage.setItem(AUTOCOMPLETE_SUGGESTION_LIMIT_KEY, String(nextLimit));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: AUTOCOMPLETE_INCLUDE_LOCAL_CSV_TAGS_KEY,
+				name: "Bubba: Include Local CSV Tags",
+				type: "boolean",
+				defaultValue: true,
+				onChange(value) {
+					localStorage.setItem(AUTOCOMPLETE_INCLUDE_LOCAL_CSV_TAGS_KEY, String(!!value));
+				},
+			});
+
+			app.ui.settings.addSetting({
+				id: AUTOCOMPLETE_CUSTOM_WORDS_KEY,
+				name: "Bubba: Autocomplete Custom Words",
+				defaultValue: "",
+				type() {
+					const container = createSettingPanel();
+					const hint = createText(
+						"Add custom autocomplete entries separated by commas or new lines. Use canon => alias one, alias two for searchable aliases.",
+						"12px",
+						0.7,
+						"0",
+					);
+					const textarea = styleSettingTextarea(document.createElement("textarea"));
+					textarea.value = localStorage.getItem(AUTOCOMPLETE_CUSTOM_WORDS_KEY) || "";
+					textarea.placeholder = "my_custom_tag\nmain tag => alias one, alias two";
+					textarea.onchange = () => {
+						localStorage.setItem(AUTOCOMPLETE_CUSTOM_WORDS_KEY, textarea.value);
+					};
+					textarea.onblur = () => {
+						localStorage.setItem(AUTOCOMPLETE_CUSTOM_WORDS_KEY, textarea.value);
+					};
+					container.appendChild(hint);
+					container.appendChild(textarea);
+					return container;
 				},
 			});
 

@@ -19,6 +19,12 @@ from .prompt_analysis import (
     find_pair_conflicts,
     normalize_prompt_csv,
 )
+from .prompt_expansion import (
+    DEFAULT_WILDCARD_DIR,
+    PromptExpansionResult,
+    PromptSelection,
+    expand_prompt_text,
+)
 
 __all__ = [
     "assemble_prompt_sections",
@@ -39,4 +45,8 @@ __all__ = [
     "find_duplicate_prompt_tokens",
     "find_pair_conflicts",
     "normalize_prompt_csv",
+    "DEFAULT_WILDCARD_DIR",
+    "PromptExpansionResult",
+    "PromptSelection",
+    "expand_prompt_text",
 ]

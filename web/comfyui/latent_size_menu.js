@@ -5,15 +5,20 @@ import {
 	makeHeadingCollapsible as makeSharedHeadingCollapsible,
 	setupKeyboardNavigation,
 } from "./menu_shared.js";
-import { readStringArray, writeStringArray } from "./storage.js";
+import { readBooleanSetting, readNumberSetting, readStringArray, writeStringArray } from "./storage.js";
 
 const EXTENSION_NAME = "bubba.EmptyLatentSizeMenu";
 const TARGET_NODE_CLASS = "BubbaEmptyLatentBySize";
 const TARGET_WIDGET_NAME = "size";
 const SIZE_MENU_FAVORITES_KEY = "bubba.SizeMenu.Favorites";
 const SIZE_MENU_RECENTS_KEY = "bubba.SizeMenu.Recents";
-const SIZE_MENU_RECENTS_LIMIT = 12;
+const SIZE_MENU_RECENTS_LIMIT_KEY = "bubba.SizeMenu.RecentsLimit";
+const SIZE_MENU_RECENTS_LIMIT_DEFAULT = 12;
 const SIZE_MENU_EXPANDED_KEY = "bubba.SizeMenu.Expanded";
+const SIZE_MENU_PREVIEW_ENABLED_KEY = "bubba.SizeMenu.Preview.Enabled";
+const SIZE_MENU_DENSE_KEY = "bubba.SizeMenu.Dense";
+const SIZE_MENU_FONT_SCALE_KEY = "bubba.SizeMenu.FontScale";
+const SIZE_MENU_ICON_SCALE_KEY = "bubba.SizeMenu.IconScale";
 
 let stylesInstalled = false;
 let previewPanel = null;
@@ -31,6 +36,8 @@ function installStyles() {
     const style = document.createElement("style");
     style.textContent = `
         .bubba-size-menu {
+            --bubba-size-font-scale: 1;
+            --bubba-size-icon-scale: 1;
             --bubba-size-border: rgba(255, 255, 255, 0.14);
             --bubba-size-bg: linear-gradient(160deg, rgba(34, 41, 53, 0.96), rgba(17, 21, 30, 0.96));
             background: var(--bubba-size-bg);
@@ -51,8 +58,11 @@ function installStyles() {
         .bubba-size-menu .litemenu-entry {
             margin: 1px 6px;
             border-radius: 8px;
-            font-size: 13px;
+            font-size: calc(13px * var(--bubba-size-font-scale));
             transition: background-color 120ms ease, transform 120ms ease;
+        }
+        .bubba-size-menu.bubba-size-menu-dense .litemenu-entry {
+            margin: 0 4px;
         }
         .bubba-size-menu .litemenu-entry.bubba-size-focused {
             background: rgba(102, 184, 255, 0.18);
@@ -69,7 +79,7 @@ function installStyles() {
         .bubba-size-heading,
         .bubba-size-quick-header {
             opacity: 0.88;
-            font-size: 11px;
+            font-size: calc(11px * var(--bubba-size-font-scale));
             font-weight: 700;
             letter-spacing: 0.03em;
             text-transform: uppercase;
@@ -95,7 +105,7 @@ function installStyles() {
             flex: 1;
         }
         .bubba-size-chevron {
-            font-size: 9px;
+            font-size: calc(9px * var(--bubba-size-icon-scale));
             opacity: 0.7;
             transition: transform 120ms ease;
             flex: 0 0 auto;
@@ -121,7 +131,7 @@ function installStyles() {
             flex: 0 0 auto;
         }
         .bubba-size-model-pill {
-            font-size: 10px;
+            font-size: calc(10px * var(--bubba-size-font-scale));
             font-weight: 700;
             letter-spacing: 0.02em;
             text-transform: uppercase;
@@ -133,7 +143,7 @@ function installStyles() {
             flex: 0 0 auto;
         }
         .bubba-size-mp-pill {
-            font-size: 11px;
+            font-size: calc(11px * var(--bubba-size-font-scale));
             opacity: 0.9;
             border: 1px solid var(--bubba-size-border);
             background: rgba(255, 255, 255, 0.08);
@@ -142,15 +152,15 @@ function installStyles() {
             flex: 0 0 auto;
         }
         .bubba-size-fav-btn {
-            width: 18px;
-            height: 18px;
+            width: calc(18px * var(--bubba-size-icon-scale));
+            height: calc(18px * var(--bubba-size-icon-scale));
             flex: 0 0 auto;
             border-radius: 50%;
             border: 1px solid rgba(255, 210, 105, 0.58);
             background: rgba(24, 18, 8, 0.92);
             color: #ffd56b;
-            font-size: 11px;
-            line-height: 16px;
+            font-size: calc(11px * var(--bubba-size-icon-scale));
+            line-height: calc(16px * var(--bubba-size-icon-scale));
             text-align: center;
             cursor: pointer;
             padding: 0;
@@ -226,6 +236,23 @@ function _writeStringArray(key, values) {
     writeStringArray(key, values);
 }
 
+function getRecentsLimit() {
+    return readNumberSetting(SIZE_MENU_RECENTS_LIMIT_KEY, SIZE_MENU_RECENTS_LIMIT_DEFAULT, 0, 50);
+}
+
+function applyMenuPreferences(menu) {
+    if (!menu) {
+        return;
+    }
+    const dense = readBooleanSetting(SIZE_MENU_DENSE_KEY, false);
+    const fontScale = readNumberSetting(SIZE_MENU_FONT_SCALE_KEY, 1, 0.8, 1.4);
+    const iconScale = readNumberSetting(SIZE_MENU_ICON_SCALE_KEY, 1, 0.8, 1.6);
+
+    menu.classList.toggle("bubba-size-menu-dense", dense);
+    menu.style.setProperty("--bubba-size-font-scale", String(fontScale));
+    menu.style.setProperty("--bubba-size-icon-scale", String(iconScale));
+}
+
 function getFavoriteValues() {
     return _readStringArray(SIZE_MENU_FAVORITES_KEY);
 }
@@ -262,7 +289,7 @@ function pushRecentValue(value) {
     }
     const next = getRecentValues().filter((item) => item !== target);
     next.unshift(target);
-    _writeStringArray(SIZE_MENU_RECENTS_KEY, next.slice(0, SIZE_MENU_RECENTS_LIMIT));
+    _writeStringArray(SIZE_MENU_RECENTS_KEY, next.slice(0, getRecentsLimit()));
 }
 
 function getExpandedGroups() {
@@ -391,6 +418,10 @@ function positionPreviewPanel(anchorElement) {
 }
 
 function showPreviewForEntry(entryElement) {
+    if (!readBooleanSetting(SIZE_MENU_PREVIEW_ENABLED_KEY, true)) {
+        hidePreviewPanel();
+        return;
+    }
     ensurePreviewPanel();
     if (!previewPanel || !previewRect || !previewTitle || !previewMeta) {
         return;
@@ -596,6 +627,7 @@ function buildQuickSection(title, values, entryByValue) {
 function buildSizeMenu(menu, selectedValue = "") {
     activeMenu = menu;
     menu.classList.add("bubba-size-menu");
+    applyMenuPreferences(menu);
 
     const entries = Array.from(menu.querySelectorAll(".litemenu-entry"));
     const selectedNormalized = String(selectedValue || "").trim();
@@ -669,7 +701,7 @@ function buildSizeMenu(menu, selectedValue = "") {
     const favorites = getFavoriteValues().filter((value) => entryByValue.has(value));
     const recents = getRecentValues().filter((value) => entryByValue.has(value) && !favorites.includes(value));
 
-    const recentSection = buildQuickSection("Recent", recents.slice(0, SIZE_MENU_RECENTS_LIMIT), entryByValue);
+    const recentSection = buildQuickSection("Recent", recents.slice(0, getRecentsLimit()), entryByValue);
     const favoriteSection = buildQuickSection("Favorites", favorites, entryByValue);
 
     if (recentSection) {

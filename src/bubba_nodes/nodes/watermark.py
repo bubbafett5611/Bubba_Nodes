@@ -1,7 +1,10 @@
 import numpy as np
 from PIL import Image
 import torch
+from comfy_api.latest import IO
 
+from ..models import BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.image_ops import pil_to_tensor_like, tensor_sample_to_pil
 
 
@@ -82,93 +85,44 @@ def _overlay_watermark(base: Image.Image, mark: Image.Image, pos_x: int, pos_y: 
     return Image.alpha_composite(base_rgba, canvas)
 
 
-class BubbaWatermark:
+class BubbaWatermark(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-                "watermark": ("IMAGE",),
-                "enabled": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Disable to bypass watermark and return the original image unchanged.",
-                    },
-                ),
-                "anchor": (
-                    _ANCHOR_POINTS,
-                    {
-                        "default": "bottom_right",
-                        "tooltip": "Anchor position for placing the watermark image.",
-                    },
-                ),
-                "image_scale": (
-                    "FLOAT",
-                    {
-                        "default": 1.0,
-                        "min": 0.01,
-                        "max": 10.0,
-                        "step": 0.01,
-                        "tooltip": "Scale multiplier where 0.5 = 50% size and 2.0 = 200% size.",
-                        "control_after_generate": False,
-                    },
-                ),
-                "alpha": (
-                    "FLOAT",
-                    {
-                        "default": 1.0,
-                        "min": 0.0,
-                        "max": 1.0,
-                        "step": 0.01,
-                        "tooltip": "Final watermark opacity. 0.0 is transparent, 1.0 is fully visible.",
-                        "control_after_generate": False,
-                    },
-                ),
-                "x_offset": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": -8192,
-                        "max": 8192,
-                    },
-                ),
-                "y_offset": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": -8192,
-                        "max": 8192,
-                    },
-                ),
-            },
-            "optional": {
-                "watermark_mask": (
-                    "MASK",
-                    {
-                        "tooltip": "Optional mask from Load Image to preserve PNG transparency.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
-    FUNCTION = "add_watermark"
-    CATEGORY = "Bubba Nodes/Image/Overlay"
-    DESCRIPTION = "Adds a watermark image using anchor position, scale, opacity, and XY offsets. Connect Load Image MASK to preserve transparency."
+    def define_schema(cls):
+        pipe = IO.Custom("BUBBA_PIPE")
+        return IO.Schema(
+            node_id="BubbaWatermark",
+            display_name="Bubba Watermark Overlay",
+            category="Bubba Nodes/Image/Overlay",
+            description="Adds a positioned, scaled watermark with optional transparency mask.",
+            inputs=[
+                IO.Image.Input("watermark"),
+                IO.Boolean.Input("enabled", default=True),
+                IO.Combo.Input("anchor", options=_ANCHOR_POINTS, default="bottom_right"),
+                IO.Float.Input("image_scale", default=1.0, min=0.01, max=10.0, step=0.01),
+                IO.Float.Input("alpha", default=1.0, min=0.0, max=1.0, step=0.01),
+                IO.Int.Input("x_offset", default=0, min=-8192, max=8192),
+                IO.Int.Input("y_offset", default=0, min=-8192, max=8192),
+                pipe.Input("pipe", optional=True),
+                IO.Image.Input("image", optional=True),
+                IO.Mask.Input("watermark_mask", optional=True),
+            ],
+            outputs=[pipe.Output("pipe"), IO.Image.Output("image")],
+        )
 
     @staticmethod
     def _resolve_anchor_position(anchor: str, base_w: int, base_h: int, mark_w: int, mark_h: int) -> tuple[int, int]:
         return _resolve_anchor_position(anchor, base_w, base_h, mark_w, mark_h)
 
-    def add_watermark(self, image, watermark, enabled, anchor, image_scale, alpha, x_offset, y_offset, watermark_mask=None):
+    @classmethod
+    def execute(cls, watermark, enabled, anchor, image_scale, alpha, x_offset, y_offset, pipe=None, image=None, watermark_mask=None):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_image = resolve_pipe_value(image, source_pipe.image, "image")
         if not enabled:
-            return (image,)
+            return IO.NodeOutput(source_pipe.updated(image=resolved_image), resolved_image)
 
         mark_pil = _build_watermark_rgba(watermark, watermark_mask=watermark_mask)
         if mark_pil is None:
-            return (image,)
+            return IO.NodeOutput(source_pipe.updated(image=resolved_image), resolved_image)
 
         scale = max(0.01, float(image_scale))
         scaled_w = max(1, int(round(mark_pil.width * scale)))
@@ -178,7 +132,7 @@ class BubbaWatermark:
         mark_pil = _apply_alpha(mark_pil, alpha)
 
         output = []
-        for sample in image:
+        for sample in resolved_image:
             src_pil = tensor_sample_to_pil(sample)
             base_w, base_h = src_pil.size
 
@@ -192,9 +146,10 @@ class BubbaWatermark:
                 pil_to_tensor_like(
                     composed,
                     sample,
-                    device=image.device,
-                    dtype=image.dtype,
+                    device=resolved_image.device,
+                    dtype=resolved_image.dtype,
                 )
             )
 
-        return (torch.stack(output, dim=0),)
+        output_image = torch.stack(output, dim=0)
+        return IO.NodeOutput(source_pipe.updated(image=output_image), output_image)

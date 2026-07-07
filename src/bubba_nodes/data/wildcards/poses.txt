@@ -1,0 +1,34 @@
+# Danbooru posture and pose tags
+standing
+sitting
+kneeling
+lying
+reclining
+crouching
+squatting
+walking
+running
+jumping
+midair
+all fours
+contrapposto
+crossed legs
+legs apart
+crossed arms
+arms behind head
+arms up
+arms at sides
+outstretched arm
+outstretched arms
+victory pose
+fighting stance
+head tilt
+head down
+leaning forward
+leaning back
+back-to-back
+face-to-face
+holding hands
+hug
+princess carry
+piggyback

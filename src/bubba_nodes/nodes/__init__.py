@@ -1,75 +1,78 @@
 from __future__ import annotations
 
 import importlib
-import logging
 from dataclasses import dataclass
-from typing import Any
 
-
-logger = logging.getLogger("bubba_nodes")
+from comfy_api.latest import ComfyExtension
 
 
 @dataclass(frozen=True)
 class NodeSpec:
     module_name: str
     class_name: str
-    display_name: str
 
 
 _NODE_SPECS = (
-    # Workflow
-    NodeSpec("filename", "BubbaFilename", "Bubba Filename Builder"),
-    # Generation
-    NodeSpec("empty_latent_by_size", "BubbaEmptyLatentBySize", "Bubba Empty Latent (Preset Sizes)"),
-    NodeSpec("checkpoint_loader", "BubbaCheckpointLoader", "Bubba Checkpoint Loader"),
-    NodeSpec("combo_loader", "BubbaComboLoader", "Bubba Combo Loader"),
-    NodeSpec("lora_loader", "BubbaLoraLoader", "Bubba LoRA Loader"),
-    NodeSpec("k_sampler", "BubbaKSampler", "Bubba KSampler"),
-    NodeSpec("detailer", "BubbaDetailer", "Bubba Detailer"),
-    # Prompt
-    NodeSpec("character_prompt_builder", "BubbaCharacterPromptBuilder", "Bubba Character Prompt Builder"),
-    NodeSpec("simple_prompt_builder", "BubbaSimplePromptBuilder", "Bubba Simple Prompt Builder"),
-    NodeSpec("prompt_randomizer", "BubbaPromptRandomizer", "Bubba Prompt Randomizer"),
-    NodeSpec("prompt_cleaner", "BubbaPromptCleaner", "Bubba Prompt Cleaner"),
-    NodeSpec("prompt_inspector", "BubbaPromptInspector", "Bubba Prompt Inspector"),
-    # Metadata
-    NodeSpec("metadata_debug", "BubbaMetadataDebug", "Bubba Metadata Debug"),
-    # Image IO + overlays
-    NodeSpec("upscaler", "BubbaUpscaler", "Bubba Upscaler (ESRGAN)"),
-    NodeSpec("image_compare", "BubbaImageCompare", "Bubba Image Compare"),
-    NodeSpec("load_image_with_metadata", "BubbaLoadImageWithMetadata", "Bubba Load Image (With Metadata)"),
-    NodeSpec("save_image", "BubbaSaveImage", "Bubba Save Image"),
-    NodeSpec("overlay_from_metadata", "BubbaOverlayFromMetadata", "Bubba Add Text Overlay (Metadata)"),
-    NodeSpec("watermark", "BubbaWatermark", "Bubba Watermark Overlay"),
+    NodeSpec("pipe_in", "BubbaPipeIn"),
+    NodeSpec("pipe_out", "BubbaPipeOut"),
+    NodeSpec("seed_control", "BubbaSeedControl"),
+    NodeSpec("sampler_controls", "BubbaSamplerControls"),
+    NodeSpec("filename", "BubbaFilename"),
+    NodeSpec("empty_latent_by_size", "BubbaEmptyLatentBySize"),
+    NodeSpec("checkpoint_loader", "BubbaCheckpointLoader"),
+    NodeSpec("combo_loader", "BubbaComboLoader"),
+    NodeSpec("model_compare_loader", "BubbaModelCompareLoader"),
+    NodeSpec("model_components_override", "BubbaModelComponentsOverride"),
+    NodeSpec("checkpoint_merge", "BubbaCheckpointMerge"),
+    NodeSpec("checkpoint_merge", "BubbaTripleCheckpointMerge"),
+    NodeSpec("checkpoint_save", "BubbaSaveCheckpoint"),
+    NodeSpec("checkpoint_save", "BubbaMergeNamingHelper"),
+    NodeSpec("checkpoint_merge", "BubbaCheckpointFingerprint"),
+    NodeSpec("merge_preview_prompt_runner", "BubbaMergePreviewPromptRunner"),
+    NodeSpec("lora_loader", "BubbaLoraLoader"),
+    NodeSpec("lora_stack", "BubbaLoraStack"),
+    NodeSpec("conditioning_multiply", "BubbaConditioningMultiply"),
+    NodeSpec("k_sampler", "BubbaKSampler"),
+    NodeSpec("detailer", "BubbaDetailer"),
+    NodeSpec("character_prompt_builder", "BubbaCharacterPromptBuilder"),
+    NodeSpec("simple_prompt_builder", "BubbaSimplePromptBuilder"),
+    NodeSpec("prompt_randomizer", "BubbaPromptRandomizer"),
+    NodeSpec("prompt_cleaner", "BubbaPromptCleaner"),
+    NodeSpec("prompt_inspector", "BubbaPromptInspector"),
+    NodeSpec("metadata_debug", "BubbaMetadataDebug"),
+    NodeSpec("view_text", "BubbaViewText"),
+    NodeSpec("upscaler", "BubbaUpscaler"),
+    NodeSpec("tiled_diffusion_upscaler", "BubbaTiledDiffusionUpscaler"),
+    NodeSpec("image_compare", "BubbaImageCompare"),
+    NodeSpec("model_compare_sheet", "BubbaModelCompareSheet"),
+    NodeSpec("load_image_with_metadata", "BubbaLoadImageWithMetadata"),
+    NodeSpec("save_image", "BubbaSaveImage"),
+    NodeSpec("discord_webhook", "BubbaDiscordWebhook"),
+    NodeSpec("overlay_from_metadata", "BubbaOverlayFromMetadata"),
+    NodeSpec("watermark", "BubbaWatermark"),
 )
 
 
-NODE_CLASS_MAPPINGS: dict[str, type[Any]] = {}
-NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {}
-UNAVAILABLE_NODE_MAPPINGS: dict[str, str] = {}
-
-
-def _register_node(spec: NodeSpec) -> None:
-    try:
-        module = importlib.import_module(f".{spec.module_name}", __name__)
-        node_class = getattr(module, spec.class_name)
-    except Exception as error:
-        UNAVAILABLE_NODE_MAPPINGS[spec.class_name] = str(error)
-        logger.warning("Bubba node %s unavailable: %s", spec.class_name, error)
-        return
-
-    globals()[spec.class_name] = node_class
-    NODE_CLASS_MAPPINGS[spec.class_name] = node_class
-    NODE_DISPLAY_NAME_MAPPINGS[spec.class_name] = spec.display_name
-
-
+V3_NODE_CLASSES = []
 for _spec in _NODE_SPECS:
-    _register_node(_spec)
+    _module = importlib.import_module(f".{_spec.module_name}", __name__)
+    _node_class = getattr(_module, _spec.class_name)
+    globals()[_spec.class_name] = _node_class
+    V3_NODE_CLASSES.append(_node_class)
 
 
-__all__ = [
-    "NODE_CLASS_MAPPINGS",
-    "NODE_DISPLAY_NAME_MAPPINGS",
-    "UNAVAILABLE_NODE_MAPPINGS",
-    *(spec.class_name for spec in _NODE_SPECS if spec.class_name in globals()),
-]
+class BubbaNodesExtension(ComfyExtension):
+    async def on_load(self) -> None:
+        from ..server import register_all_routes
+
+        register_all_routes()
+
+    async def get_node_list(self):
+        return V3_NODE_CLASSES
+
+
+async def comfy_entrypoint():
+    return BubbaNodesExtension()
+
+
+__all__ = ["V3_NODE_CLASSES", *(spec.class_name for spec in _NODE_SPECS)]
