@@ -8,16 +8,23 @@ from unittest.mock import MagicMock
 
 import pytest
 
+COMFY_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(COMFY_ROOT))
+
 
 def _install_runtime_mocks():
+    from comfy_api.latest import IO, UI
+
     # Mock ComfyUI nodes module used by checkpoint/sampler nodes.
     mock_nodes = MagicMock()
     mock_nodes.CheckpointLoaderSimple = MagicMock()
+    mock_nodes.LoraLoader = MagicMock()
+    mock_nodes.ConditioningMultiply = MagicMock()
     mock_nodes.common_ksampler = MagicMock()
     mock_nodes.InpaintModelConditioning = MagicMock()
     sys.modules["nodes"] = mock_nodes
 
-    # Mock comfy.samplers for sampler INPUT_TYPES class constants.
+    # Mock sampler and scheduler lists supplied by ComfyUI internals.
     comfy_module = types.ModuleType("comfy")
     comfy_samplers = types.ModuleType("comfy.samplers")
 
@@ -31,24 +38,20 @@ def _install_runtime_mocks():
     sys.modules["comfy"] = comfy_module
     sys.modules["comfy.samplers"] = comfy_samplers
 
-    # Mock comfy_api.latest.UI for save image node imports.
-    comfy_api_module = types.ModuleType("comfy_api")
-    comfy_api_latest = types.ModuleType("comfy_api.latest")
+    # Keep the real public V3 API; only replace UI operations that write files.
+    IO.NodeOutput.__iter__ = lambda self: iter(self.args)
 
-    ui = MagicMock()
+    ui = UI
     preview_result = MagicMock()
     preview_result.as_dict.return_value = {"images": []}
-    ui.PreviewImage.return_value = preview_result
+    ui.PreviewImage = MagicMock(return_value=preview_result)
+    preview_text_result = MagicMock()
+    preview_text_result.as_dict.side_effect = lambda: {"text": [str(ui.PreviewText.call_args.args[0] or "")]}
+    ui.PreviewText = MagicMock(return_value=preview_text_result)
 
     save_result = MagicMock()
     save_result.as_dict.return_value = {"images": []}
-    ui.ImageSaveHelper.get_save_images_ui.return_value = save_result
-
-    comfy_api_latest.UI = ui  # type: ignore[attr-defined]
-    comfy_api_module.latest = comfy_api_latest  # type: ignore[attr-defined]
-
-    sys.modules["comfy_api"] = comfy_api_module
-    sys.modules["comfy_api.latest"] = comfy_api_latest
+    ui.ImageSaveHelper.get_save_images_ui = MagicMock(return_value=save_result)
 
     # Mock folder_paths used by combo loader and server routes.
     folder_paths = types.ModuleType("folder_paths")

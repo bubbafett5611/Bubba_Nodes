@@ -1,52 +1,42 @@
 from __future__ import annotations
 
+from comfy_api.latest import IO
+
 from ..models import BubbaPipe
 
+BUBBA_PIPE = IO.Custom("BUBBA_PIPE")
+BUBBA_METADATA = IO.Custom("BUBBA_METADATA")
 
-class BubbaPipeOut:
+
+class BubbaPipeOut(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Bubba pipe to unpack into visible sockets."}),
-            },
-        }
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BubbaPipeOut",
+            display_name="Bubba Pipe Out",
+            category="Bubba Nodes/Pipe",
+            description="Unpacks a Bubba pipe into visible sockets for advanced graph wiring.",
+            inputs=[BUBBA_PIPE.Input("pipe", tooltip="Bubba pipe to unpack into visible sockets.")],
+            outputs=[
+                BUBBA_PIPE.Output("pipe"),
+                IO.Image.Output("image"),
+                IO.Mask.Output("mask"),
+                IO.Latent.Output("latent"),
+                BUBBA_METADATA.Output("metadata"),
+                IO.Model.Output("model"),
+                IO.Clip.Output("clip"),
+                IO.Vae.Output("vae"),
+                IO.Conditioning.Output("positive"),
+                IO.Conditioning.Output("negative"),
+                IO.String.Output("positive_prompt"),
+                IO.String.Output("negative_prompt"),
+            ],
+        )
 
-    RETURN_TYPES = (
-        "BUBBA_PIPE",
-        "IMAGE",
-        "MASK",
-        "LATENT",
-        "BUBBA_METADATA",
-        "MODEL",
-        "CLIP",
-        "VAE",
-        "CONDITIONING",
-        "CONDITIONING",
-        "STRING",
-        "STRING",
-    )
-    RETURN_NAMES = (
-        "pipe",
-        "image",
-        "mask",
-        "latent",
-        "metadata",
-        "model",
-        "clip",
-        "vae",
-        "positive",
-        "negative",
-        "positive_prompt",
-        "negative_prompt",
-    )
-    FUNCTION = "unpack_pipe"
-    CATEGORY = "Bubba Nodes/Pipe"
-    DESCRIPTION = "Unpacks a Bubba pipe into visible sockets for advanced graph wiring."
-
-    def unpack_pipe(self, pipe):
+    @classmethod
+    def execute(cls, pipe):
         source_pipe = BubbaPipe.coerce(pipe)
-        return (
+        return IO.NodeOutput(
             source_pipe,
             source_pipe.image,
             source_pipe.mask,

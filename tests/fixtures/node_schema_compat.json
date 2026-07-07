@@ -1,0 +1,2417 @@
+{
+  "BubbaPipeIn": {
+    "display_name": "Bubba Pipe In",
+    "category": "Bubba Nodes/Pipe",
+    "inputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "image",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "mask",
+        "type": "MASK",
+        "optional": true
+      },
+      {
+        "name": "latent",
+        "type": "LATENT",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "model",
+        "type": "MODEL",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      },
+      {
+        "name": "vae",
+        "type": "VAE",
+        "optional": true
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING",
+        "optional": true
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING",
+        "optional": true
+      },
+      {
+        "name": "positive_prompt",
+        "type": "STRING",
+        "optional": true
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      }
+    ]
+  },
+  "BubbaPipeOut": {
+    "display_name": "Bubba Pipe Out",
+    "category": "Bubba Nodes/Pipe",
+    "inputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "mask",
+        "type": "MASK"
+      },
+      {
+        "name": "latent",
+        "type": "LATENT"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "name": "clip",
+        "type": "CLIP"
+      },
+      {
+        "name": "vae",
+        "type": "VAE"
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "positive_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaFilename": {
+    "display_name": "Bubba Filename Builder",
+    "category": "Bubba Nodes/Workflow",
+    "inputs": [
+      {
+        "name": "character_name",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "scene_name",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "save_prefix",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaEmptyLatentBySize": {
+    "display_name": "Bubba Empty Latent (Preset Sizes)",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "size",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "invert_aspect_ratio",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "batch_size",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "latent",
+        "type": "LATENT"
+      },
+      {
+        "name": "width",
+        "type": "INT"
+      },
+      {
+        "name": "height",
+        "type": "INT"
+      }
+    ]
+  },
+  "BubbaCheckpointLoader": {
+    "display_name": "Bubba Checkpoint Loader",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "ckpt_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "name": "clip",
+        "type": "CLIP"
+      },
+      {
+        "name": "vae",
+        "type": "VAE"
+      },
+      {
+        "name": "checkpoint_name",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaComboLoader": {
+    "display_name": "Bubba Combo Loader",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "ckpt_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "clip_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "vae_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "clip_type",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "clip_skip",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "clip_device",
+        "type": "COMBO",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "name": "clip",
+        "type": "CLIP"
+      },
+      {
+        "name": "vae",
+        "type": "VAE"
+      },
+      {
+        "name": "checkpoint_name",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaCheckpointMerge": {
+    "display_name": "Bubba Checkpoint Merge",
+    "category": "Bubba Nodes/Merge",
+    "inputs": [
+      {
+        "name": "checkpoint_a",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "checkpoint_b",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "ratio",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "checkpoint_merge",
+        "type": "BUBBA_CHECKPOINT_MERGE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "name": "clip",
+        "type": "CLIP"
+      },
+      {
+        "name": "vae",
+        "type": "VAE"
+      },
+      {
+        "name": "merge_recipe",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaTripleCheckpointMerge": {
+    "display_name": "Bubba Triple Checkpoint Merge",
+    "category": "Bubba Nodes/Merge",
+    "inputs": [
+      {
+        "name": "checkpoint_a",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "checkpoint_b",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "checkpoint_c",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "strength",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "checkpoint_merge",
+        "type": "BUBBA_CHECKPOINT_MERGE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "name": "clip",
+        "type": "CLIP"
+      },
+      {
+        "name": "vae",
+        "type": "VAE"
+      },
+      {
+        "name": "merge_recipe",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaSaveCheckpoint": {
+    "display_name": "Bubba Save Checkpoint",
+    "category": "Bubba Nodes/Merge",
+    "inputs": [
+      {
+        "name": "checkpoint_merge",
+        "type": "BUBBA_CHECKPOINT_MERGE",
+        "optional": false
+      },
+      {
+        "name": "filename_prefix",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "overwrite",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "save_recipe_sidecar",
+        "type": "BOOLEAN",
+        "optional": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "checkpoint_name",
+        "type": "STRING"
+      },
+      {
+        "name": "checkpoint_path",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaMergeNamingHelper": {
+    "display_name": "Bubba Merge Naming Helper",
+    "category": "Bubba Nodes/Merge",
+    "inputs": [
+      {
+        "name": "base_name",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "folder",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "suffix",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "checkpoint_merge",
+        "type": "BUBBA_CHECKPOINT_MERGE",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "filename_prefix",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaCheckpointFingerprint": {
+    "display_name": "Bubba Checkpoint Fingerprint",
+    "category": "Bubba Nodes/Merge",
+    "inputs": [
+      {
+        "name": "checkpoint",
+        "type": "COMBO",
+        "optional": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "checkpoint_name",
+        "type": "STRING"
+      },
+      {
+        "name": "sha256",
+        "type": "STRING"
+      },
+      {
+        "name": "short_hash",
+        "type": "STRING"
+      },
+      {
+        "name": "file_size_bytes",
+        "type": "INT"
+      },
+      {
+        "name": "modified_at",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaMergePreviewPromptRunner": {
+    "display_name": "Bubba Merge Preview Prompt Runner",
+    "category": "Bubba Nodes/Merge",
+    "inputs": [
+      {
+        "name": "test_case",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "custom_positive",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "custom_negative",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "append_custom_text",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "cleanup",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      },
+      {
+        "name": "checkpoint_merge",
+        "type": "BUBBA_CHECKPOINT_MERGE",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "positive_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "test_name",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaLoraLoader": {
+    "display_name": "Bubba LoRA Loader",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "lora_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "strength_model",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "strength_clip",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "model",
+        "type": "MODEL",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "name": "clip",
+        "type": "CLIP"
+      },
+      {
+        "name": "lora_name",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaLoraStack": {
+    "display_name": "Bubba LoRA Stack",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "lora_1_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "lora_1_strength_model",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_1_strength_clip",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_1_enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "lora_2_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "lora_2_strength_model",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_2_strength_clip",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_2_enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "lora_3_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "lora_3_strength_model",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_3_strength_clip",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_3_enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "lora_4_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "lora_4_strength_model",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_4_strength_clip",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_4_enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "lora_5_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "lora_5_strength_model",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_5_strength_clip",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_5_enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "lora_6_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "lora_6_strength_model",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_6_strength_clip",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "lora_6_enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "model",
+        "type": "MODEL",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "name": "clip",
+        "type": "CLIP"
+      },
+      {
+        "name": "lora_names",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaConditioningMultiply": {
+    "display_name": "Bubba Conditioning Multiply",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "positive_strength",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "negative_strength",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "mode",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING",
+        "optional": true
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaKSampler": {
+    "display_name": "Bubba KSampler",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "seed",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "steps",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "cfg",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "sampler_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "scheduler",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "denoise",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "latent_image",
+        "type": "LATENT",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "model",
+        "type": "MODEL",
+        "optional": true
+      },
+      {
+        "name": "vae",
+        "type": "VAE",
+        "optional": true
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING",
+        "optional": true
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "latent",
+        "type": "LATENT"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaDetailer": {
+    "display_name": "Bubba Detailer",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {
+        "name": "detector_model_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "confidence",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "mask_dilation",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "mask_blur",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "inpaint_padding",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "force_square_crop",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "guide_size",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "guide_size_for",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "max_size",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "seed",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "steps",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "cfg",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "sampler_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "scheduler",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "denoise",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "max_detections",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "image",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "model",
+        "type": "MODEL",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      },
+      {
+        "name": "vae",
+        "type": "VAE",
+        "optional": true
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING",
+        "optional": true
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING",
+        "optional": true
+      },
+      {
+        "name": "detail_positive",
+        "type": "STRING",
+        "optional": true
+      },
+      {
+        "name": "detail_negative",
+        "type": "STRING",
+        "optional": true
+      },
+      {
+        "name": "include_labels",
+        "type": "STRING",
+        "optional": true
+      },
+      {
+        "name": "exclude_labels",
+        "type": "STRING",
+        "optional": true
+      },
+      {
+        "name": "inpaint_model",
+        "type": "BOOLEAN",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "mask",
+        "type": "MASK"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaCharacterPromptBuilder": {
+    "display_name": "Bubba Character Prompt Builder",
+    "category": "Bubba Nodes/Prompt",
+    "inputs": [
+      {
+        "name": "appearance",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "body",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "clothing",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "pose",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "expression",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "scene",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "style_tags",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "quality_tags",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "negative_tags",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "format_mode",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "cleanup",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "dedupe",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "positive_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaSimplePromptBuilder": {
+    "display_name": "Bubba Simple Prompt Builder",
+    "category": "Bubba Nodes/Prompt",
+    "inputs": [
+      {
+        "name": "positive",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "negative",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "cleanup",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "dedupe",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "prompt_seed",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "positive_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "expansion_report",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaPromptRandomizer": {
+    "display_name": "Bubba Prompt Randomizer",
+    "category": "Bubba Nodes/Prompt",
+    "inputs": [
+      {
+        "name": "seed",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "prefix_text",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "extra_positive",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "cleanup",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "dedupe",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "remove_category_underscores",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "1_character_presets",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "accessories_extra",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "beard",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "body_build",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "bottoms",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "breasts",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "butt",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "expression",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "eye_color",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "face_features",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "fashion_style",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "hair_accessories",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "hair_color",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "hair_style",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "outfit",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "pose",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "setting",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "shoes",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "skin_markings",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "tops",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "weather",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "positive_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING"
+      },
+      {
+        "name": "chosen_values",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaPromptCleaner": {
+    "display_name": "Bubba Prompt Cleaner",
+    "category": "Bubba Nodes/Prompt",
+    "inputs": [
+      {
+        "name": "positive_prompt",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "cleanup",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "dedupe",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "clip",
+        "type": "CLIP",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "clean_positive",
+        "type": "STRING"
+      },
+      {
+        "name": "clean_negative",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaPromptInspector": {
+    "display_name": "Bubba Prompt Inspector",
+    "category": "Bubba Nodes/Prompt",
+    "inputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "positive_prompt",
+        "type": "STRING",
+        "optional": true
+      },
+      {
+        "name": "negative_prompt",
+        "type": "STRING",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "token_count",
+        "type": "INT"
+      },
+      {
+        "name": "duplicate_tags",
+        "type": "STRING"
+      },
+      {
+        "name": "conflict_warnings",
+        "type": "STRING"
+      },
+      {
+        "name": "formatted_preview",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaMetadataDebug": {
+    "display_name": "Bubba Metadata Debug",
+    "category": "Bubba Nodes/Metadata",
+    "inputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "metadata_text",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaViewText": {
+    "display_name": "Bubba View Text",
+    "category": "Bubba Nodes/Utilities",
+    "inputs": [
+      {
+        "name": "text",
+        "type": "STRING",
+        "optional": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "text",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaUpscaler": {
+    "display_name": "Bubba Upscaler (ESRGAN)",
+    "category": "Bubba Nodes/Image",
+    "inputs": [
+      {
+        "name": "upscale_model_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "scale_by",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "resize_method",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "image",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      }
+    ]
+  },
+  "BubbaTiledDiffusionUpscaler": {
+    "display_name": "Bubba Tiled KSampler Upscaler (Seam Fix)",
+    "category": "Bubba Nodes/Image",
+    "inputs": [
+      {
+        "name": "seed",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "steps",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "cfg",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "sampler_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "scheduler",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "denoise",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "tile_width",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "tile_height",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "scale_by",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "overlap",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "resize_method",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "mask_blur",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "redraw_mode",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "seam_fix_mode",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "seam_fix_denoise",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "seam_fix_width",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "seam_fix_mask_blur",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "seam_fix_padding",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "upscale_model_name",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "image",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "latent",
+        "type": "LATENT",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      },
+      {
+        "name": "model",
+        "type": "MODEL",
+        "optional": true
+      },
+      {
+        "name": "vae",
+        "type": "VAE",
+        "optional": true
+      },
+      {
+        "name": "positive",
+        "type": "CONDITIONING",
+        "optional": true
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "latent",
+        "type": "LATENT"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaImageCompare": {
+    "display_name": "Bubba Image Compare",
+    "category": "Bubba Nodes/Image",
+    "inputs": [
+      {
+        "name": "pipe_a",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "pipe_b",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "image_a",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "image_b",
+        "type": "IMAGE",
+        "optional": true
+      }
+    ],
+    "outputs": []
+  },
+  "BubbaLoadImageWithMetadata": {
+    "display_name": "Bubba Load Image (With Metadata)",
+    "category": "Bubba Nodes/Image/Load",
+    "inputs": [
+      {
+        "name": "image",
+        "type": "COMBO",
+        "optional": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "mask",
+        "type": "MASK"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "metadata_text",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaSaveImage": {
+    "display_name": "Bubba Save Image",
+    "category": "Bubba Nodes/Image/Save",
+    "inputs": [
+      {
+        "name": "save_prefix",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "preview_only",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "save_workflow_metadata",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "save_a1111_metadata",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "images",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "saved_paths",
+        "type": "STRING"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaDiscordWebhook": {
+    "display_name": "Bubba Discord Webhook",
+    "category": "Bubba Nodes/Image/Send",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "webhook_profile",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "message",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "include_embed",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "include_positive_prompt",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "include_negative_prompt",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "include_generation_info",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "include_loras",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "image_format",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "images",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      },
+      {
+        "name": "info",
+        "type": "STRING"
+      }
+    ]
+  },
+  "BubbaOverlayFromMetadata": {
+    "display_name": "Bubba Add Text Overlay (Metadata)",
+    "category": "Bubba Nodes/Image/Overlay",
+    "inputs": [
+      {
+        "name": "show_model",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "model_position",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "show_info",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "info_position",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "show_positive",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "positive_position",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "show_negative",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "negative_position",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "background_color",
+        "type": "STRING",
+        "optional": false
+      },
+      {
+        "name": "font_size",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "overlay_mode",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "image",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "metadata",
+        "type": "BUBBA_METADATA"
+      }
+    ]
+  },
+  "BubbaSamplerControls": {
+    "display_name": "Bubba Sampler Controls",
+    "category": "Bubba Nodes/Workflow",
+    "inputs": [
+      {"name": "steps", "type": "INT", "optional": false},
+      {"name": "cfg", "type": "FLOAT", "optional": false},
+      {"name": "sampler_name", "type": "COMBO", "optional": false},
+      {"name": "scheduler", "type": "COMBO", "optional": false},
+      {"name": "denoise", "type": "FLOAT", "optional": false}
+    ],
+    "outputs": [
+      {"name": "steps", "type": "INT"},
+      {"name": "cfg", "type": "FLOAT"},
+      {"name": "sampler_name", "type": "COMBO"},
+      {"name": "scheduler", "type": "COMBO"},
+      {"name": "denoise", "type": "FLOAT"}
+    ]
+  },
+  "BubbaSeedControl": {
+    "display_name": "Bubba Seed Control",
+    "category": "Bubba Nodes/Workflow",
+    "inputs": [
+      {"name": "seed", "type": "INT", "optional": false}
+    ],
+    "outputs": [
+      {"name": "seed", "type": "INT"},
+      {"name": "info", "type": "STRING"}
+    ]
+  },
+  "BubbaModelCompareLoader": {
+    "display_name": "Bubba Model Compare Loader",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {"name": "pipe", "type": "BUBBA_PIPE", "optional": true},
+      {"name": "model_1", "type": "COMBO", "optional": false},
+      {"name": "model_2", "type": "COMBO", "optional": false},
+      {"name": "model_3", "type": "COMBO", "optional": false},
+      {"name": "model_4", "type": "COMBO", "optional": false},
+      {"name": "replace_clip", "type": "BOOLEAN", "optional": false},
+      {"name": "replace_vae", "type": "BOOLEAN", "optional": false}
+    ],
+    "outputs": [
+      {"name": "pipe_1", "type": "BUBBA_PIPE"},
+      {"name": "pipe_2", "type": "BUBBA_PIPE"},
+      {"name": "pipe_3", "type": "BUBBA_PIPE"},
+      {"name": "pipe_4", "type": "BUBBA_PIPE"},
+      {"name": "info", "type": "STRING"}
+    ]
+  },
+  "BubbaModelComponentsOverride": {
+    "display_name": "Bubba Model Components Override",
+    "category": "Bubba Nodes/Generation",
+    "inputs": [
+      {"name": "pipe", "type": "BUBBA_PIPE", "optional": false},
+      {"name": "clip_name", "type": "COMBO", "optional": false},
+      {"name": "vae_name", "type": "COMBO", "optional": false},
+      {"name": "clip_type", "type": "COMBO", "optional": false},
+      {"name": "clip_skip", "type": "INT", "optional": false},
+      {"name": "clip_device", "type": "COMBO", "optional": false}
+    ],
+    "outputs": [
+      {"name": "pipe", "type": "BUBBA_PIPE"},
+      {"name": "metadata", "type": "BUBBA_METADATA"},
+      {"name": "model", "type": "MODEL"},
+      {"name": "clip", "type": "CLIP"},
+      {"name": "vae", "type": "VAE"},
+      {"name": "info", "type": "STRING"}
+    ]
+  },
+  "BubbaModelCompareSheet": {
+    "display_name": "Bubba Model Compare Sheet",
+    "category": "Bubba Nodes/Image",
+    "inputs": [
+      {"name": "pipe_1", "type": "BUBBA_PIPE", "optional": true},
+      {"name": "pipe_2", "type": "BUBBA_PIPE", "optional": true},
+      {"name": "pipe_3", "type": "BUBBA_PIPE", "optional": true},
+      {"name": "pipe_4", "type": "BUBBA_PIPE", "optional": true},
+      {"name": "image_1", "type": "IMAGE", "optional": true},
+      {"name": "image_2", "type": "IMAGE", "optional": true},
+      {"name": "image_3", "type": "IMAGE", "optional": true},
+      {"name": "image_4", "type": "IMAGE", "optional": true},
+      {"name": "layout", "type": "COMBO", "optional": false},
+      {"name": "fit_mode", "type": "COMBO", "optional": false},
+      {"name": "gap", "type": "INT", "optional": false},
+      {"name": "background", "type": "COMBO", "optional": false},
+      {"name": "font_size", "type": "INT", "optional": false},
+      {"name": "label_position", "type": "COMBO", "optional": false}
+    ],
+    "outputs": [
+      {"name": "pipe", "type": "BUBBA_PIPE"},
+      {"name": "image", "type": "IMAGE"},
+      {"name": "metadata", "type": "BUBBA_METADATA"},
+      {"name": "info", "type": "STRING"}
+    ]
+  },
+  "BubbaWatermark": {
+    "display_name": "Bubba Watermark Overlay",
+    "category": "Bubba Nodes/Image/Overlay",
+    "inputs": [
+      {
+        "name": "watermark",
+        "type": "IMAGE",
+        "optional": false
+      },
+      {
+        "name": "enabled",
+        "type": "BOOLEAN",
+        "optional": false
+      },
+      {
+        "name": "anchor",
+        "type": "COMBO",
+        "optional": false
+      },
+      {
+        "name": "image_scale",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "alpha",
+        "type": "FLOAT",
+        "optional": false
+      },
+      {
+        "name": "x_offset",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "y_offset",
+        "type": "INT",
+        "optional": false
+      },
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE",
+        "optional": true
+      },
+      {
+        "name": "image",
+        "type": "IMAGE",
+        "optional": true
+      },
+      {
+        "name": "watermark_mask",
+        "type": "MASK",
+        "optional": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "pipe",
+        "type": "BUBBA_PIPE"
+      },
+      {
+        "name": "image",
+        "type": "IMAGE"
+      }
+    ]
+  }
+}

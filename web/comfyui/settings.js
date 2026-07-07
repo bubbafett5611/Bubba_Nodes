@@ -171,6 +171,121 @@ function getStoredCivitaiDomain() {
 	return CIVITAI_DOMAIN_OPTIONS.some((option) => option.value === current) ? current : CIVITAI_DOMAIN_KEEP;
 }
 
+function createDiscordProfilesSetting() {
+	const container = createSettingPanel();
+	const hint = createText(
+		"Store Discord webhook credentials on the ComfyUI server. Workflows contain only the profile name, never the webhook URL.",
+		"12px",
+		0.75,
+		"0",
+	);
+	const status = createStatusText("Loading webhook profiles…");
+	const profileSelect = styleSettingSelect(document.createElement("select"));
+	const nameInput = styleSettingInput(document.createElement("input"));
+	nameInput.type = "text";
+	nameInput.placeholder = "profile name (for example: default)";
+	const urlInput = styleSettingInput(document.createElement("input"));
+	urlInput.type = "password";
+	urlInput.autocomplete = "off";
+	urlInput.placeholder = "https://discord.com/api/webhooks/…";
+	urlInput.style.maxWidth = "520px";
+	urlInput.style.flex = "1 1 360px";
+
+	const setStatus = (message, isError = false) => {
+		status.textContent = message;
+		status.style.color = isError ? "var(--error-text, #ff9b9b)" : "";
+	};
+
+	const refreshProfiles = async (selectedName = "") => {
+		try {
+			const response = await fetch("/bubba/discord/profiles");
+			const result = await response.json();
+			if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+			profileSelect.replaceChildren();
+			const placeholder = document.createElement("option");
+			placeholder.value = "";
+			placeholder.textContent = result.profiles?.length ? "Select a saved profile" : "No profiles configured";
+			profileSelect.appendChild(placeholder);
+			for (const name of result.profiles || []) {
+				const option = document.createElement("option");
+				option.value = name;
+				option.textContent = name;
+				profileSelect.appendChild(option);
+			}
+			profileSelect.value = selectedName && (result.profiles || []).includes(selectedName) ? selectedName : "";
+			setStatus(`${result.profiles?.length || 0} webhook profile(s) configured.`);
+		} catch (error) {
+			setStatus(`Could not load profiles: ${error.message || error}`, true);
+		}
+	};
+
+	profileSelect.onchange = () => {
+		nameInput.value = profileSelect.value;
+		urlInput.value = "";
+		if (profileSelect.value) {
+			setStatus(`Enter a new URL to replace “${profileSelect.value}”. Saved URLs are never displayed.`);
+		}
+	};
+
+	const saveButton = document.createElement("button");
+	saveButton.textContent = "Save / Replace Profile";
+	saveButton.onclick = async () => {
+		saveButton.disabled = true;
+		try {
+			const response = await fetch("/bubba/discord/profiles", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: nameInput.value, url: urlInput.value }),
+			});
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+			const savedName = nameInput.value.trim();
+			urlInput.value = "";
+			await refreshProfiles(savedName);
+			setStatus(`Saved webhook profile “${savedName}”.`);
+		} catch (error) {
+			setStatus(error.message || String(error), true);
+		} finally {
+			saveButton.disabled = false;
+		}
+	};
+
+	const deleteButton = document.createElement("button");
+	deleteButton.textContent = "Delete Selected Profile";
+	deleteButton.onclick = async () => {
+		const name = profileSelect.value;
+		if (!name) {
+			setStatus("Select a saved profile to delete.", true);
+			return;
+		}
+		deleteButton.disabled = true;
+		try {
+			const response = await fetch(`/bubba/discord/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+			nameInput.value = "";
+			urlInput.value = "";
+			await refreshProfiles();
+			setStatus(`Deleted webhook profile “${name}”.`);
+		} catch (error) {
+			setStatus(error.message || String(error), true);
+		} finally {
+			deleteButton.disabled = false;
+		}
+	};
+
+	const fields = createFieldRow();
+	fields.appendChild(nameInput);
+	fields.appendChild(urlInput);
+	container.appendChild(hint);
+	container.appendChild(profileSelect);
+	container.appendChild(fields);
+	container.appendChild(createButtonRow([saveButton, deleteButton]));
+	container.appendChild(status);
+	refreshProfiles();
+	return container;
+}
+
 app.registerExtension({
 	name: "bubba.core",
 	async init() {
@@ -189,6 +304,7 @@ app.registerExtension({
 			const { installSaveResultWarnings } = await import("./save_result_warnings.js");
 			const { installMetadataDebugNode } = await import("./metadata_debug_node.js");
 			const { installViewTextNode } = await import("./view_text_node.js");
+			const { installDiscordWebhookNode } = await import("./discord_webhook_node.js");
 
 			// installStringWidgetHook() is deferred to setup() where ComfyWidgets.STRING is ready
 			BubbaTextAutoComplete.enabled = localStorage.getItem(AUTOCOMPLETE_ENABLED_KEY) !== "false";
@@ -205,6 +321,7 @@ app.registerExtension({
 			installSaveResultWarnings();
 			installMetadataDebugNode();
 			installViewTextNode();
+			installDiscordWebhookNode();
 
 			// Seed caches in background without blocking init
 			try {
@@ -278,6 +395,13 @@ app.registerExtension({
 				onChange(value) {
 					localStorage.setItem(MANUAL_SEED_AUTO_QUEUE_KEY, String(!!value));
 				},
+			});
+
+			app.ui.settings.addSetting({
+				id: "bubba.Discord.WebhookProfiles",
+				name: "Bubba: Discord Webhook Profiles",
+				defaultValue: "",
+				type: createDiscordProfilesSetting,
 			});
 
 			app.ui.settings.addSetting({

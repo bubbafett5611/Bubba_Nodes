@@ -1,3 +1,5 @@
+from comfy_api.latest import IO
+
 from ..models import BubbaMetadata, BubbaPipe
 from ..models.pipe import resolve_pipe_value
 from ..utils.prompting import (
@@ -11,139 +13,43 @@ from ..utils.prompting import (
 # TODO(new-feature): Add token-budget guidance output (per-model limits) to warn before conditioning truncation.
 
 
-class BubbaCharacterPromptBuilder:
+class BubbaCharacterPromptBuilder(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "appearance": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "appearance"},
-                        "tooltip": "Face, hair, age, and identifying visual traits.",
-                    },
-                ),
-                "body": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "body"},
-                        "tooltip": "Body proportions, physique, and anatomy descriptors.",
-                    },
-                ),
-                "clothing": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "clothing"},
-                        "tooltip": "Outfit, accessories, and materials.",
-                    },
-                ),
-                "pose": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "pose"},
-                        "tooltip": "Body pose and camera-facing orientation.",
-                    },
-                ),
-                "expression": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "expression"},
-                        "tooltip": "Facial expression and emotion.",
-                    },
-                ),
-                "scene": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "scene"},
-                        "tooltip": "Environment, lighting, and composition context.",
-                    },
-                ),
-                "style_tags": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "style"},
-                        "tooltip": "Style and rendering tags, comma-separated.",
-                    },
-                ),
-                "quality_tags": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "quality"},
-                        "tooltip": "Quality/detail tags, comma-separated.",
-                    },
-                ),
-                "negative_tags": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "negative"},
-                        "tooltip": "Negative prompt tags, comma-separated.",
-                    },
-                ),
-                "format_mode": (
-                    ["booru", "prose", "hybrid"],
-                    {
-                        "default": "hybrid",
-                        "tooltip": "Prompt formatting style for positive output.",
-                    },
-                ),
-                "cleanup": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Normalize spacing and trim separators.",
-                    },
-                ),
-                "dedupe": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Remove duplicate tags while preserving first occurrence order.",
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing the CLIP to use."}),
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {
-                        "tooltip": "Optional metadata override. Overrides pipe.metadata when connected.",
-                    },
-                ),
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "Optional CLIP override. Overrides pipe.clip when connected.",
-                    },
-                ),
-            },
-        }
+    def define_schema(cls):
+        groups = ["appearance", "body", "clothing", "pose", "expression", "scene", "style", "quality", "negative"]
+        names = ["appearance", "body", "clothing", "pose", "expression", "scene", "style_tags", "quality_tags", "negative_tags"]
+        inputs = [
+            IO.String.Input(name, default="", multiline=True, extra_dict={"bubba.autocomplete": {"group": group}})
+            for name, group in zip(names, groups)
+        ]
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        inputs += [
+            IO.Combo.Input("format_mode", options=["booru", "prose", "hybrid"], default="hybrid"),
+            IO.Boolean.Input("cleanup", default=True),
+            IO.Boolean.Input("dedupe", default=True),
+            pipe.Input("pipe", optional=True),
+            metadata.Input("metadata", optional=True),
+            IO.Clip.Input("clip", optional=True),
+        ]
+        return IO.Schema(
+            node_id="BubbaCharacterPromptBuilder",
+            display_name="Bubba Character Prompt Builder",
+            category="Bubba Nodes/Prompt",
+            description="Builds character prompts from structured sections and encodes conditioning.",
+            inputs=inputs,
+            outputs=[
+                pipe.Output("pipe"),
+                metadata.Output("metadata"),
+                IO.Conditioning.Output("positive"),
+                IO.Conditioning.Output("negative"),
+                IO.String.Output("positive_prompt"),
+                IO.String.Output("negative_prompt"),
+            ],
+        )
 
-    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "CONDITIONING", "CONDITIONING", "STRING", "STRING")
-    RETURN_NAMES = ("pipe", "metadata", "positive", "negative", "positive_prompt", "negative_prompt")
-    FUNCTION = "build_prompt"
-    CATEGORY = "Bubba Nodes/Prompt"
-    DESCRIPTION = "Builds positive/negative prompts from character sections and encodes conditioning with CLIP. Returns metadata with prompts and sections."
-
-    def build_prompt(
-        self,
+    @classmethod
+    def execute(
+        cls,
         appearance,
         body,
         clothing,
@@ -159,7 +65,7 @@ class BubbaCharacterPromptBuilder:
         pipe=None,
         metadata=None,
         clip=None,
-    ):
+    ) -> IO.NodeOutput:
         source_pipe = BubbaPipe.coerce(pipe)
         resolved_clip = resolve_pipe_value(clip, source_pipe.clip, "clip")
         sections = assemble_prompt_sections(
@@ -197,4 +103,4 @@ class BubbaCharacterPromptBuilder:
             metadata=updated_metadata,
         )
 
-        return (updated_pipe, updated_metadata, positive_conditioning, negative_conditioning, positive_prompt, negative_prompt)
+        return IO.NodeOutput(updated_pipe, updated_metadata, positive_conditioning, negative_conditioning, positive_prompt, negative_prompt)

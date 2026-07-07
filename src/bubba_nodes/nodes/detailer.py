@@ -7,9 +7,10 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn.functional as F
+from comfy_api.latest import IO
 
-import comfy.samplers
-
+from ..compat.core_nodes import common_ksampler, encode_inpaint_conditioning
+from ..compat.sampling import sampler_names, scheduler_names
 from ..models import BubbaMetadata, BubbaPipe
 from ..models.pipe import resolve_pipe_value
 from ..utils.detailer_core import composite_crop, crop_conditioning, crop_image
@@ -24,142 +25,65 @@ from ..utils.detailer_masks import (
 from ..utils.detailer_models import detector_dropdown_values, load_detector
 from ..utils.detailer_types import DetailerDetection
 from ..utils.prompting import encode_conditioning
+from ..utils.progress import ProgressReporter
 
 
-class BubbaDetailer:
+class BubbaDetailer(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "detector_model_name": (
-                    detector_dropdown_values(),
-                    {"tooltip": "Ultralytics detector model from models/ultralytics/bbox or models/ultralytics/segm."},
-                ),
-                "confidence": (
-                    "FLOAT",
-                    {"default": 0.30, "min": 0.01, "max": 1.0, "step": 0.01, "tooltip": "Detection confidence threshold."},
-                ),
-                "mask_dilation": (
-                    "INT",
-                    {"default": 4, "min": -64, "max": 128, "step": 1, "tooltip": "Positive expands masks; negative erodes them."},
-                ),
-                "mask_blur": (
-                    "INT",
-                    {"default": 4, "min": 0, "max": 64, "step": 1, "tooltip": "Gaussian blur radius for softer paste edges."},
-                ),
-                "inpaint_padding": (
-                    "INT",
-                    {"default": 32, "min": 0, "max": 256, "step": 1, "tooltip": "Pixels to add around each detected region."},
-                ),
-                "force_square_crop": ("BOOLEAN", {"default": False, "tooltip": "Expand crops to square framing before VAE alignment."}),
-                "guide_size": (
-                    "INT",
-                    {
-                        "default": 512,
-                        "min": 64,
-                        "max": 4096,
-                        "step": 8,
-                        "tooltip": "Upscale each crop before sampling so the selected bbox/crop reaches this size.",
-                    },
-                ),
-                "guide_size_for": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "label_on": "bbox",
-                        "label_off": "crop",
-                        "tooltip": "When enabled, guide_size targets the detected bbox; otherwise it targets the whole crop.",
-                    },
-                ),
-                "max_size": (
-                    "INT",
-                    {"default": 1024, "min": 64, "max": 4096, "step": 8, "tooltip": "Maximum upscaled crop dimension before sampling."},
-                ),
-                "seed": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": 0,
-                        "max": 0xFFFFFFFFFFFFFFFF,
-                        "control_after_generate": True,
-                        "tooltip": "Base seed; batch and detection indexes are added for each crop.",
-                    },
-                ),
-                "steps": ("INT", {"default": 20, "min": 1, "max": 10000, "tooltip": "Sampling steps for each inpaint crop."}),
-                "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01, "tooltip": "CFG scale."}),
-                "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"tooltip": "Sampler used for each inpaint crop."}),
-                "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"tooltip": "Scheduler used for each inpaint crop."}),
-                "denoise": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Inpaint denoise strength."}),
-                "max_detections": (
-                    "INT",
-                    {
-                        "default": 5,
-                        "min": 1,
-                        "max": 50,
-                        "step": 1,
-                        "tooltip": "Maximum regions to refine per image. Each processed region runs an inpaint sampler pass.",
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing image, model, VAE, and conditioning."}),
-                "image": ("IMAGE", {"tooltip": "Optional image override. Overrides pipe.image when connected."}),
-                "metadata": ("BUBBA_METADATA", {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."}),
-                "model": ("MODEL", {"tooltip": "Optional model override. Overrides pipe.model when connected."}),
-                "clip": ("CLIP", {"tooltip": "Optional CLIP override. Overrides pipe.clip when connected."}),
-                "vae": ("VAE", {"tooltip": "Optional VAE override. Overrides pipe.vae when connected."}),
-                "positive": (
-                    "CONDITIONING",
-                    {"tooltip": "Optional positive conditioning override. Overrides pipe.positive when connected."},
-                ),
-                "negative": (
-                    "CONDITIONING",
-                    {"tooltip": "Optional negative conditioning override. Overrides pipe.negative when connected."},
-                ),
-                "detail_positive": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {},
-                        "tooltip": "Optional positive prompt text to encode for detail passes when clip is connected.",
-                    },
-                ),
-                "detail_negative": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "negative"},
-                        "tooltip": "Optional negative prompt text to encode for detail passes when clip is connected.",
-                    },
-                ),
-                "include_labels": (
-                    "STRING",
-                    {"default": "", "multiline": False, "tooltip": "Comma-separated detector labels to keep. Empty keeps all."},
-                ),
-                "exclude_labels": (
-                    "STRING",
-                    {"default": "", "multiline": False, "tooltip": "Comma-separated detector labels to skip."},
-                ),
-                "inpaint_model": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Use ComfyUI inpaint-model conditioning. Leave disabled for normal img2img checkpoints.",
-                    },
-                ),
-            },
-        }
+    def define_schema(cls):
+        i, f = IO.Int.Input, IO.Float.Input
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        inputs = [
+            IO.Combo.Input("detector_model_name", options=detector_dropdown_values()),
+            f("confidence", default=0.3, min=0.01, max=1, step=0.01),
+            i("mask_dilation", default=4, min=-64, max=128),
+            i("mask_blur", default=4, min=0, max=64),
+            i("inpaint_padding", default=32, min=0, max=256),
+            IO.Boolean.Input("force_square_crop", default=False),
+            i("guide_size", default=512, min=64, max=4096, step=8),
+            IO.Boolean.Input("guide_size_for", default=True, label_on="bbox", label_off="crop"),
+            i("max_size", default=1024, min=64, max=4096, step=8),
+            i("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate=True),
+            i("steps", default=20, min=1, max=10000),
+            f("cfg", default=7, min=0, max=100, step=0.1, round=0.01),
+            IO.Combo.Input("sampler_name", options=sampler_names()),
+            IO.Combo.Input("scheduler", options=scheduler_names()),
+            f("denoise", default=0.45, min=0, max=1, step=0.01),
+            i("max_detections", default=5, min=1, max=50),
+            pipe.Input("pipe", optional=True),
+            IO.Image.Input("image", optional=True),
+            metadata.Input("metadata", optional=True),
+            IO.Model.Input("model", optional=True),
+            IO.Clip.Input("clip", optional=True),
+            IO.Vae.Input("vae", optional=True),
+            IO.Conditioning.Input("positive", optional=True),
+            IO.Conditioning.Input("negative", optional=True),
+            IO.String.Input("detail_positive", default="", multiline=True, optional=True, extra_dict={"bubba.autocomplete": {}}),
+            IO.String.Input(
+                "detail_negative", default="", multiline=True, optional=True, extra_dict={"bubba.autocomplete": {"group": "negative"}}
+            ),
+            IO.String.Input("include_labels", default="", optional=True),
+            IO.String.Input("exclude_labels", default="", optional=True),
+            IO.Boolean.Input("inpaint_model", default=False, optional=True),
+        ]
+        return IO.Schema(
+            node_id="BubbaDetailer",
+            display_name="Bubba Detailer",
+            category="Bubba Nodes/Generation",
+            description="Detects regions with Ultralytics and performs localized inpaint refinement.",
+            inputs=inputs,
+            outputs=[
+                pipe.Output("pipe"),
+                IO.Image.Output("image"),
+                IO.Mask.Output("mask"),
+                metadata.Output("metadata"),
+                IO.String.Output("info"),
+            ],
+        )
 
-    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "MASK", "BUBBA_METADATA", "STRING")
-    RETURN_NAMES = ("pipe", "image", "mask", "metadata", "info")
-    FUNCTION = "detail"
-    CATEGORY = "Bubba Nodes/Generation"
-    DESCRIPTION = "Detects bbox/segm regions with Ultralytics and performs localized inpaint refinement on each crop."
-
-    def detail(
-        self,
+    @classmethod
+    def execute(
+        cls,
         detector_model_name,
         confidence,
         mask_dilation,
@@ -197,7 +121,7 @@ class BubbaDetailer:
         resolved_clip = clip if clip is not None else source_pipe.clip
         start_time = time.perf_counter()
         mode, detector_path, detector = load_detector(detector_model_name)
-        resolved_positive, resolved_negative = self._resolve_conditioning(
+        resolved_positive, resolved_negative = cls._resolve_conditioning(
             positive if positive is not None else source_pipe.positive,
             negative if negative is not None else source_pipe.negative,
             resolved_clip,
@@ -211,10 +135,11 @@ class BubbaDetailer:
         total_matched = 0
         fallback_count = 0
         label_counter: Counter[str] = Counter()
+        progress = ProgressReporter(int(resolved_image.shape[0]) * int(max_detections))
 
         for batch_index, sample in enumerate(resolved_image):
             working = sample.unsqueeze(0).clone()
-            detections, fallbacks = self._detect_sample(detector, working, mode, confidence, include_labels, exclude_labels)
+            detections, fallbacks = cls._detect_sample(detector, working, mode, confidence, include_labels, exclude_labels)
             fallback_count += fallbacks
             detections = sorted_detections(detections)
             total_matched += len(detections)
@@ -222,7 +147,7 @@ class BubbaDetailer:
             union_mask = torch.zeros((working.shape[1], working.shape[2]), dtype=working.dtype, device=working.device)
 
             for detection_index, detection in enumerate(detections[: int(max_detections)]):
-                processed = self._process_detection(
+                processed = cls._process_detection(
                     working,
                     detection,
                     resolved_model,
@@ -245,12 +170,14 @@ class BubbaDetailer:
                     bool(inpaint_model),
                 )
                 if processed is None:
+                    progress.update()
                     continue
 
                 working, processed_mask = processed
                 union_mask = torch.maximum(union_mask, processed_mask.to(device=union_mask.device, dtype=union_mask.dtype))
                 processed_for_sample += 1
                 label_counter[detection.label] += 1
+                progress.update()
 
             total_processed += processed_for_sample
             output_images.append(working)
@@ -260,7 +187,7 @@ class BubbaDetailer:
         result_mask = torch.cat(output_masks, dim=0)
         elapsed = time.perf_counter() - start_time
         updated_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
-        info = self._format_info(detector_model_name, mode, total_matched, total_processed, elapsed, label_counter, fallback_count)
+        info = cls._format_info(detector_model_name, mode, total_matched, total_processed, elapsed, label_counter, fallback_count)
         updated_pipe = source_pipe.updated(
             image=result_image,
             mask=result_mask,
@@ -271,7 +198,7 @@ class BubbaDetailer:
             negative=resolved_negative,
             metadata=updated_metadata,
         )
-        return (updated_pipe, result_image, result_mask, updated_metadata, info)
+        return IO.NodeOutput(updated_pipe, result_image, result_mask, updated_metadata, info)
 
     @staticmethod
     def _resolve_conditioning(positive, negative, clip, detail_positive: str, detail_negative: str):
@@ -367,8 +294,9 @@ class BubbaDetailer:
             return polygon_to_mask(points, height, width)
         return None
 
+    @classmethod
     def _process_detection(
-        self,
+        cls,
         working,
         detection,
         model,
@@ -412,7 +340,7 @@ class BubbaDetailer:
         )
         cropped_positive = crop_conditioning(positive, crop)
         cropped_negative = crop_conditioning(negative, crop)
-        refined = self._inpaint_crop(
+        refined = cls._inpaint_crop(
             cropped_image,
             cropped_mask,
             crop_bbox,
@@ -453,11 +381,6 @@ class BubbaDetailer:
         max_size,
         inpaint_model,
     ):
-        try:
-            from nodes import InpaintModelConditioning, common_ksampler
-        except Exception as error:  # pragma: no cover - only hit in broken Comfy runtime
-            raise RuntimeError("BubbaDetailer requires ComfyUI's InpaintModelConditioning and common_ksampler nodes.") from error
-
         upscaled_image, upscaled_mask = BubbaDetailer._prepare_guided_crop(
             cropped_image,
             cropped_mask,
@@ -468,7 +391,7 @@ class BubbaDetailer:
         )
 
         if inpaint_model:
-            sample_positive, sample_negative, latent = InpaintModelConditioning().encode(
+            sample_positive, sample_negative, latent = encode_inpaint_conditioning(
                 positive,
                 negative,
                 upscaled_image,

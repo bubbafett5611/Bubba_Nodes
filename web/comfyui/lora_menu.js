@@ -832,7 +832,8 @@ function setupKeyboardNavigation(menu) {
 }
 
 function isLoraNameWidget(widget) {
-	return widget?.name === "lora_name" || /^lora_\d+_name$/.test(String(widget?.name || ""));
+	const widgetName = String(widget?.name || "");
+	return widgetName === "lora_name" || /^lora_\d+_name$/.test(widgetName);
 }
 
 function isLoraWidget(node, widget) {

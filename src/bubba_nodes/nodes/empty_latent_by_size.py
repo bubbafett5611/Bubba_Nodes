@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import re
 
 import torch
+from comfy_api.latest import IO
 
 from ..models import BubbaPipe
 
@@ -120,51 +121,23 @@ _DIMENSIONS_BY_OPTION = {
 _LEGACY_DIMENSION_RE = re.compile(r"\((\d+)x(\d+)\)")
 
 
-class BubbaEmptyLatentBySize:
+class BubbaEmptyLatentBySize(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "size": (
-                    _DIMENSION_OPTIONS,
-                    {
-                        "default": "1:1 | 1024x1024 - SDXL",
-                        "tooltip": "Preset output dimensions from baked-in size list.",
-                    },
-                ),
-                "invert_aspect_ratio": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Swap width and height for the selected size.",
-                    },
-                ),
-                "batch_size": (
-                    "INT",
-                    {
-                        "default": 1,
-                        "min": 1,
-                        "max": 4096,
-                        "control_after_generate": False,
-                        "tooltip": "Number of latent samples to create.",
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": (
-                    "BUBBA_PIPE",
-                    {
-                        "tooltip": "Optional incoming pipe to update with the generated latent.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("BUBBA_PIPE", "LATENT", "INT", "INT")
-    RETURN_NAMES = ("pipe", "latent", "width", "height")
-    FUNCTION = "build_empty_latent"
-    CATEGORY = "Bubba Nodes/Generation"
-    DESCRIPTION = "Creates an empty latent from a baked-in preset size list with optional aspect-ratio inversion."
+    def define_schema(cls):
+        pipe = IO.Custom("BUBBA_PIPE")
+        return IO.Schema(
+            node_id="BubbaEmptyLatentBySize",
+            display_name="Bubba Empty Latent (Preset Sizes)",
+            category="Bubba Nodes/Generation",
+            description="Creates an empty latent from a preset size with optional aspect-ratio inversion.",
+            inputs=[
+                IO.Combo.Input("size", options=_DIMENSION_OPTIONS, default="1:1 | 1024x1024 - SDXL"),
+                IO.Boolean.Input("invert_aspect_ratio", default=False),
+                IO.Int.Input("batch_size", default=1, min=1, max=4096, control_after_generate=False),
+                pipe.Input("pipe", optional=True),
+            ],
+            outputs=[pipe.Output("pipe"), IO.Latent.Output("latent"), IO.Int.Output("width"), IO.Int.Output("height")],
+        )
 
     @staticmethod
     def _resolve_dimensions(size: str, invert_aspect_ratio: bool) -> tuple[int, int]:
@@ -181,10 +154,10 @@ class BubbaEmptyLatentBySize:
             width, height = height, width
         return (width, height)
 
-    def build_empty_latent(self, size, invert_aspect_ratio, batch_size, pipe=None):
-        # TODO(optimize): Reuse a cached zero-latent buffer for repeated shape requests to reduce allocator churn.
+    @classmethod
+    def execute(cls, size, invert_aspect_ratio, batch_size, pipe=None):
         source_pipe = BubbaPipe.coerce(pipe)
-        width, height = self._resolve_dimensions(size, invert_aspect_ratio)
+        width, height = cls._resolve_dimensions(size, invert_aspect_ratio)
         latent = torch.zeros([batch_size, 4, height // 8, width // 8], device="cpu")
         latent_payload = {"samples": latent}
-        return (source_pipe.updated(latent=latent_payload), latent_payload, width, height)
+        return IO.NodeOutput(source_pipe.updated(latent=latent_payload), latent_payload, width, height)

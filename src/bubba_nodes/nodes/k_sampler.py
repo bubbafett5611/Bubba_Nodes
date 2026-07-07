@@ -1,115 +1,44 @@
 import time
+from comfy_api.latest import IO
 
-import comfy.samplers
-from nodes import common_ksampler
-
+from ..compat.core_nodes import common_ksampler
+from ..compat.sampling import sampler_names, scheduler_names
 from ..models import BubbaMetadata, BubbaPipe
 from ..models.pipe import resolve_pipe_value
 
-# TODO(new-node): Add an advanced sampler node with optional highres-fix two-pass sampling and per-pass metadata.
-# TODO(optimize): Capture and emit sampler timing breakdown (prep vs denoise) for performance profiling.
 
-
-class BubbaKSampler:
+class BubbaKSampler(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "seed": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": 0,
-                        "max": 0xFFFFFFFFFFFFFFFF,
-                        "control_after_generate": True,
-                        "tooltip": "The random seed used for creating the noise.",
-                    },
-                ),
-                "steps": (
-                    "INT",
-                    {
-                        "default": 20,
-                        "min": 1,
-                        "max": 10000,
-                        "tooltip": "The number of steps used in the denoising process.",
-                    },
-                ),
-                "cfg": (
-                    "FLOAT",
-                    {
-                        "default": 8.0,
-                        "min": 0.0,
-                        "max": 100.0,
-                        "step": 0.1,
-                        "round": 0.01,
-                        "tooltip": "The Classifier-Free Guidance scale used during sampling.",
-                    },
-                ),
-                "sampler_name": (
-                    comfy.samplers.KSampler.SAMPLERS,
-                    {
-                        "tooltip": "The sampling algorithm used to generate the image.",
-                    },
-                ),
-                "scheduler": (
-                    comfy.samplers.KSampler.SCHEDULERS,
-                    {
-                        "tooltip": "The scheduler controls how noise is removed across steps.",
-                    },
-                ),
-                "denoise": (
-                    "FLOAT",
-                    {
-                        "default": 1.0,
-                        "min": 0.0,
-                        "max": 1.0,
-                        "step": 0.01,
-                        "tooltip": "The amount of denoising applied.",
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing model, conditioning, VAE, and latent."}),
-                "latent_image": (
-                    "LATENT",
-                    {"tooltip": "Optional latent override. Overrides pipe.latent when connected."},
-                ),
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {
-                        "tooltip": "Optional metadata override. Overrides pipe.metadata when connected.",
-                    },
-                ),
-                "model": (
-                    "MODEL",
-                    {"tooltip": "Optional model override. Overrides pipe.model when connected."},
-                ),
-                "vae": (
-                    "VAE",
-                    {
-                        "tooltip": "Optional VAE override. Overrides pipe.vae when connected.",
-                    },
-                ),
-                "positive": (
-                    "CONDITIONING",
-                    {
-                        "tooltip": "Optional positive conditioning override. Overrides pipe.positive when connected.",
-                    },
-                ),
-                "negative": (
-                    "CONDITIONING",
-                    {
-                        "tooltip": "Optional negative conditioning override. Overrides pipe.negative when connected.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "LATENT", "BUBBA_METADATA", "STRING")
-    RETURN_NAMES = ("pipe", "image", "latent", "metadata", "info")
-    FUNCTION = "sample"
-    CATEGORY = "Bubba Nodes/Generation"
-    DESCRIPTION = "Runs KSampler, outputs latent+info, and updates metadata when provided."
+    def define_schema(cls):
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        return IO.Schema(
+            node_id="BubbaKSampler",
+            display_name="Bubba KSampler",
+            category="Bubba Nodes/Generation",
+            description="Runs KSampler, decodes when a VAE is available, and updates generation metadata.",
+            inputs=[
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate=True),
+                IO.Int.Input("steps", default=20, min=1, max=10000),
+                IO.Float.Input("cfg", default=8.0, min=0.0, max=100.0, step=0.1, round=0.01),
+                IO.Combo.Input("sampler_name", options=sampler_names()),
+                IO.Combo.Input("scheduler", options=scheduler_names()),
+                IO.Float.Input("denoise", default=1.0, min=0.0, max=1.0, step=0.01),
+                pipe.Input("pipe", optional=True),
+                IO.Latent.Input("latent_image", optional=True),
+                metadata.Input("metadata", optional=True),
+                IO.Model.Input("model", optional=True),
+                IO.Vae.Input("vae", optional=True),
+                IO.Conditioning.Input("positive", optional=True),
+                IO.Conditioning.Input("negative", optional=True),
+            ],
+            outputs=[
+                pipe.Output("pipe"),
+                IO.Image.Output("image"),
+                IO.Latent.Output("latent"),
+                metadata.Output("metadata"),
+                IO.String.Output("info"),
+            ],
+        )
 
     @staticmethod
     def _format_info(elapsed_seconds, seed, steps, cfg, sampler_name, scheduler, denoise):
@@ -118,8 +47,9 @@ class BubbaKSampler:
             f"  Sampler: {sampler_name}  Scheduler: {scheduler}  Denoise: {denoise}"
         )
 
-    def sample(
-        self,
+    @classmethod
+    def execute(
+        cls,
         seed,
         steps,
         cfg,
@@ -154,7 +84,7 @@ class BubbaKSampler:
             denoise=denoise,
         )[0]
         elapsed_seconds = time.perf_counter() - start_time
-        info = self._format_info(
+        info = cls._format_info(
             elapsed_seconds,
             seed,
             steps,
@@ -189,4 +119,4 @@ class BubbaKSampler:
             latent=latent,
             metadata=updated_metadata,
         )
-        return (updated_pipe, image, latent, updated_metadata, info)
+        return IO.NodeOutput(updated_pipe, image, latent, updated_metadata, info)

@@ -7,12 +7,15 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..compat.paths import get_filename_list
+from ..compat.routes import route_table
+
 _route_registered = False
 _ARCHIVE_RAW_BASE_URL = "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists"
 _DEFAULT_DANBOORU_CSV_URL = f"{_ARCHIVE_RAW_BASE_URL}/danbooru/danbooru_2026-04-01_pt20-ia-dd.csv"
 _DEFAULT_E621_CSV_URL = f"{_ARCHIVE_RAW_BASE_URL}/e621/e621_2026-04-01_pt20-ia-ed.csv"
 _DEFAULT_LEGACY_MERGED_CSV_URL = (
-    "https://raw.githubusercontent.com/DraconicDragon1/" "danbooru-e621-autocomplete/main/danbooru_e621_merged.csv"
+    "https://raw.githubusercontent.com/DraconicDragon1/danbooru-e621-autocomplete/main/danbooru_e621_merged.csv"
 )
 _MAX_CSV_DOWNLOAD_BYTES = 100 * 1024 * 1024
 _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
@@ -152,29 +155,17 @@ def register_autocomplete_routes() -> None:
 
     try:
         from aiohttp import web
-        from server import PromptServer
-        import folder_paths
     except Exception:  # pragma: no cover - only used in Comfy runtime
         return
 
-    if PromptServer is None or not getattr(PromptServer, "instance", None):
+    routes = route_table()
+    if routes is None:
         return
-
-    routes = PromptServer.instance.routes
 
     @routes.get("/bubba/autocomplete/embeddings")
     async def bubba_autocomplete_embeddings(_request):
-        if folder_paths is None or not hasattr(folder_paths, "get_filename_list"):
-            return web.json_response(
-                {
-                    "status": "folder_paths_unavailable",
-                    "embeddings": [],
-                    "count": 0,
-                }
-            )
-
         try:
-            names = folder_paths.get_filename_list("embeddings")
+            names = get_filename_list("embeddings")
         except Exception:
             names = []
 

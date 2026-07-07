@@ -1,27 +1,28 @@
-class BubbaViewText:
+from comfy_api.latest import IO, UI
+
+
+class BubbaViewText(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "text": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "forceInput": True,
-                        "tooltip": "Text to display on the node. Supports connected and multiline strings.",
-                    },
-                ),
-            },
-        }
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BubbaViewText",
+            display_name="Bubba View Text",
+            category="Bubba Nodes/Utilities",
+            description="Displays connected or entered multiline text directly on the node and passes it through unchanged.",
+            inputs=[
+                IO.String.Input(
+                    "text",
+                    default="",
+                    multiline=True,
+                    force_input=True,
+                    tooltip="Text to display on the node. Supports connected and multiline strings.",
+                )
+            ],
+            outputs=[IO.String.Output("text")],
+            is_output_node=True,
+        )
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("text",)
-    FUNCTION = "view_text"
-    CATEGORY = "Bubba Nodes/Utilities"
-    OUTPUT_NODE = True
-    DESCRIPTION = "Displays connected or entered multiline text directly on the node and passes it through unchanged."
-
-    def view_text(self, text=""):
+    @classmethod
+    def execute(cls, text=""):
         value = str(text or "")
-        return {"ui": {"text": [value]}, "result": (value,)}
+        return IO.NodeOutput(value, ui=UI.PreviewText(value))

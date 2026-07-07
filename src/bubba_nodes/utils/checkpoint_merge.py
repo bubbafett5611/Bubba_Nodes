@@ -6,8 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import folder_paths
-
+from ..compat.checkpoint_io import load_state_dict_guess_config, load_torch_file, save_torch_file
+from ..compat.paths import get_filename_list, get_folder_paths, get_full_path_or_raise
 from .checkpointing import checkpoint_display_name, checkpoint_sha256, checkpoint_short_hash
 
 
@@ -15,15 +15,18 @@ _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._\-/]+")
 
 
 def checkpoint_choices() -> list[str]:
-    return folder_paths.get_filename_list("checkpoints")
+    return get_filename_list("checkpoints")
 
 
 def checkpoint_path(ckpt_name: str) -> Path:
-    return Path(folder_paths.get_full_path_or_raise("checkpoints", ckpt_name))
+    return Path(get_full_path_or_raise("checkpoints", ckpt_name))
 
 
 def checkpoint_root() -> Path:
-    return Path(folder_paths.get_folder_paths("checkpoints")[0])
+    paths = get_folder_paths("checkpoints")
+    if not paths:
+        raise RuntimeError("No ComfyUI checkpoint folder is configured.")
+    return Path(paths[0])
 
 
 def sanitize_checkpoint_prefix(value: str, fallback: str = "bubba_merge") -> str:
@@ -64,30 +67,18 @@ def resolve_checkpoint_save_path(filename_prefix: str, overwrite: bool) -> tuple
 
 
 def load_checkpoint_state_dict(ckpt_name: str) -> tuple[dict[str, Any], dict[str, str]]:
-    import comfy.utils
-
     path = checkpoint_path(ckpt_name)
-    state_dict, metadata = comfy.utils.load_torch_file(str(path), safe_load=True, return_metadata=True)
+    state_dict, metadata = load_torch_file(str(path))
     if not isinstance(state_dict, dict):
         raise ValueError(f"Checkpoint {ckpt_name!r} did not load as a state dict.")
     return state_dict, {str(k): str(v) for k, v in dict(metadata or {}).items()}
 
 
 def load_merged_checkpoint_objects(state_dict: dict[str, Any], metadata: dict[str, str] | None = None):
-    import comfy.sd
-
     # Comfy's checkpoint loading path mutates the state dict while it builds the
     # live MODEL/CLIP/VAE objects. Keep the merge payload intact so it can still
     # be saved afterward.
-    model, clip, vae, _clipvision = comfy.sd.load_state_dict_guess_config(
-        dict(state_dict),
-        output_vae=True,
-        output_clip=True,
-        output_clipvision=False,
-        embedding_directory=folder_paths.get_folder_paths("embeddings"),
-        output_model=True,
-        metadata=metadata or {},
-    )
+    model, clip, vae, _clipvision = load_state_dict_guess_config(state_dict, metadata)
     return model, clip, vae
 
 
@@ -210,11 +201,9 @@ def checkpoint_fingerprint(ckpt_name: str) -> dict[str, Any]:
 
 
 def save_checkpoint_merge(state_dict: dict[str, Any], filename_prefix: str, metadata: dict[str, str], overwrite: bool) -> tuple[Path, str]:
-    import comfy.utils
-
     if not state_dict:
         raise ValueError("Refusing to save an empty checkpoint merge payload. Re-run the merge node with the updated Bubba Nodes code.")
 
     target, relative_name = resolve_checkpoint_save_path(filename_prefix, overwrite=overwrite)
-    comfy.utils.save_torch_file(state_dict, str(target), metadata=metadata)
+    save_torch_file(state_dict, str(target), metadata)
     return target, relative_name

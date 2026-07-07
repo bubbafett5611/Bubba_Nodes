@@ -4,50 +4,26 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from ..compat.paths import get_folder_paths
+
 
 _DETECTOR_CACHE_MAX_SIZE = 2
 _DETECTOR_CACHE: OrderedDict[tuple[str, float], Any] = OrderedDict()
 _NO_MODELS_SENTINEL = "No ultralytics models found"
 
 
-def _folder_paths_module():
-    try:
-        import folder_paths
-    except Exception as error:  # pragma: no cover - only hit outside tests/Comfy
-        raise RuntimeError("ComfyUI folder_paths module is unavailable; detector models cannot be discovered.") from error
-    return folder_paths
-
-
 def _ultralytics_roots_from_folder_paths() -> list[Path]:
-    folder_paths = _folder_paths_module()
     roots: list[Path] = []
 
-    get_folder_paths = getattr(folder_paths, "get_folder_paths", None)
-    if callable(get_folder_paths):
-        try:
-            raw_model_paths = get_folder_paths("models")
-        except Exception:
-            raw_model_paths = []
-        model_paths = list(raw_model_paths) if isinstance(raw_model_paths, (list, tuple)) else []
-        roots.extend(Path(path) / "ultralytics" for path in model_paths)
+    roots.extend(Path(path) / "ultralytics" for path in get_folder_paths("models"))
 
-    models_dir = getattr(folder_paths, "models_dir", None)
-    if models_dir:
-        roots.append(Path(models_dir) / "ultralytics")
-
-    if callable(get_folder_paths):
-        for model_type in ("ultralytics", "ultralytics_bbox", "ultralytics_segm"):
-            try:
-                raw_paths = get_folder_paths(model_type)
-            except Exception:
-                raw_paths = []
-            paths = list(raw_paths) if isinstance(raw_paths, (list, tuple)) else []
-            for raw_path in paths:
-                path = Path(raw_path)
-                path_name = path.name.lower()
-                if path_name in {"bbox", "segm"}:
-                    path = path.parent
-                roots.append(path if path.name.lower() == "ultralytics" else path / "ultralytics")
+    for model_type in ("ultralytics", "ultralytics_bbox", "ultralytics_segm"):
+        for raw_path in get_folder_paths(model_type):
+            path = Path(raw_path)
+            path_name = path.name.lower()
+            if path_name in {"bbox", "segm"}:
+                path = path.parent
+            roots.append(path if path.name.lower() == "ultralytics" else path / "ultralytics")
 
     unique_roots: list[Path] = []
     seen: set[str] = set()

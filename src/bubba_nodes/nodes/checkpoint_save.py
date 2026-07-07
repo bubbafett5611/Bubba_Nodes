@@ -1,47 +1,31 @@
 from pathlib import Path
+from comfy_api.latest import IO
 
 from ..models import BubbaCheckpointMerge
 from ..utils.checkpoint_merge import ensure_safetensors_name, recipe_text, save_checkpoint_merge, sanitize_checkpoint_prefix
 
 
-class BubbaSaveCheckpoint:
+class BubbaSaveCheckpoint(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "checkpoint_merge": ("BUBBA_CHECKPOINT_MERGE", {"tooltip": "Merged checkpoint payload to save."}),
-                "filename_prefix": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Relative filename inside the ComfyUI checkpoints folder. Leave blank to use the merge recipe suggestion.",
-                    },
-                ),
-                "overwrite": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Overwrite an existing checkpoint with the same filename. When disabled, a numeric suffix is added.",
-                    },
-                ),
-                "save_recipe_sidecar": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Save a JSON sidecar next to the checkpoint containing the merge recipe.",
-                    },
-                ),
-            },
-        }
+    def define_schema(cls):
+        merge = IO.Custom("BUBBA_CHECKPOINT_MERGE")
+        return IO.Schema(
+            node_id="BubbaSaveCheckpoint",
+            display_name="Bubba Save Checkpoint",
+            category="Bubba Nodes/Merge",
+            description="Saves a Bubba checkpoint merge payload as a safetensors checkpoint.",
+            inputs=[
+                merge.Input("checkpoint_merge"),
+                IO.String.Input("filename_prefix", default=""),
+                IO.Boolean.Input("overwrite", default=False),
+                IO.Boolean.Input("save_recipe_sidecar", default=True),
+            ],
+            outputs=[IO.String.Output("checkpoint_name"), IO.String.Output("checkpoint_path"), IO.String.Output("info")],
+            is_output_node=True,
+        )
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("checkpoint_name", "checkpoint_path", "info")
-    FUNCTION = "save"
-    CATEGORY = "Bubba Nodes/Merge"
-    OUTPUT_NODE = True
-    DESCRIPTION = "Saves a Bubba checkpoint merge payload as a safetensors checkpoint in the ComfyUI checkpoints folder."
-
-    def save(self, checkpoint_merge, filename_prefix="", overwrite=False, save_recipe_sidecar=True):
+    @classmethod
+    def execute(cls, checkpoint_merge, filename_prefix="", overwrite=False, save_recipe_sidecar=True):
         payload = BubbaCheckpointMerge.coerce(checkpoint_merge)
         prefix = sanitize_checkpoint_prefix(filename_prefix or payload.suggested_name or "bubba_merge")
         target, relative_name = save_checkpoint_merge(
@@ -56,48 +40,28 @@ class BubbaSaveCheckpoint:
             sidecar.write_text(recipe_text(payload.recipe), encoding="utf-8")
 
         info = f"Saved checkpoint: {relative_name}\nPath: {target}\nTensors: {len(payload.state_dict)}"
-        return (relative_name, str(target), info)
+        return IO.NodeOutput(relative_name, str(target), info)
 
 
-class BubbaMergeNamingHelper:
+class BubbaMergeNamingHelper(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "base_name": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Optional manual base name. Leave blank to use checkpoint_merge.suggested_name.",
-                    },
-                ),
-                "folder": (
-                    "STRING",
-                    {
-                        "default": "Bubba_Merges",
-                        "tooltip": "Optional subfolder inside the ComfyUI checkpoints folder.",
-                    },
-                ),
-                "suffix": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Optional suffix appended before .safetensors.",
-                    },
-                ),
-            },
-            "optional": {
-                "checkpoint_merge": ("BUBBA_CHECKPOINT_MERGE", {"tooltip": "Optional merge payload to name."}),
-            },
-        }
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BubbaMergeNamingHelper",
+            display_name="Bubba Merge Naming Helper",
+            category="Bubba Nodes/Merge",
+            description="Builds a clean relative checkpoint filename for merged checkpoints.",
+            inputs=[
+                IO.String.Input("base_name", default=""),
+                IO.String.Input("folder", default="Bubba_Merges"),
+                IO.String.Input("suffix", default=""),
+                IO.Custom("BUBBA_CHECKPOINT_MERGE").Input("checkpoint_merge", optional=True),
+            ],
+            outputs=[IO.String.Output("filename_prefix"), IO.String.Output("info")],
+        )
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("filename_prefix", "info")
-    FUNCTION = "build_name"
-    CATEGORY = "Bubba Nodes/Merge"
-    DESCRIPTION = "Builds a clean relative checkpoint filename for merged checkpoints."
-
-    def build_name(self, base_name="", folder="Bubba_Merges", suffix="", checkpoint_merge=None):
+    @classmethod
+    def execute(cls, base_name="", folder="Bubba_Merges", suffix="", checkpoint_merge=None):
         suggested = ""
         recipe = {}
         if checkpoint_merge is not None:
@@ -115,4 +79,4 @@ class BubbaMergeNamingHelper:
         info = f"Checkpoint filename: {filename}"
         if recipe:
             info += f"\nRecipe type: {recipe.get('type', 'unknown')}"
-        return (filename, info)
+        return IO.NodeOutput(filename, info)

@@ -1,32 +1,28 @@
-from src.bubba_nodes.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, BubbaViewText
+from src.bubba_nodes.nodes import BubbaViewText
 
 
 def test_view_text_preserves_multiline_text_and_returns_ui_payload():
     text = "First line\nSecond line\n\nFourth line"
 
-    result = BubbaViewText().view_text(text)
+    result = BubbaViewText().execute(text)
 
-    assert result["result"] == (text,)
-    assert result["ui"]["text"] == [text]
+    assert result.result == (text,)
+    assert tuple(result.ui.as_dict()["text"]) == (text,)
 
 
 def test_view_text_coerces_none_to_empty_string():
-    result = BubbaViewText().view_text(None)
+    result = BubbaViewText().execute(None)
 
-    assert result["result"] == ("",)
-    assert result["ui"]["text"] == [""]
+    assert result.result == ("",)
+    assert tuple(result.ui.as_dict()["text"]) == ("",)
 
 
 def test_view_text_node_contract_and_registration():
-    text_input = BubbaViewText.INPUT_TYPES()["required"]["text"]
-
-    assert text_input[0] == "STRING"
-    assert text_input[1]["multiline"] is True
-    assert text_input[1]["forceInput"] is True
-    assert BubbaViewText.RETURN_TYPES == ("STRING",)
-    assert BubbaViewText.RETURN_NAMES == ("text",)
-    assert BubbaViewText.FUNCTION == "view_text"
-    assert BubbaViewText.CATEGORY == "Bubba Nodes/Utilities"
-    assert BubbaViewText.OUTPUT_NODE is True
-    assert NODE_CLASS_MAPPINGS["BubbaViewText"] is BubbaViewText
-    assert NODE_DISPLAY_NAME_MAPPINGS["BubbaViewText"] == "Bubba View Text"
+    schema = BubbaViewText.GET_SCHEMA()
+    text_input = schema.inputs[0]
+    assert text_input.io_type == "STRING"
+    assert text_input.multiline is True
+    assert text_input.force_input is True
+    assert [output.id for output in schema.outputs] == ["text"]
+    assert schema.category == "Bubba Nodes/Utilities"
+    assert schema.is_output_node is True

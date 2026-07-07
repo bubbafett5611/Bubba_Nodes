@@ -4,15 +4,20 @@ Custom ComfyUI nodes for prompt authoring, checkpoint/LoRA loading, pipe-based g
 
 ## What Is Included
 
-This extension registers 29 nodes:
+This extension targets ComfyUI v0.27.0+ and registers nodes through the public `comfy_api.latest` V3 extension API.
+It registers 37 nodes:
 
 - Bubba Pipe In
 - Bubba Pipe Out
+- Bubba Seed Control
+- Bubba Sampler Controls
 - Bubba Filename Builder
 - Bubba Empty Latent (Preset Sizes)
 - Bubba Load Image (With Metadata)
 - Bubba Checkpoint Loader
 - Bubba Combo Loader
+- Bubba Model Compare Loader
+- Bubba Model Components Override
 - Bubba Checkpoint Merge
 - Bubba Triple Checkpoint Merge
 - Bubba Save Checkpoint
@@ -21,6 +26,7 @@ This extension registers 29 nodes:
 - Bubba Merge Preview Prompt Runner
 - Bubba LoRA Loader
 - Bubba LoRA Stack
+- Bubba Conditioning Multiply
 - Bubba KSampler
 - Bubba Detailer
 - Bubba Simple Prompt Builder
@@ -31,10 +37,13 @@ This extension registers 29 nodes:
 - Bubba Metadata Debug
 - Bubba View Text
 - Bubba Upscaler (ESRGAN)
+- Bubba Tiled KSampler Upscaler (Seam Fix)
 - Bubba Image Compare
+- Bubba Model Compare Sheet
 - Bubba Add Text Overlay (Metadata)
 - Bubba Watermark Overlay
 - Bubba Save Image
+- Bubba Discord Webhook
 
 ## Features
 
@@ -42,20 +51,25 @@ This extension registers 29 nodes:
 - Build and unpack `BUBBA_PIPE` objects for advanced graph wiring.
 - Generate empty latents from preset dimensions with optional orientation swap, and store them in the pipe.
 - Carry generation state through a `BUBBA_PIPE` object for cleaner graphs.
+- Fan one shared seed out to multiple samplers, with native after-generate control and the same Manual Random Seed button as Bubba KSampler.
+- Fan shared steps, CFG, sampler, scheduler, and denoise settings directly into multiple KSampler branches.
 - Load images and extract embedded Bubba metadata from PNG text into a pipe.
 - Load checkpoints while recording the selected checkpoint name in pipe metadata.
 - Load checkpoint, optional external VAE, optional external CLIP/text encoder, and optional CLIP skip in one node.
 - Merge checkpoint files with weighted or A + (B - C) recipes, fingerprint source checkpoints, name merge outputs, save merged safetensors files, and preview merges with repeatable prompt cases.
 - Apply one LoRA or a six-slot LoRA stack while appending each applied LoRA name to pipe metadata.
+- Scale positive and/or negative conditioning through a pipe-aware wrapper around ComfyUI Conditioning Multiply.
 - Build positive and negative prompts from simple text inputs, structured character sections, or JSON-backed randomizer categories.
 - Normalize and dedupe prompt tags while preserving first occurrence order.
 - Inspect prompts for token count, duplicate tags, shared positive/negative tags, and simple conflicts.
 - Run KSampler, measure sampling time, update pipe metadata, and optionally decode an image into the pipe when a VAE is available.
-- Upscale with ESRGAN/spandrel models and optionally resize the upscaled result.
+- Upscale with ESRGAN/spandrel models, or refine every overlapping tile through an actual checkpoint model and KSampler before feather-blended seam fixing.
 - Compare two image batches in the frontend with an A/B splitter.
+- Load four checkpoints into independent comparison pipes, optionally replace CLIP/VAE components per branch, then compose generated images into a labeled horizontal, vertical, or 2x2 comparison sheet.
 - Add text overlays from metadata fields.
 - Add watermark overlays with anchor, scale, opacity, offsets, and optional mask support.
-- Save images normally or as previews, with optional ComfyUI workflow metadata, optional A1111/Civitai-compatible `parameters` metadata, and Bubba PNG metadata.
+- Save images normally or as previews, with optional ComfyUI workflow metadata, optional A1111/Civitai-compatible `parameters` metadata, Bubba PNG metadata, saved path output, and save status output.
+- Capture an image batch plus Bubba metadata and send it to a named Discord webhook profile automatically or later without rerunning the workflow.
 - Use in-node autocomplete for Bubba multiline prompt fields, backed by local CSV tag data and embedding names.
 
 ## Installation
@@ -105,9 +119,38 @@ Then restart ComfyUI.
 4. Optionally run Bubba Prompt Cleaner and Bubba Prompt Inspector before sampling.
 5. Generate a latent with Bubba Empty Latent (Preset Sizes), which writes the latent back to the pipe.
 6. Sample with Bubba KSampler using the pipe latent, so sampler settings, seed, timing, and optional decoded image are written back to the pipe.
-7. Optionally use Bubba Detailer, Bubba Upscaler, Bubba Add Text Overlay (Metadata), or Bubba Watermark Overlay.
+7. Optionally use Bubba Detailer, either Bubba Upscaler, Bubba Tiled KSampler Upscaler, Bubba Add Text Overlay (Metadata), or Bubba Watermark Overlay.
 8. Save with Bubba Save Image using the pipe image and embedded metadata.
 9. Reload later with Bubba Load Image (With Metadata), which recreates a pipe from embedded metadata.
+
+## Model Comparison
+
+1. Optionally place `Bubba Seed Control` near the branch point and wire its integer output to each KSampler seed input. Its after-generate selector and Manual Random Seed button match Bubba KSampler.
+2. Place `Bubba Sampler Controls` beside it and fan its five outputs into each KSampler's steps, CFG, sampler, scheduler, and denoise inputs.
+3. Select one to four checkpoints in `Bubba Model Compare Loader`; leave unused slots at `None`. Optionally connect an existing pipe first to fork its latent, image, mask, prompt text, and generation metadata into every comparison branch. Disable `replace_clip` or `replace_vae` to preserve that component from the incoming pipe instead of using each checkpoint's bundled component.
+4. `Bubba Model Components Override` can also be placed before the compare loader: it accepts a partial pipe with no model, attaches an external CLIP/VAE, and passes the pipe onward. Disable the Compare Loader's replacement toggles to preserve those prepared components. Alternatively, place the override after the loader when only one branch needs different components. Selections left at `None` preserve the corresponding pipe component.
+5. Apply any LoRAs normally after the loader or component override, then route each pipe through its own prompt and sampler branch.
+6. Connect the completed pipes to `Bubba Model Compare Sheet`. Explicit image inputs can override the image carried by any pipe.
+7. Choose automatic, horizontal, vertical, or 2x2 layout plus image fitting, spacing, background, font size, and label corner.
+8. Connect the resulting pipe or image to `Bubba Save Image` to save the labeled sheet. The first image in each connected batch is used for the comparison.
+
+## Tiled KSampler Upscaling
+
+`Bubba Tiled KSampler Upscaler (Seam Fix)` follows an Ultimate SD Upscale-style redraw pipeline. It resolves the decoded image, checkpoint model, VAE, and positive/negative conditioning from the pipe or explicit overrides; pixel-upscales the complete image; then sequentially VAE-encodes, samples, decodes, and softly composites contextual tiles. A pipe latent is decoded only when no image is available. Optional boundary passes redraw narrow seam regions with their own denoise, blur, and padding settings. The final image and its re-encoded latent are written back to the pipe.
+
+For a 512px-native model, good starting values are 512x512 tiles, 32px context (`overlap`), 8px mask blur, and 0.15-0.25 redraw denoise. Start with seam fixing disabled; if boundaries remain visible, try `half_tile` with 0.1-0.2 seam denoise, 64px seam width, 8px blur, and 32px padding. The same seed is deliberately reused for each tile to avoid discontinuous tile-specific noise patterns.
+
+## Discord Webhook
+
+1. Open ComfyUI settings and find `Bubba: Discord Webhook Profiles`.
+2. Save a profile name and its Discord webhook URL. URLs are stored under the ComfyUI user directory and are not returned to the browser or written into workflows.
+3. Add `Bubba Discord Webhook` at the end of a workflow and connect a pipe, or connect image and metadata overrides.
+4. Enter the saved profile name in `webhook_profile`.
+5. Enable `enabled` for automatic delivery. When disabled, the latest image batch is still captured on disk.
+6. Use `Send Latest Now` on the node to deliver the captured batch without queueing or rerunning the workflow. `Clear Captured Images` removes that node's staged batch.
+
+Webhook failures are shown on the node without failing the completed generation. Large batches are split across Discord messages, and prompt fields are truncated to Discord's field limits.
+Disable `include_embed` to send only the optional message and image attachments without the metadata embed.
 
 ## Metadata Notes
 
@@ -130,6 +173,8 @@ Then restart ComfyUI.
 - Supported `format_mode` values are `booru`, `prose`, and `hybrid`.
 - Bubba Simple Prompt Builder supports deterministic inline choices such as `{red|blue|green}`.
 - It also expands file wildcards such as `__lighting__` and `__locations/nightclub__` from `src/bubba_nodes/data/wildcards`.
+- Bundled species wildcards include dog and cat breeds, wild canids, felids, foxes, dragons, mythological species, fantasy humanoids, fictional hybrids, and cryptids under the `__species/...__` namespace.
+- Use `__species/all_species__` for a flattened, deduplicated master wildcard where every bundled species tag has an equal chance of selection.
 - Wildcard files contain one choice per line; blank lines and lines beginning with `#` are ignored.
 - A `prompt_seed` of `-1` inherits `metadata.seed`, then falls back to `0`. Non-negative values explicitly control prompt expansion, and the after-generate control can keep, increment, decrement, or randomize it.
 - Escape prompt syntax with a backslash, for example `\{red|blue\}` or `\__lighting__`.

@@ -1,52 +1,45 @@
 from __future__ import annotations
 
+from comfy_api.latest import IO
+
 from ..models import BubbaMetadata, BubbaPipe
 
+BUBBA_PIPE = IO.Custom("BUBBA_PIPE")
+BUBBA_METADATA = IO.Custom("BUBBA_METADATA")
 
-class BubbaPipeIn:
+
+class BubbaPipeIn(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe to update."}),
-                "image": ("IMAGE", {"tooltip": "Optional image to store in the pipe."}),
-                "mask": ("MASK", {"tooltip": "Optional mask to store in the pipe."}),
-                "latent": ("LATENT", {"tooltip": "Optional latent to store in the pipe."}),
-                "metadata": ("BUBBA_METADATA", {"tooltip": "Optional metadata to store in the pipe."}),
-                "model": ("MODEL", {"tooltip": "Optional model to store in the pipe."}),
-                "clip": ("CLIP", {"tooltip": "Optional CLIP to store in the pipe."}),
-                "vae": ("VAE", {"tooltip": "Optional VAE to store in the pipe."}),
-                "positive": ("CONDITIONING", {"tooltip": "Optional positive conditioning to store in the pipe."}),
-                "negative": ("CONDITIONING", {"tooltip": "Optional negative conditioning to store in the pipe."}),
-                "positive_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "positive"},
-                        "tooltip": "Optional positive prompt text to store in the pipe when non-empty.",
-                    },
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BubbaPipeIn",
+            display_name="Bubba Pipe In",
+            category="Bubba Nodes/Pipe",
+            description="Builds or updates a Bubba pipe from explicit socket values.",
+            inputs=[
+                BUBBA_PIPE.Input("pipe", optional=True, tooltip="Optional incoming pipe to update."),
+                IO.Image.Input("image", optional=True),
+                IO.Mask.Input("mask", optional=True),
+                IO.Latent.Input("latent", optional=True),
+                BUBBA_METADATA.Input("metadata", optional=True),
+                IO.Model.Input("model", optional=True),
+                IO.Clip.Input("clip", optional=True),
+                IO.Vae.Input("vae", optional=True),
+                IO.Conditioning.Input("positive", optional=True),
+                IO.Conditioning.Input("negative", optional=True),
+                IO.String.Input(
+                    "positive_prompt", default="", multiline=True, optional=True, extra_dict={"bubba.autocomplete": {"group": "positive"}}
                 ),
-                "negative_prompt": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "negative"},
-                        "tooltip": "Optional negative prompt text to store in the pipe when non-empty.",
-                    },
+                IO.String.Input(
+                    "negative_prompt", default="", multiline=True, optional=True, extra_dict={"bubba.autocomplete": {"group": "negative"}}
                 ),
-            },
-        }
+            ],
+            outputs=[BUBBA_PIPE.Output("pipe")],
+        )
 
-    RETURN_TYPES = ("BUBBA_PIPE",)
-    RETURN_NAMES = ("pipe",)
-    FUNCTION = "build_pipe"
-    CATEGORY = "Bubba Nodes/Pipe"
-    DESCRIPTION = "Builds or updates a Bubba pipe from explicit socket values."
-
-    def build_pipe(
-        self,
+    @classmethod
+    def execute(
+        cls,
         pipe=None,
         image=None,
         mask=None,
@@ -83,4 +76,4 @@ class BubbaPipeIn:
         if negative_text:
             changes["negative_prompt"] = negative_text
 
-        return (source_pipe.updated(**changes),)
+        return IO.NodeOutput(source_pipe.updated(**changes))

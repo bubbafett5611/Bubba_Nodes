@@ -1,3 +1,5 @@
+from comfy_api.latest import IO
+
 from ..models import BubbaCheckpointMerge as BubbaCheckpointMergePayload
 from ..models import BubbaMetadata, BubbaPipe
 from ..utils.checkpoint_merge import (
@@ -14,43 +16,39 @@ from ..utils.checkpoint_merge import (
 from ..utils.checkpointing import checkpoint_display_name
 
 
-class BubbaCheckpointMerge:
+def _merge_outputs():
+    return [
+        IO.Custom("BUBBA_PIPE").Output("pipe"),
+        IO.Custom("BUBBA_CHECKPOINT_MERGE").Output("checkpoint_merge"),
+        IO.Custom("BUBBA_METADATA").Output("metadata"),
+        IO.Model.Output("model"),
+        IO.Clip.Output("clip"),
+        IO.Vae.Output("vae"),
+        IO.String.Output("merge_recipe"),
+        IO.String.Output("info"),
+    ]
+
+
+class BubbaCheckpointMerge(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "checkpoint_a": (
-                    checkpoint_choices(),
-                    {"tooltip": "Primary checkpoint. Non-mergeable keys are carried from this checkpoint."},
-                ),
-                "checkpoint_b": (checkpoint_choices(), {"tooltip": "Secondary checkpoint blended into checkpoint A."}),
-                "ratio": (
-                    "FLOAT",
-                    {
-                        "default": 0.5,
-                        "min": 0.0,
-                        "max": 1.0,
-                        "step": 0.01,
-                        "tooltip": "Blend amount for checkpoint B. 0 keeps A, 1 keeps B for matching tensors.",
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe to update with the merged model stack."}),
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."},
-                ),
-            },
-        }
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BubbaCheckpointMerge",
+            display_name="Bubba Checkpoint Merge",
+            category="Bubba Nodes/Merge",
+            description="Blends two checkpoints while carrying unmatched keys from checkpoint A.",
+            inputs=[
+                IO.Combo.Input("checkpoint_a", options=checkpoint_choices()),
+                IO.Combo.Input("checkpoint_b", options=checkpoint_choices()),
+                IO.Float.Input("ratio", default=0.5, min=0.0, max=1.0, step=0.01),
+                IO.Custom("BUBBA_PIPE").Input("pipe", optional=True),
+                IO.Custom("BUBBA_METADATA").Input("metadata", optional=True),
+            ],
+            outputs=_merge_outputs(),
+        )
 
-    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_CHECKPOINT_MERGE", "BUBBA_METADATA", "MODEL", "CLIP", "VAE", "STRING", "STRING")
-    RETURN_NAMES = ("pipe", "checkpoint_merge", "metadata", "model", "clip", "vae", "merge_recipe", "info")
-    FUNCTION = "merge"
-    CATEGORY = "Bubba Nodes/Merge"
-    DESCRIPTION = "Blends two checkpoint files by merging matching floating tensors and carrying unmatched keys from checkpoint A."
-
-    def merge(self, checkpoint_a, checkpoint_b, ratio, pipe=None, metadata=None):
+    @classmethod
+    def execute(cls, checkpoint_a, checkpoint_b, ratio, pipe=None, metadata=None):
         source_pipe = BubbaPipe.coerce(pipe)
         ratio = max(0.0, min(1.0, float(ratio)))
         sd_a, metadata_a = load_checkpoint_state_dict(checkpoint_a)
@@ -92,44 +90,31 @@ class BubbaCheckpointMerge:
             f"Merged {stats['merged_tensors']} tensor(s). "
             f"Carried {stats['carried_a_keys']} A-only key(s); skipped {stats['shape_mismatch_keys']} incompatible shared key(s)."
         )
-        return (updated_pipe, payload, updated_metadata, model, clip, vae, recipe_text(recipe), info)
+        return IO.NodeOutput(updated_pipe, payload, updated_metadata, model, clip, vae, recipe_text(recipe), info)
 
 
-class BubbaTripleCheckpointMerge:
+class BubbaTripleCheckpointMerge(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "checkpoint_a": (checkpoint_choices(), {"tooltip": "Base checkpoint."}),
-                "checkpoint_b": (checkpoint_choices(), {"tooltip": "Checkpoint to add."}),
-                "checkpoint_c": (checkpoint_choices(), {"tooltip": "Checkpoint to subtract from B before adding to A."}),
-                "strength": (
-                    "FLOAT",
-                    {
-                        "default": 1.0,
-                        "min": -2.0,
-                        "max": 2.0,
-                        "step": 0.01,
-                        "tooltip": "Applies A + (B - C) * strength for matching tensors.",
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe to update with the merged model stack."}),
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."},
-                ),
-            },
-        }
+    def define_schema(cls):
+        choices = checkpoint_choices()
+        return IO.Schema(
+            node_id="BubbaTripleCheckpointMerge",
+            display_name="Bubba Triple Checkpoint Merge",
+            category="Bubba Nodes/Merge",
+            description="Performs A + (B - C) * strength checkpoint merging.",
+            inputs=[
+                IO.Combo.Input("checkpoint_a", options=choices),
+                IO.Combo.Input("checkpoint_b", options=choices),
+                IO.Combo.Input("checkpoint_c", options=choices),
+                IO.Float.Input("strength", default=1.0, min=-2.0, max=2.0, step=0.01),
+                IO.Custom("BUBBA_PIPE").Input("pipe", optional=True),
+                IO.Custom("BUBBA_METADATA").Input("metadata", optional=True),
+            ],
+            outputs=_merge_outputs(),
+        )
 
-    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_CHECKPOINT_MERGE", "BUBBA_METADATA", "MODEL", "CLIP", "VAE", "STRING", "STRING")
-    RETURN_NAMES = ("pipe", "checkpoint_merge", "metadata", "model", "clip", "vae", "merge_recipe", "info")
-    FUNCTION = "merge"
-    CATEGORY = "Bubba Nodes/Merge"
-    DESCRIPTION = "Performs a classic A + (B - C) * strength checkpoint merge."
-
-    def merge(self, checkpoint_a, checkpoint_b, checkpoint_c, strength, pipe=None, metadata=None):
+    @classmethod
+    def execute(cls, checkpoint_a, checkpoint_b, checkpoint_c, strength, pipe=None, metadata=None):
         source_pipe = BubbaPipe.coerce(pipe)
         strength = float(strength)
         sd_a, metadata_a = load_checkpoint_state_dict(checkpoint_a)
@@ -174,25 +159,30 @@ class BubbaTripleCheckpointMerge:
             f"Merged {stats['merged_tensors']} tensor(s) with A + (B - C) * {strength:g}. "
             f"Carried {stats['carried_a_keys']} A-only key(s); skipped {stats['shape_mismatch_keys']} incompatible key(s)."
         )
-        return (updated_pipe, payload, updated_metadata, model, clip, vae, recipe_text(recipe), info)
+        return IO.NodeOutput(updated_pipe, payload, updated_metadata, model, clip, vae, recipe_text(recipe), info)
 
 
-class BubbaCheckpointFingerprint:
+class BubbaCheckpointFingerprint(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "checkpoint": (checkpoint_choices(), {"tooltip": "Checkpoint to fingerprint."}),
-            },
-        }
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="BubbaCheckpointFingerprint",
+            display_name="Bubba Checkpoint Fingerprint",
+            category="Bubba Nodes/Merge",
+            description="Outputs checkpoint hashes, size, modification time, and summary info.",
+            inputs=[IO.Combo.Input("checkpoint", options=checkpoint_choices())],
+            outputs=[
+                IO.String.Output("checkpoint_name"),
+                IO.String.Output("sha256"),
+                IO.String.Output("short_hash"),
+                IO.Int.Output("file_size_bytes"),
+                IO.String.Output("modified_at"),
+                IO.String.Output("info"),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "INT", "STRING", "STRING")
-    RETURN_NAMES = ("checkpoint_name", "sha256", "short_hash", "file_size_bytes", "modified_at", "info")
-    FUNCTION = "fingerprint"
-    CATEGORY = "Bubba Nodes/Merge"
-    DESCRIPTION = "Outputs a checkpoint SHA256, short hash, file size, modification time, and summary info."
-
-    def fingerprint(self, checkpoint):
+    @classmethod
+    def execute(cls, checkpoint):
         details = checkpoint_fingerprint(checkpoint)
         info = (
             f"{details['checkpoint_name']}\n"
@@ -201,7 +191,7 @@ class BubbaCheckpointFingerprint:
             f"Size: {details['file_size_bytes']} bytes\n"
             f"Modified: {details['modified_at']}"
         )
-        return (
+        return IO.NodeOutput(
             details["checkpoint_name"],
             details["sha256"],
             details["short_hash"],

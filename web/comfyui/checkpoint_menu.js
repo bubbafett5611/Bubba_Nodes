@@ -15,6 +15,7 @@ const EXTENSION_NAME = "bubba.CheckpointTreeMenu";
 const TARGET_NODE_CLASSES = new Set([
 	"BubbaCheckpointLoader",
 	"BubbaComboLoader",
+	"BubbaModelCompareLoader",
 	"BubbaCheckpointMerge",
 	"BubbaTripleCheckpointMerge",
 	"BubbaCheckpointFingerprint",
@@ -996,7 +997,10 @@ function setupKeyboardNavigation(menu) {
 }
 
 function isCheckpointWidget(node, widget) {
-	return !!node && TARGET_NODE_CLASSES.has(node.comfyClass) && TARGET_WIDGET_NAMES.has(widget?.name);
+	const widgetName = String(widget?.name || "");
+	return !!node
+		&& TARGET_NODE_CLASSES.has(node.comfyClass)
+		&& (TARGET_WIDGET_NAMES.has(widgetName) || /^model_[1-4]$/.test(widgetName));
 }
 
 function setupCheckpointKeyboardNavigation(menu) {

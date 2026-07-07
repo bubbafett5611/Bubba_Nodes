@@ -1,4 +1,5 @@
 from __future__ import annotations
+from comfy_api.latest import IO
 
 from ..models import BubbaCheckpointMerge, BubbaMetadata, BubbaPipe
 from ..utils.prompting import clean_prompt_value, empty_conditioning, encode_conditioning
@@ -38,78 +39,42 @@ _TEST_CASES = {
 }
 
 
-class BubbaMergePreviewPromptRunner:
+class BubbaMergePreviewPromptRunner(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "test_case": (
-                    list(_TEST_CASES),
-                    {
-                        "default": "portrait_detail",
-                        "tooltip": "Repeatable prompt case to use when previewing a merged checkpoint.",
-                    },
-                ),
-                "custom_positive": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "positive"},
-                        "tooltip": "Used when test_case is custom, or appended when append_custom_text is enabled.",
-                    },
-                ),
-                "custom_negative": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "bubba.autocomplete": {"group": "negative"},
-                        "tooltip": "Used when test_case is custom, or appended when append_custom_text is enabled.",
-                    },
-                ),
-                "append_custom_text": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Append custom prompt text to the selected built-in test case.",
-                    },
-                ),
-                "cleanup": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Normalize whitespace and separators in the emitted prompt text.",
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe to update with preview prompt text."}),
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."},
-                ),
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "Optional CLIP override. Overrides pipe.clip when connected and encodes preview conditioning.",
-                    },
-                ),
-                "checkpoint_merge": (
-                    "BUBBA_CHECKPOINT_MERGE",
-                    {"tooltip": "Optional merge payload. Its suggested name and recipe are included in metadata/info."},
-                ),
-            },
-        }
+    def define_schema(cls):
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        text = lambda name, group: IO.String.Input(name, default="", multiline=True, extra_dict={"bubba.autocomplete": {"group": group}})
+        return IO.Schema(
+            node_id="BubbaMergePreviewPromptRunner",
+            display_name="Bubba Merge Preview Prompt Runner",
+            category="Bubba Nodes/Merge",
+            description="Outputs repeatable prompt text for previewing checkpoint merge results.",
+            inputs=[
+                IO.Combo.Input("test_case", options=list(_TEST_CASES), default="portrait_detail"),
+                text("custom_positive", "positive"),
+                text("custom_negative", "negative"),
+                IO.Boolean.Input("append_custom_text", default=False),
+                IO.Boolean.Input("cleanup", default=True),
+                pipe.Input("pipe", optional=True),
+                metadata.Input("metadata", optional=True),
+                IO.Clip.Input("clip", optional=True),
+                IO.Custom("BUBBA_CHECKPOINT_MERGE").Input("checkpoint_merge", optional=True),
+            ],
+            outputs=[
+                pipe.Output("pipe"),
+                metadata.Output("metadata"),
+                IO.Conditioning.Output("positive"),
+                IO.Conditioning.Output("negative"),
+                IO.String.Output("positive_prompt"),
+                IO.String.Output("negative_prompt"),
+                IO.String.Output("test_name"),
+                IO.String.Output("info"),
+            ],
+        )
 
-    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "CONDITIONING", "CONDITIONING", "STRING", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("pipe", "metadata", "positive", "negative", "positive_prompt", "negative_prompt", "test_name", "info")
-    FUNCTION = "build_preview_prompt"
-    CATEGORY = "Bubba Nodes/Merge"
-    DESCRIPTION = "Outputs repeatable positive/negative prompt text for previewing checkpoint merge results."
-
-    def build_preview_prompt(
-        self,
+    @classmethod
+    def execute(
+        cls,
         test_case,
         custom_positive,
         custom_negative,
@@ -171,7 +136,7 @@ class BubbaMergePreviewPromptRunner:
             metadata=updated_metadata,
         )
         info = f"{test_name}\nPositive: {positive_prompt}\nNegative: {negative_prompt}{recipe_info}"
-        return (
+        return IO.NodeOutput(
             updated_pipe,
             updated_metadata,
             positive_conditioning,

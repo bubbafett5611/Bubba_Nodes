@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from PIL import Image, ImageDraw, ImageFont
 import torch
+from comfy_api.latest import IO
 
 from ..models import BubbaMetadata, BubbaPipe
 from ..models.pipe import resolve_pipe_value
@@ -184,94 +185,34 @@ def _render_overlay_image_batch(
     return (torch.stack(output, dim=0),)
 
 
-class BubbaOverlayFromMetadata:
+class BubbaOverlayFromMetadata(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "show_model": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "model_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "top",
-                    },
-                ),
-                "show_info": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "info_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "top",
-                    },
-                ),
-                "show_positive": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "positive_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "bottom",
-                    },
-                ),
-                "show_negative": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                    },
-                ),
-                "negative_position": (
-                    ["top", "bottom"],
-                    {
-                        "default": "bottom",
-                    },
-                ),
-                "background_color": (
-                    "STRING",
-                    {
-                        "default": "#000000AA",
-                        "multiline": False,
-                    },
-                ),
-                "font_size": (
-                    "INT",
-                    {
-                        "default": 40,
-                        "min": 10,
-                        "max": 1000,
-                        "control_after_generate": False,
-                    },
-                ),
-                "overlay_mode": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                    },
-                ),
-            },
-            "optional": {
-                "pipe": ("BUBBA_PIPE", {"tooltip": "Optional incoming pipe containing image and metadata."}),
-                "image": ("IMAGE", {"tooltip": "Optional image override. Overrides pipe.image when connected."}),
-                "metadata": ("BUBBA_METADATA", {"tooltip": "Optional metadata override. Overrides pipe.metadata when connected."}),
-            },
-        }
-
-    RETURN_TYPES = ("BUBBA_PIPE", "IMAGE", "BUBBA_METADATA")
-    RETURN_NAMES = ("pipe", "image", "metadata")
-    FUNCTION = "add_metadata_overlay"
-    CATEGORY = "Bubba Nodes/Image/Overlay"
-    DESCRIPTION = "Adds text overlay using fields extracted from Bubba Metadata Bundle object."
+    def define_schema(cls):
+        pos = ["top", "bottom"]
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        return IO.Schema(
+            node_id="BubbaOverlayFromMetadata",
+            display_name="Bubba Add Text Overlay (Metadata)",
+            category="Bubba Nodes/Image/Overlay",
+            description="Adds an image overlay from Bubba metadata fields.",
+            inputs=[
+                IO.Boolean.Input("show_model", default=False),
+                IO.Combo.Input("model_position", options=pos, default="top"),
+                IO.Boolean.Input("show_info", default=False),
+                IO.Combo.Input("info_position", options=pos, default="top"),
+                IO.Boolean.Input("show_positive", default=False),
+                IO.Combo.Input("positive_position", options=pos, default="bottom"),
+                IO.Boolean.Input("show_negative", default=False),
+                IO.Combo.Input("negative_position", options=pos, default="bottom"),
+                IO.String.Input("background_color", default="#000000AA"),
+                IO.Int.Input("font_size", default=40, min=10, max=1000, control_after_generate=False),
+                IO.Boolean.Input("overlay_mode", default=True),
+                pipe.Input("pipe", optional=True),
+                IO.Image.Input("image", optional=True),
+                metadata.Input("metadata", optional=True),
+            ],
+            outputs=[pipe.Output("pipe"), IO.Image.Output("image"), metadata.Output("metadata")],
+        )
 
     @staticmethod
     def _extract_fields(metadata) -> tuple[str, str, str, str]:
@@ -283,8 +224,9 @@ class BubbaOverlayFromMetadata:
             payload.negative_prompt,
         )
 
-    def add_metadata_overlay(
-        self,
+    @classmethod
+    def execute(
+        cls,
         show_model,
         model_position,
         show_info,
@@ -303,7 +245,7 @@ class BubbaOverlayFromMetadata:
         source_pipe = BubbaPipe.coerce(pipe)
         resolved_image = resolve_pipe_value(image, source_pipe.image, "image")
         resolved_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
-        model_text, info_text, positive_text, negative_text = self._extract_fields(resolved_metadata)
+        model_text, info_text, positive_text, negative_text = cls._extract_fields(resolved_metadata)
         (output_image,) = _render_overlay_image_batch(
             resolved_image,
             model_text,
@@ -322,4 +264,4 @@ class BubbaOverlayFromMetadata:
             font_size,
             overlay_mode,
         )
-        return (source_pipe.updated(image=output_image, metadata=resolved_metadata), output_image, resolved_metadata)
+        return IO.NodeOutput(source_pipe.updated(image=output_image, metadata=resolved_metadata), output_image, resolved_metadata)

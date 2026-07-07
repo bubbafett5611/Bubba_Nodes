@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from comfy_api.latest import IO
+
 from ..models import BubbaMetadata, BubbaPipe
 from ..utils.prompting import (
     clean_prompt_value,
@@ -75,116 +77,42 @@ def load_prompt_randomizer_categories(data_dir: Path | None = None) -> dict[str,
     return categories
 
 
-class BubbaPromptRandomizer:
+class BubbaPromptRandomizer(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        required: dict[str, tuple[Any, dict[str, Any]]] = {
-            "seed": (
-                "INT",
-                {
-                    "default": 0,
-                    "min": 0,
-                    "max": 2**32 - 1,
-                    "step": 1,
-                    "tooltip": "Seed used for deterministic random category choices.",
-                },
-            ),
-            "prefix_text": (
-                "STRING",
-                {
-                    "default": "",
-                    "multiline": True,
-                    "bubba.autocomplete": {"group": "quality"},
-                    "tooltip": "Stable positive prompt text placed before randomized category choices.",
-                },
-            ),
-            "extra_positive": (
-                "STRING",
-                {
-                    "default": "",
-                    "multiline": True,
-                    "bubba.autocomplete": {"group": "positive"},
-                    "tooltip": "Additional positive prompt text placed after randomized category choices.",
-                },
-            ),
-            "negative_prompt": (
-                "STRING",
-                {
-                    "default": "",
-                    "multiline": True,
-                    "bubba.autocomplete": {"group": "negative"},
-                    "tooltip": "Negative prompt text to pass through with cleanup and dedupe options.",
-                },
-            ),
-            "cleanup": (
-                "BOOLEAN",
-                {
-                    "default": True,
-                    "tooltip": "Normalize spacing and trim separators.",
-                },
-            ),
-            "dedupe": (
-                "BOOLEAN",
-                {
-                    "default": True,
-                    "tooltip": "Remove duplicate prompt tokens while preserving first occurrence order.",
-                },
-            ),
-            "remove_category_underscores": (
-                "BOOLEAN",
-                {
-                    "default": False,
-                    "tooltip": "Replace underscores with spaces only in selected category values.",
-                },
-            ),
-        }
-
+    def define_schema(cls):
+        auto = lambda group: {"bubba.autocomplete": {"group": group}}
+        inputs = [
+            IO.Int.Input("seed", default=0, min=0, max=2**32 - 1),
+            IO.String.Input("prefix_text", default="", multiline=True, extra_dict=auto("quality")),
+            IO.String.Input("extra_positive", default="", multiline=True, extra_dict=auto("positive")),
+            IO.String.Input("negative_prompt", default="", multiline=True, extra_dict=auto("negative")),
+            IO.Boolean.Input("cleanup", default=True),
+            IO.Boolean.Input("dedupe", default=True),
+            IO.Boolean.Input("remove_category_underscores", default=False),
+        ]
         for category_name, items in load_prompt_randomizer_categories().items():
-            required[category_name] = (
-                [_DISABLED, _RANDOM, *items],
-                {
-                    "default": _DISABLED,
-                    "tooltip": f"Choose a {category_name.replace('_', ' ')} value, randomize it, or disable this category.",
-                },
-            )
+            inputs.append(IO.Combo.Input(category_name, options=[_DISABLED, _RANDOM, *items], default=_DISABLED))
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        inputs += [pipe.Input("pipe", optional=True), metadata.Input("metadata", optional=True), IO.Clip.Input("clip", optional=True)]
+        return IO.Schema(
+            node_id="BubbaPromptRandomizer",
+            display_name="Bubba Prompt Randomizer",
+            category="Bubba Nodes/Prompt",
+            description="Builds a prompt from JSON-backed category choices and freeform text.",
+            inputs=inputs,
+            outputs=[
+                pipe.Output("pipe"),
+                metadata.Output("metadata"),
+                IO.Conditioning.Output("positive"),
+                IO.Conditioning.Output("negative"),
+                IO.String.Output("positive_prompt"),
+                IO.String.Output("negative_prompt"),
+                IO.String.Output("chosen_values"),
+            ],
+        )
 
-        return {
-            "required": required,
-            "optional": {
-                "pipe": (
-                    "BUBBA_PIPE",
-                    {"tooltip": "Optional incoming pipe containing the CLIP to use when encoding randomized prompts."},
-                ),
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {
-                        "tooltip": "Optional metadata override. Overrides pipe.metadata when connected.",
-                    },
-                ),
-                "clip": (
-                    "CLIP",
-                    {
-                        "tooltip": "Optional CLIP override. Overrides pipe.clip when connected.",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("BUBBA_PIPE", "BUBBA_METADATA", "CONDITIONING", "CONDITIONING", "STRING", "STRING", "STRING")
-    RETURN_NAMES = (
-        "pipe",
-        "metadata",
-        "positive",
-        "negative",
-        "positive_prompt",
-        "negative_prompt",
-        "chosen_values",
-    )
-    FUNCTION = "randomize_prompt"
-    CATEGORY = "Bubba Nodes/Prompt"
-    DESCRIPTION = "Builds a prompt from JSON-backed category dropdowns plus freeform positive and negative text."
-
-    def randomize_prompt(self, **kwargs):
+    @classmethod
+    def execute(cls, **kwargs):
         seed = int(kwargs.get("seed", 0) or 0)
         cleanup = bool(kwargs.get("cleanup", True))
         dedupe = bool(kwargs.get("dedupe", True))
@@ -213,7 +141,7 @@ class BubbaPromptRandomizer:
             selected_parts.append(value)
             chosen_lines.append(f"{category_name}: {value}")
 
-        positive_prompt = self._normalize_prompt_parts(
+        positive_prompt = cls._normalize_prompt_parts(
             [
                 kwargs.get("prefix_text", ""),
                 *selected_parts,
@@ -222,7 +150,7 @@ class BubbaPromptRandomizer:
             cleanup=cleanup,
             dedupe=dedupe,
         )
-        negative_prompt = self._normalize_prompt_parts(
+        negative_prompt = cls._normalize_prompt_parts(
             [kwargs.get("negative_prompt", "")],
             cleanup=cleanup,
             dedupe=dedupe,
@@ -249,7 +177,7 @@ class BubbaPromptRandomizer:
         )
         chosen_values = "\n".join(chosen_lines) if chosen_lines else "none"
 
-        return (
+        return IO.NodeOutput(
             updated_pipe,
             updated_metadata,
             positive_conditioning,
