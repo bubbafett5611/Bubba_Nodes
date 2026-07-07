@@ -1,0 +1,45 @@
+# Female outfit choices from Danbooru attire tags
+dress
+school uniform
+serafuku
+sailor dress
+maid
+miko
+kimono
+furisode
+layered kimono
+short kimono
+uchikake
+yukata
+hanbok
+china dress
+ao dai
+dirndl
+harem outfit
+formal clothes
+business suit
+pant suit
+skirt suit
+track suit
+gym uniform
+school swimsuit
+swimsuit
+competition swimsuit
+slingshot swimsuit
+bikini
+sports bikini
+tankini
+bodysuit
+leotard
+short jumpsuit
+jumpsuit
+romper
+nightgown
+pajamas
+robe
+bathrobe
+overalls
+tutu
+waitress
+cheerleader
+cowboy western

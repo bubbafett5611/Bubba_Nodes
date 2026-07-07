@@ -1,12 +1,54 @@
 const { app } = window.comfyAPI.app;
 
 const EXTENSION_NAME = "bubba.SamplerSeedButton";
-const TARGET_NODE_CLASS = "BubbaKSampler";
+const TARGET_NODE_CLASSES = new Set(["BubbaKSampler", "BubbaSeedControl"]);
 const SEED_WIDGET_NAME = "seed";
 const BUTTON_LABEL = "Manual Random Seed";
 const AUTO_QUEUE_KEY = "bubba.KSampler.ManualSeed.AutoQueue";
 const FIXED_CONTROL_VALUE = "fixed";
 const MANUAL_SEED_MAX = 1125899906842624; // EasyUse-style 2^50 cap.
+
+function migrateLegacySeedControlOutputs(node) {
+    if (node?.comfyClass !== "BubbaSeedControl" || !Array.isArray(node.outputs)) {
+        return;
+    }
+
+    const names = node.outputs.map((output) => output?.name);
+    if (names[0] === "pipe" && names[1] === "metadata" && names[2] === "seed") {
+        // removeOutput shifts surviving link origin slots, preserving old seed/info wires.
+        node.removeOutput(1);
+        node.removeOutput(0);
+    }
+
+    const links = app?.graph?.links;
+    if (!links || !Array.isArray(node.outputs) || node.outputs.length < 2) {
+        return;
+    }
+
+    // Fallback for frontend builds that already restored the new output definitions
+    // but retained the legacy numeric origin slots in the graph link table.
+    const ownLinks = Object.values(links).filter((link) => String(link?.origin_id) === String(node.id));
+    let changed = false;
+    for (const link of ownLinks) {
+        if (link.origin_slot === 2 || link.origin_slot === 3) {
+            link.origin_slot -= 2;
+            changed = true;
+        }
+    }
+    if (!changed) {
+        return;
+    }
+
+    for (const output of node.outputs) {
+        output.links = [];
+    }
+    for (const link of ownLinks) {
+        if (link.origin_slot >= 0 && link.origin_slot < node.outputs.length) {
+            node.outputs[link.origin_slot].links.push(link.id);
+        }
+    }
+    node.setDirtyCanvas?.(true, true);
+}
 
 function toFiniteNumber(value, fallback) {
     const parsed = Number(value);
@@ -153,11 +195,19 @@ function installSamplerSeedButton() {
     app.registerExtension({
         name: EXTENSION_NAME,
         beforeRegisterNodeDef(nodeType, nodeData) {
-            if (nodeData?.name !== TARGET_NODE_CLASS) {
+            if (!TARGET_NODE_CLASSES.has(nodeData?.name)) {
                 return;
             }
 
             const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
+            const originalOnConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function onConfigureWithSeedMigration() {
+                const output = typeof originalOnConfigure === "function"
+                    ? originalOnConfigure.apply(this, arguments)
+                    : undefined;
+                migrateLegacySeedControlOutputs(this);
+                return output;
+            };
             nodeType.prototype.onNodeCreated = function onNodeCreatedWithManualSeedButton() {
                 const output = typeof originalOnNodeCreated === "function"
                     ? originalOnNodeCreated.apply(this, arguments)

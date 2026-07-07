@@ -7,12 +7,15 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..compat.paths import get_filename_list
+from ..compat.routes import route_table
+
 _route_registered = False
 _ARCHIVE_RAW_BASE_URL = "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists"
 _DEFAULT_DANBOORU_CSV_URL = f"{_ARCHIVE_RAW_BASE_URL}/danbooru/danbooru_2026-04-01_pt20-ia-dd.csv"
 _DEFAULT_E621_CSV_URL = f"{_ARCHIVE_RAW_BASE_URL}/e621/e621_2026-04-01_pt20-ia-ed.csv"
 _DEFAULT_LEGACY_MERGED_CSV_URL = (
-    "https://raw.githubusercontent.com/DraconicDragon1/" "danbooru-e621-autocomplete/main/danbooru_e621_merged.csv"
+    "https://raw.githubusercontent.com/DraconicDragon1/danbooru-e621-autocomplete/main/danbooru_e621_merged.csv"
 )
 _MAX_CSV_DOWNLOAD_BYTES = 100 * 1024 * 1024
 _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
@@ -41,6 +44,34 @@ def _upstream_csv_url() -> str:
 
 def _local_tags_dir() -> Path:
     return _repo_root() / "web" / "comfyui" / "tags"
+
+
+def _wildcards_dir() -> Path:
+    return _repo_root() / "src" / "bubba_nodes" / "data" / "wildcards"
+
+
+def _wildcard_entries(wildcards_dir: Path | None = None) -> list[dict[str, str]]:
+    root = (wildcards_dir or _wildcards_dir()).resolve()
+    if not root.is_dir():
+        return []
+
+    entries: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*.txt"), key=lambda item: item.as_posix().lower()):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.resolve().relative_to(root).with_suffix("").as_posix()
+        except ValueError:
+            continue
+        if not relative:
+            continue
+        entries.append(
+            {
+                "text": relative,
+                "insert_text": f"__{relative}__",
+            }
+        )
+    return entries
 
 
 def _tag_sources() -> list[TagSource]:
@@ -124,29 +155,17 @@ def register_autocomplete_routes() -> None:
 
     try:
         from aiohttp import web
-        from server import PromptServer
-        import folder_paths
     except Exception:  # pragma: no cover - only used in Comfy runtime
         return
 
-    if PromptServer is None or not getattr(PromptServer, "instance", None):
+    routes = route_table()
+    if routes is None:
         return
-
-    routes = PromptServer.instance.routes
 
     @routes.get("/bubba/autocomplete/embeddings")
     async def bubba_autocomplete_embeddings(_request):
-        if folder_paths is None or not hasattr(folder_paths, "get_filename_list"):
-            return web.json_response(
-                {
-                    "status": "folder_paths_unavailable",
-                    "embeddings": [],
-                    "count": 0,
-                }
-            )
-
         try:
-            names = folder_paths.get_filename_list("embeddings")
+            names = get_filename_list("embeddings")
         except Exception:
             names = []
 
@@ -157,6 +176,17 @@ def register_autocomplete_routes() -> None:
             {
                 "status": "ok",
                 "embeddings": entries,
+                "count": len(entries),
+            }
+        )
+
+    @routes.get("/bubba/autocomplete/wildcards")
+    async def bubba_autocomplete_wildcards(_request):
+        entries = _wildcard_entries()
+        return web.json_response(
+            {
+                "status": "ok",
+                "wildcards": entries,
                 "count": len(entries),
             }
         )

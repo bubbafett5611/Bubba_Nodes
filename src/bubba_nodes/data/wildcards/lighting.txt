@@ -1,0 +1,6 @@
+# Sample lighting choices for __lighting__
+soft rim lighting
+golden-hour sunlight
+dramatic neon lighting
+diffused studio lighting
+moonlight through clouds

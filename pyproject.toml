@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bubba_nodes"
-version = "2.0.1"
+version = "3.0.0"
 description = "Custom ComfyUI nodes for metadata-first prompt, generation, image, and save workflows."
 authors = [
   {name = "bubbafett5611", email = "metalgfx@gmail.com"}
@@ -45,6 +45,7 @@ DisplayName = "Bubba Nodes"
 Icon = ""
 Tags = []
 Repository = "https://github.com/bubbafett5611/Bubba_Nodes"
+requires-comfyui = ">=0.27.0"
 
 includes = []
 

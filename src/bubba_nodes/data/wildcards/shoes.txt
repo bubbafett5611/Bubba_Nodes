@@ -1,0 +1,31 @@
+# Danbooru footwear tags
+shoes
+boots
+ankle boots
+high heel boots
+knee boots
+thigh boots
+lace-up boots
+platform boots
+open-toe boots
+sneakers
+dress shoes
+loafers
+oxfords
+flats
+high heels
+pumps
+stiletto heels
+wedge heels
+mary janes
+sandals
+gladiator sandals
+flip-flops
+geta
+waraji
+slippers
+ballet slippers
+crocs
+platform sandals
+platform shoes
+pointy shoes

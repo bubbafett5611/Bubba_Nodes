@@ -4,6 +4,9 @@ import json
 import re
 from pathlib import Path
 
+from ..compat.paths import get_folder_paths, get_full_path
+from ..compat.routes import route_table
+
 _PREVIEW_EXTENSIONS = ("jpeg", "jpg", "png", "webp")
 _route_registered = False
 _CIVITAI_URL_RE = re.compile(r"https?://(?:www\.)?civitai\.(?:com|red)/models/\d+(?:[^\s\"'>]*)", re.IGNORECASE)
@@ -27,41 +30,34 @@ def _is_relative_to_base(candidate: Path, base_path: Path) -> bool:
     return True
 
 
-def _resolve_model_file_path(folder_name: str, model: str, folder_paths_module) -> Path | None:
-    if folder_paths_module is None:
-        return None
-
+def _resolve_model_file_path(folder_name: str, model: str) -> Path | None:
     normalized = str(model or "").strip().replace("\\", "/").lstrip("/")
     if not normalized:
         return None
     if ".." in normalized.split("/"):
         return None
 
-    if hasattr(folder_paths_module, "get_full_path"):
-        resolved = folder_paths_module.get_full_path(folder_name, normalized)
-        if resolved:
-            path = Path(resolved)
-            if path.exists():
-                return path
+    resolved = get_full_path(folder_name, normalized)
+    if resolved is not None and resolved.exists():
+        return resolved
 
-    if hasattr(folder_paths_module, "get_folder_paths"):
-        for base in folder_paths_module.get_folder_paths(folder_name):
-            base_path = Path(base).resolve()
-            candidate = (base_path / normalized).resolve()
-            if not _is_relative_to_base(candidate, base_path):
-                continue
-            if candidate.exists():
-                return candidate
+    for base in get_folder_paths(folder_name):
+        base_path = Path(base).resolve()
+        candidate = (base_path / normalized).resolve()
+        if not _is_relative_to_base(candidate, base_path):
+            continue
+        if candidate.exists():
+            return candidate
 
     return None
 
 
-def _resolve_checkpoint_path(model: str, folder_paths_module) -> Path | None:
-    return _resolve_model_file_path("checkpoints", model, folder_paths_module)
+def _resolve_checkpoint_path(model: str) -> Path | None:
+    return _resolve_model_file_path("checkpoints", model)
 
 
-def _resolve_lora_path(model: str, folder_paths_module) -> Path | None:
-    return _resolve_model_file_path("loras", model, folder_paths_module)
+def _resolve_lora_path(model: str) -> Path | None:
+    return _resolve_model_file_path("loras", model)
 
 
 def _normalize_civitai_url(url: str) -> str:
@@ -184,20 +180,17 @@ def register_checkpoint_preview_route() -> None:
 
     try:
         from aiohttp import web
-        from server import PromptServer
-        import folder_paths
     except Exception:  # pragma: no cover - only used in Comfy runtime
         return
 
-    if PromptServer is None or not getattr(PromptServer, "instance", None):
+    routes = route_table()
+    if routes is None:
         return
-
-    routes = PromptServer.instance.routes
 
     @routes.get("/bubba/checkpoint_preview")
     async def bubba_checkpoint_preview(request):
         model = request.rel_url.query.get("model", "")
-        checkpoint_path = _resolve_checkpoint_path(model, folder_paths)
+        checkpoint_path = _resolve_checkpoint_path(model)
         if checkpoint_path is None:
             return web.Response(status=404, text="checkpoint not found")
 
@@ -210,7 +203,7 @@ def register_checkpoint_preview_route() -> None:
     @routes.get("/bubba/checkpoint_civitai_link")
     async def bubba_checkpoint_civitai_link(request):
         model = request.rel_url.query.get("model", "")
-        checkpoint_path = _resolve_checkpoint_path(model, folder_paths)
+        checkpoint_path = _resolve_checkpoint_path(model)
         if checkpoint_path is None:
             return web.json_response({"url": None, "error": "checkpoint not found"}, status=404)
 
@@ -223,7 +216,7 @@ def register_checkpoint_preview_route() -> None:
     @routes.get("/bubba/lora_preview")
     async def bubba_lora_preview(request):
         model = request.rel_url.query.get("model", "")
-        lora_path = _resolve_lora_path(model, folder_paths)
+        lora_path = _resolve_lora_path(model)
         if lora_path is None:
             return web.Response(status=404, text="lora not found")
 
@@ -236,7 +229,7 @@ def register_checkpoint_preview_route() -> None:
     @routes.get("/bubba/lora_civitai_link")
     async def bubba_lora_civitai_link(request):
         model = request.rel_url.query.get("model", "")
-        lora_path = _resolve_lora_path(model, folder_paths)
+        lora_path = _resolve_lora_path(model)
         if lora_path is None:
             return web.json_response({"url": None, "error": "lora not found"}, status=404)
 

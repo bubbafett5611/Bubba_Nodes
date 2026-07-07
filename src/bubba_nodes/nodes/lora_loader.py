@@ -1,72 +1,53 @@
-import folder_paths
-from nodes import LoraLoader
+from comfy_api.latest import IO
 
-from ..models import BubbaMetadata
+from ..compat.core_nodes import LoraApplier
+from ..compat.paths import get_filename_list
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.checkpointing import checkpoint_display_name
 
 
-class BubbaLoraLoader:
+class BubbaLoraLoader(IO.ComfyNode):
     """Loads a LoRA and applies it to MODEL and CLIP, recording the LoRA name in metadata.
     Multiple BubbaLoraLoader nodes can be chained; each appends its LoRA to the metadata list."""
 
-    def __init__(self):
-        self._loader = LoraLoader()
+    @classmethod
+    def define_schema(cls):
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        return IO.Schema(
+            node_id="BubbaLoraLoader",
+            display_name="Bubba LoRA Loader",
+            category="Bubba Nodes/Generation",
+            description="Applies a LoRA to MODEL and CLIP and records it in metadata.",
+            inputs=[
+                IO.Combo.Input("lora_name", options=get_filename_list("loras")),
+                IO.Float.Input("strength_model", default=1.0, min=-100.0, max=100.0, step=0.01),
+                IO.Float.Input("strength_clip", default=1.0, min=-100.0, max=100.0, step=0.01),
+                pipe.Input("pipe", optional=True),
+                metadata.Input("metadata", optional=True),
+                IO.Model.Input("model", optional=True),
+                IO.Clip.Input("clip", optional=True),
+            ],
+            outputs=[
+                pipe.Output("pipe"),
+                metadata.Output("metadata"),
+                IO.Model.Output("model"),
+                IO.Clip.Output("clip"),
+                IO.String.Output("lora_name"),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "model": ("MODEL", {"tooltip": "Diffusion model to apply the LoRA to."}),
-                "clip": ("CLIP", {"tooltip": "CLIP model to apply the LoRA to."}),
-                "lora_name": (
-                    folder_paths.get_filename_list("loras"),
-                    {"tooltip": "The LoRA file to load."},
-                ),
-                "strength_model": (
-                    "FLOAT",
-                    {
-                        "default": 1.0,
-                        "min": -100.0,
-                        "max": 100.0,
-                        "step": 0.01,
-                        "tooltip": "How strongly to modify the diffusion model.",
-                    },
-                ),
-                "strength_clip": (
-                    "FLOAT",
-                    {
-                        "default": 1.0,
-                        "min": -100.0,
-                        "max": 100.0,
-                        "step": 0.01,
-                        "tooltip": "How strongly to modify the CLIP model.",
-                    },
-                ),
-            },
-            "optional": {
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {"tooltip": "Optional metadata object to update with this LoRA's name."},
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("MODEL", "CLIP", "STRING", "BUBBA_METADATA")
-    RETURN_NAMES = ("model", "clip", "lora_name", "metadata")
-    FUNCTION = "load_lora"
-    CATEGORY = "Bubba Nodes/Generation"
-    DESCRIPTION = (
-        "Loads a LoRA and applies it to MODEL and CLIP. "
-        "Records the LoRA name in metadata so it appears in overlays and saved image info. "
-        "Chain multiple nodes to stack LoRAs - each appends to the metadata LoRA list."
-    )
-
-    def load_lora(self, model, clip, lora_name, strength_model, strength_clip, metadata=None):
-        model_out, clip_out = self._loader.load_lora(model, clip, lora_name, strength_model, strength_clip)
+    def execute(cls, lora_name, strength_model, strength_clip, pipe=None, metadata=None, model=None, clip=None):
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_model = resolve_pipe_value(model, source_pipe.model, "model")
+        resolved_clip = resolve_pipe_value(clip, source_pipe.clip, "clip")
+        model_out, clip_out = LoraApplier().apply(resolved_model, resolved_clip, lora_name, strength_model, strength_clip)
 
         display_name = checkpoint_display_name(lora_name)
-        existing = BubbaMetadata.coerce(metadata)
+        existing = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
         updated_loras = list(existing.loras) + [display_name]
         updated_metadata = existing.updated(loras=updated_loras)
+        updated_pipe = source_pipe.updated(model=model_out, clip=clip_out, metadata=updated_metadata)
 
-        return (model_out, clip_out, display_name, updated_metadata)
+        return IO.NodeOutput(updated_pipe, updated_metadata, model_out, clip_out, display_name)

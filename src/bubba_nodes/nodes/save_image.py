@@ -1,90 +1,43 @@
 import json
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Mapping
 
-from comfy_api.latest import UI
+from comfy_api.latest import IO, UI
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
-try:
-    import folder_paths
-except Exception:  # pragma: no cover - only used inside Comfy runtime
-    folder_paths = None
-
-from ..models import BubbaMetadata
+from ..compat.paths import get_full_path_or_raise, get_output_directory, get_temp_directory
+from ..models import BubbaMetadata, BubbaPipe
+from ..models.pipe import resolve_pipe_value
 from ..utils.checkpointing import checkpoint_display_name, checkpoint_short_hash
 from ..utils.paths import sanitize_relative_save_prefix
-
-# TODO(new-feature): Add sidecar JSON export option for non-PNG outputs to preserve metadata portability.
-# TODO(new-node): Add a save manifest node that records every saved file path plus metadata digest for later audit/reload.
-
 
 _DEFAULT_METADATA_DICT = BubbaMetadata().to_dict()
 _METADATA_FIELDS_IGNORED_FOR_EMPTY_WARNING = {"save_prefix"}
 
 
-class BubbaSaveImage:
+class BubbaSaveImage(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "images": ("IMAGE",),
-                "save_prefix": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Relative save prefix, usually Character/Scene. Leave blank to use metadata.save_prefix when metadata is connected.",
-                    },
-                ),
-                "preview_only": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Enable to save as temp preview images instead of writing to output.",
-                    },
-                ),
-                "save_workflow_metadata": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Enable to embed ComfyUI prompt/workflow metadata into saved PNGs, matching the default Save Image node behavior.",
-                    },
-                ),
-                "save_a1111_metadata": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Enable to embed an A1111/Civitai-compatible PNG 'parameters' text block alongside Bubba metadata.",
-                    },
-                ),
-            },
-            "optional": {
-                "metadata": (
-                    "BUBBA_METADATA",
-                    {
-                        "tooltip": "Optional metadata object. When save_prefix is blank, metadata.save_prefix is used.",
-                    },
-                ),
-                "filepath": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "tooltip": "Deprecated compatibility input. Use save_prefix instead.",
-                    },
-                ),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    RETURN_TYPES = ("BUBBA_METADATA",)
-    RETURN_NAMES = ("metadata",)
-    FUNCTION = "save_images"
-    OUTPUT_NODE = True
-    CATEGORY = "Bubba Nodes/Image/Save"
-    DESCRIPTION = "Saves images using save_prefix or metadata.save_prefix, with optional preview-only temp mode, optional ComfyUI workflow metadata embedding, optional A1111/Civitai-compatible parameters metadata, and embedded Bubba metadata for PNG files."
+    def define_schema(cls):
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        return IO.Schema(
+            node_id="BubbaSaveImage",
+            display_name="Bubba Save Image",
+            category="Bubba Nodes/Image/Save",
+            description="Saves images with workflow, A1111, and Bubba PNG metadata options.",
+            inputs=[
+                IO.String.Input("save_prefix", default=""),
+                IO.Boolean.Input("preview_only", default=False),
+                IO.Boolean.Input("save_workflow_metadata", default=True),
+                IO.Boolean.Input("save_a1111_metadata", default=False),
+                pipe.Input("pipe", optional=True),
+                IO.Image.Input("images", optional=True),
+                metadata.Input("metadata", optional=True),
+            ],
+            outputs=[pipe.Output("pipe"), metadata.Output("metadata"), IO.String.Output("saved_paths"), IO.String.Output("info")],
+            hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
+            is_output_node=True,
+        )
 
     @staticmethod
     def _is_default_metadata(metadata: BubbaMetadata) -> bool:
@@ -107,12 +60,9 @@ class BubbaSaveImage:
 
     @staticmethod
     def _resolve_base_dir(image_type: str) -> Path:
-        if folder_paths is not None:
-            if image_type == "temp" and hasattr(folder_paths, "get_temp_directory"):
-                return Path(folder_paths.get_temp_directory())
-            if hasattr(folder_paths, "get_output_directory"):
-                return Path(folder_paths.get_output_directory())
-        return Path.cwd()
+        if image_type == "temp":
+            return get_temp_directory()
+        return get_output_directory()
 
     @classmethod
     def _resolve_saved_image_path(cls, item: dict) -> Path | None:
@@ -191,9 +141,9 @@ class BubbaSaveImage:
         checkpoint_name = cls._find_checkpoint_name_in_prompt(prompt)
         model_name = metadata.model_name or checkpoint_display_name(checkpoint_name)
         model_hash = ""
-        if checkpoint_name and folder_paths is not None and hasattr(folder_paths, "get_full_path_or_raise"):
+        if checkpoint_name:
             try:
-                checkpoint_path = folder_paths.get_full_path_or_raise("checkpoints", checkpoint_name)
+                checkpoint_path = get_full_path_or_raise("checkpoints", checkpoint_name)
                 model_hash = checkpoint_short_hash(checkpoint_path)
             except Exception:
                 model_hash = ""
@@ -260,7 +210,6 @@ class BubbaSaveImage:
 
     @classmethod
     def _try_embed_metadata_in_saved_images(cls, save_result: dict, text_entries: Mapping[str, str]) -> list[str]:
-        # TODO(optimize): Parallelize metadata embedding when multiple images are saved in one batch.
         failed_paths: list[str] = []
         if not text_entries:
             return failed_paths
@@ -276,42 +225,72 @@ class BubbaSaveImage:
                 failed_paths.append(str(path))
         return failed_paths
 
-    def save_images(
-        self,
-        images,
+    @classmethod
+    def _saved_paths_text(cls, save_result: dict) -> str:
+        paths: list[str] = []
+        for item in save_result.get("images", []):
+            if not isinstance(item, dict):
+                continue
+            path = cls._resolve_saved_image_path(item)
+            if path is not None:
+                paths.append(str(path))
+        return "\n".join(paths)
+
+    @staticmethod
+    def _format_info(preview_only: bool, saved_paths: str, warnings: list[str]) -> str:
+        lines: list[str] = []
+        if preview_only:
+            lines.append("Preview only; no output files were saved.")
+        elif saved_paths:
+            lines.append(f"Saved {len(saved_paths.splitlines())} image(s).")
+        else:
+            lines.append("No saved image paths were reported by ComfyUI.")
+        if warnings:
+            lines.extend(warnings)
+        return "\n".join(lines)
+
+    @classmethod
+    def execute(
+        cls,
         save_prefix="",
         preview_only=False,
         save_workflow_metadata=True,
         save_a1111_metadata=False,
+        pipe=None,
+        images=None,
         metadata=None,
-        filepath=None,
         prompt=None,
         extra_pnginfo=None,
     ):
-        input_metadata = BubbaMetadata.coerce(metadata)
-        metadata_warnings = self._metadata_input_warnings(metadata is not None, input_metadata)
+        source_pipe = BubbaPipe.coerce(pipe)
+        resolved_images = resolve_pipe_value(images, source_pipe.image, "image")
+        input_metadata = BubbaMetadata.coerce(metadata if metadata is not None else source_pipe.metadata)
+        metadata_warnings = cls._metadata_input_warnings(metadata is not None, input_metadata)
         normalized_metadata = input_metadata
-        raw_save_prefix = (save_prefix or "").strip() or (filepath or "").strip() or normalized_metadata.save_prefix or "Character/Scene"
+        raw_save_prefix = (save_prefix or "").strip() or normalized_metadata.save_prefix or "Character/Scene"
         resolved_save_prefix = sanitize_relative_save_prefix(raw_save_prefix)
         normalized_metadata = normalized_metadata.updated(save_prefix=resolved_save_prefix)
-        has_metadata = not self._is_default_metadata(normalized_metadata)
+        updated_pipe = source_pipe.updated(image=resolved_images, metadata=normalized_metadata)
+        has_metadata = not cls._is_default_metadata(normalized_metadata)
         metadata_json_compact = normalized_metadata.to_json(pretty=False) if has_metadata else None
         metadata_json_pretty = normalized_metadata.to_json(pretty=True) if has_metadata else None
 
         if preview_only:
-            result = UI.PreviewImage(images, cls=cast(Any, None)).as_dict()
+            result = UI.PreviewImage(resolved_images, cls=cls).as_dict()
             if metadata_warnings:
                 result["metadata_warnings"] = metadata_warnings
             if metadata_json_pretty is not None:
                 result["metadata_text"] = metadata_json_pretty
-            return {"ui": result, "result": (normalized_metadata,)}
+            saved_paths = ""
+            info = cls._format_info(True, saved_paths, metadata_warnings)
+            return IO.NodeOutput(updated_pipe, normalized_metadata, saved_paths, info, ui=result)
 
         result = UI.ImageSaveHelper.get_save_images_ui(
-            images=images,
+            images=resolved_images,
             filename_prefix=resolved_save_prefix,
-            cls=cast(Any, None),
+            cls=cls,
         ).as_dict()
-        png_text_entries = self._build_png_text_entries(
+        png_text_entries = cls._build_png_text_entries(
             metadata_json_compact,
             save_workflow_metadata,
             save_a1111_metadata,
@@ -320,11 +299,13 @@ class BubbaSaveImage:
             extra_pnginfo,
         )
         if png_text_entries:
-            failed_metadata_paths = self._try_embed_metadata_in_saved_images(result, png_text_entries)
+            failed_metadata_paths = cls._try_embed_metadata_in_saved_images(result, png_text_entries)
             if failed_metadata_paths:
                 metadata_warnings.extend(f"Failed to embed PNG metadata in {path}" for path in failed_metadata_paths)
         if metadata_warnings:
             result["metadata_warnings"] = metadata_warnings
         if metadata_json_pretty is not None:
             result["metadata_text"] = metadata_json_pretty
-        return {"ui": result, "result": (normalized_metadata,)}
+        saved_paths = cls._saved_paths_text(result)
+        info = cls._format_info(False, saved_paths, metadata_warnings)
+        return IO.NodeOutput(updated_pipe, normalized_metadata, saved_paths, info, ui=result)

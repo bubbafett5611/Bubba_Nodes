@@ -34,6 +34,7 @@ Temporary Items
 .Python
 env/
 venv/
+.venv/
 build/
 develop-eggs/
 dist/
@@ -119,3 +120,10 @@ launch_comfy.bat
 .test_tmp/
 .ruff_cache/
 .codex-tools/
+
+# Local audits, remediation notes, and temporary design scratchpads
+*.tmp.md
+QA_REVIEW_REPORT.md
+COMPLETE_QA_REVIEW_REPORT.md
+REMEDIATION_PLAN.md
+ROADBLOCKS.md

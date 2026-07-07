@@ -1,89 +1,55 @@
 import hashlib
-import os
 from typing import Any
 
 import numpy as np
 from PIL import Image, ImageOps, ImageSequence
 import torch
+from comfy_api.latest import IO
 
 # TODO(new-node): Add a batch directory loader node that emits image, mask, and metadata streams with deterministic ordering.
 # TODO(optimize): Move per-frame numpy->torch conversion to a shared helper that can reuse buffers for same-sized frames.
 
-try:
-    import folder_paths
-except Exception:  # pragma: no cover - only used inside Comfy runtime
-    folder_paths = None
+from ..compat.paths import exists_annotated_filepath, get_annotated_filepath, get_input_directory, input_image_files
+from ..compat.runtime import intermediate_device, intermediate_dtype, pillow_call
 
-try:
-    import node_helpers
-except Exception:  # pragma: no cover - only used inside Comfy runtime
-    node_helpers = None
-
-try:
-    import comfy.model_management
-except Exception:  # pragma: no cover - only used inside Comfy runtime
-    comfy = None
-
-from ..models import BubbaMetadata
+from ..models import BubbaMetadata, BubbaPipe
 
 
-class BubbaLoadImageWithMetadata:
+class BubbaLoadImageWithMetadata(IO.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        if folder_paths is not None and hasattr(folder_paths, "get_input_directory"):
-            input_dir = folder_paths.get_input_directory()
-            files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
-            files = folder_paths.filter_files_content_types(files, ["image"])
-            return {
-                "required": {
-                    "image": (
-                        sorted(files),
-                        {
-                            "image_upload": True,
-                            "tooltip": "Input image filename (ComfyUI input folder).",
-                        },
-                    ),
-                },
-            }
-
-        return {
-            "required": {
-                "image": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": False,
-                        "tooltip": "Absolute path to an image file (fallback mode outside ComfyUI runtime).",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("IMAGE", "MASK", "BUBBA_METADATA", "STRING")
-    RETURN_NAMES = ("image", "mask", "metadata", "metadata_text")
-    FUNCTION = "load_image"
-    CATEGORY = "Bubba Nodes/Image/Load"
-    DESCRIPTION = (
-        "Loads an image using ComfyUI LoadImage behavior and returns mask plus embedded Bubba metadata (PNG text key 'bubba_metadata')."
-    )
+    def define_schema(cls):
+        files = input_image_files()
+        if files:
+            image_input = IO.Combo.Input("image", options=sorted(files), extra_dict={"image_upload": True})
+        else:
+            image_input = IO.String.Input("image", default="")
+        pipe, metadata = IO.Custom("BUBBA_PIPE"), IO.Custom("BUBBA_METADATA")
+        return IO.Schema(
+            node_id="BubbaLoadImageWithMetadata",
+            display_name="Bubba Load Image (With Metadata)",
+            category="Bubba Nodes/Image/Load",
+            description="Loads image, mask, and embedded Bubba PNG metadata.",
+            inputs=[image_input],
+            outputs=[
+                pipe.Output("pipe"),
+                IO.Image.Output("image"),
+                IO.Mask.Output("mask"),
+                metadata.Output("metadata"),
+                IO.String.Output("metadata_text"),
+            ],
+        )
 
     @staticmethod
     def _call_pillow(func, *args) -> Any:
-        if node_helpers is not None and hasattr(node_helpers, "pillow"):
-            return node_helpers.pillow(func, *args)
-        return func(*args)
+        return pillow_call(func, *args)
 
     @staticmethod
     def _intermediate_dtype():
-        if comfy is not None and hasattr(comfy, "model_management") and hasattr(comfy.model_management, "intermediate_dtype"):
-            return comfy.model_management.intermediate_dtype()
-        return torch.float32
+        return intermediate_dtype()
 
     @staticmethod
     def _intermediate_device():
-        if comfy is not None and hasattr(comfy, "model_management") and hasattr(comfy.model_management, "intermediate_device"):
-            return comfy.model_management.intermediate_device()
-        return "cpu"
+        return intermediate_device()
 
     @classmethod
     def _resolve_image_path(cls, image: str) -> str:
@@ -91,10 +57,7 @@ class BubbaLoadImageWithMetadata:
         if not raw:
             raise ValueError("image is required.")
 
-        if folder_paths is not None and hasattr(folder_paths, "get_annotated_filepath"):
-            return folder_paths.get_annotated_filepath(raw)
-
-        return raw
+        return get_annotated_filepath(raw)
 
     @staticmethod
     def _extract_bubba_metadata(image_info: dict) -> tuple[BubbaMetadata, str]:
@@ -102,19 +65,20 @@ class BubbaLoadImageWithMetadata:
         metadata = BubbaMetadata.from_json(raw_json)
         return (metadata, metadata.to_json(pretty=True))
 
-    def _load_open_image(self, img):
-        metadata, metadata_text = self._extract_bubba_metadata(getattr(img, "info", {}))
+    @classmethod
+    def _load_open_image(cls, img):
+        metadata, metadata_text = cls._extract_bubba_metadata(getattr(img, "info", {}))
 
         output_images: list[torch.Tensor] = []
         output_masks: list[torch.Tensor] = []
         width = None
         height = None
-        dtype = self._intermediate_dtype()
-        device = self._intermediate_device()
+        dtype = cls._intermediate_dtype()
+        device = cls._intermediate_device()
 
         # TODO(optimize): Add optional max_frames input and early termination for very large animated inputs.
         for frame in ImageSequence.Iterator(img):
-            frame = self._call_pillow(ImageOps.exif_transpose, frame)
+            frame = cls._call_pillow(ImageOps.exif_transpose, frame)
 
             if frame.mode == "I":
                 frame = frame.point(lambda i: i * (1 / 255))
@@ -154,20 +118,22 @@ class BubbaLoadImageWithMetadata:
             output_image = output_images[0]
             output_mask = output_masks[0]
 
-        return (output_image, output_mask, metadata, metadata_text)
+        pipe = BubbaPipe(image=output_image, mask=output_mask, metadata=metadata)
+        return IO.NodeOutput(pipe, output_image, output_mask, metadata, metadata_text)
 
-    def load_image(self, image):
-        image_path = self._resolve_image_path(image)
+    @classmethod
+    def execute(cls, image):
+        image_path = cls._resolve_image_path(image)
         try:
-            with self._call_pillow(Image.open, image_path) as img:
-                return self._load_open_image(img)
+            with cls._call_pillow(Image.open, image_path) as img:
+                return cls._load_open_image(img)
         except ValueError:
             raise
         except Exception as error:
             raise ValueError(f"Bubba Load Image could not read image '{image}': {error}") from error
 
     @classmethod
-    def IS_CHANGED(cls, image):
+    def fingerprint_inputs(cls, image):
         image_path = cls._resolve_image_path(image)
         digest = hashlib.sha256()
         with open(image_path, "rb") as handle:
@@ -179,13 +145,14 @@ class BubbaLoadImageWithMetadata:
         return digest.digest().hex()
 
     @classmethod
-    def VALIDATE_INPUTS(cls, image):
+    def validate_inputs(cls, image):
         raw = str(image or "").strip()
         if not raw:
             return "Invalid image file: empty path"
 
-        if folder_paths is not None and hasattr(folder_paths, "exists_annotated_filepath"):
-            if not folder_paths.exists_annotated_filepath(raw):
+        input_dir = get_input_directory()
+        if input_dir.exists():
+            if not exists_annotated_filepath(raw):
                 return f"Invalid image file: {raw}"
             return True
 

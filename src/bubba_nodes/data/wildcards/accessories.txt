@@ -1,0 +1,31 @@
+# Danbooru accessory tags
+hair ornament
+hair ribbon
+hair tie
+hairband
+headband
+head chain
+earrings
+necklace
+choker
+neck ribbon
+scarf
+shawl
+bowtie
+belt
+bracelet
+ring
+gloves
+mittens
+hair bow
+wrist cuffs
+stockings
+thighhighs
+garter belt
+anklet
+brooch
+badge
+hairclip
+hair scrunchie
+hair stick
+kanzashi
